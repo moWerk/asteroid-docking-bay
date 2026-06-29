@@ -1,0 +1,715 @@
+#!/usr/bin/env python3
+"""
+asteroid-docking-bay — USB hub power manager for AsteroidOS smartwatches.
+
+Manages per-port power switching on smart USB hubs (via uhubctl) to keep
+watch batteries in a healthy mid-range without constant trickle charging.
+
+Config: ~/.config/asteroid-docking-bay/config.json
+Logs:   journald (if python-systemd is installed) + stderr
+"""
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CONFIG_DIR = Path.home() / ".config" / "asteroid-docking-bay"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+DEFAULT_CONFIG = {
+    "hubs": [],
+    "serials": {},
+    "charge": {
+        "low_threshold": 40,
+        "high_threshold": 80,
+        "charge_duration_minutes": 30,
+        # check_interval_hours is informational — actual scheduling is done by
+        # the systemd timer (asteroid-docking-bay-charge.timer).
+        "check_interval_hours": 12,
+        "adb_wait_seconds": 15,
+        "adb_wait_retries": 8,
+    },
+}
+
+log = logging.getLogger("asteroid-docking-bay")
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+def setup_logging(verbose=False):
+    level = logging.DEBUG if verbose else logging.INFO
+    fmt = logging.Formatter("%(levelname)s: %(message)s")
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    logging.root.addHandler(sh)
+    logging.root.setLevel(level)
+    # Soft-import python-systemd for journald integration.
+    try:
+        from systemd.journal import JournaldLogHandler
+        jh = JournaldLogHandler()
+        jh.setLevel(logging.DEBUG)
+        logging.root.addHandler(jh)
+    except ImportError:
+        pass
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {k: v for k, v in DEFAULT_CONFIG.items()}
+    with CONFIG_FILE.open() as f:
+        cfg = json.load(f)
+    # Fill in any missing top-level and charge sub-keys with defaults.
+    for k, v in DEFAULT_CONFIG.items():
+        cfg.setdefault(k, v)
+    for k, v in DEFAULT_CONFIG["charge"].items():
+        cfg["charge"].setdefault(k, v)
+    return cfg
+
+
+def save_config(cfg: dict):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with CONFIG_FILE.open("w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+
+
+# ── Shell helpers ─────────────────────────────────────────────────────────────
+
+def _run(cmd, check=True) -> tuple[int, str, str]:
+    """Run a command string or list; return (rc, stdout, stderr)."""
+    result = subprocess.run(
+        cmd,
+        shell=isinstance(cmd, str),
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed ({result.returncode}): {cmd!r}\n{result.stderr.strip()}"
+        )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+# ── uhubctl wrappers ──────────────────────────────────────────────────────────
+
+def _require_uhubctl():
+    rc, _, _ = _run("which uhubctl", check=False)
+    if rc != 0:
+        log.error(
+            "uhubctl not found. Install it:\n"
+            "  Arch:    sudo pacman -S uhubctl\n"
+            "  Debian:  sudo apt install uhubctl\n"
+            "  Source:  https://github.com/mvp/uhubctl"
+        )
+        sys.exit(1)
+
+
+def uhubctl_list() -> list[dict]:
+    """
+    Return a list of controllable hubs as dicts:
+        {"location": "1-1", "description": "...", "ports": [1, 2, 3, 4]}
+    """
+    _require_uhubctl()
+    rc, out, err = _run("uhubctl", check=False)
+    if rc != 0:
+        if "Permission denied" in err or "Operation not permitted" in err:
+            log.error(
+                "uhubctl: permission denied. Either run as root or set up udev rules.\n"
+                "See udev/70-asteroid-docking-bay.rules in this repo."
+            )
+        return []
+
+    hubs: list[dict] = []
+    current: dict | None = None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Current status for hub"):
+            if current is not None:
+                hubs.append(current)
+            parts = stripped.split()
+            loc = parts[4]
+            desc = (
+                stripped[stripped.find("[") + 1 : stripped.rfind("]")]
+                if "[" in stripped
+                else ""
+            )
+            current = {"location": loc, "description": desc, "ports": []}
+        elif stripped.startswith("Port ") and current is not None:
+            try:
+                port_num = int(stripped.split()[1].rstrip(":"))
+                current["ports"].append(port_num)
+            except (ValueError, IndexError):
+                pass
+    if current is not None:
+        hubs.append(current)
+    return hubs
+
+
+def uhubctl_get_power(location: str, port: int) -> bool | None:
+    """Return True = powered on, False = powered off, None = unknown."""
+    rc, out, err = _run(f"uhubctl -l {location} -p {port}", check=False)
+    if rc != 0:
+        if "Permission denied" in err or "Operation not permitted" in err:
+            log.warning("uhubctl: permission denied querying %s port %d", location, port)
+        return None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"Port {port}:"):
+            # e.g. "Port 2: 0503 power highspeed enable connect"
+            # or   "Port 2: 0000 off"
+            flags = stripped.split()[2:]
+            return "power" in flags
+    return None
+
+
+def uhubctl_set_power(location: str, port: int, on: bool):
+    action = "on" if on else "off"
+    rc, _, err = _run(f"uhubctl -l {location} -p {port} -a {action}", check=False)
+    if rc != 0:
+        raise RuntimeError(
+            f"uhubctl failed setting hub {location} port {port} {action}: {err}"
+        )
+
+
+# ── ADB wrappers ──────────────────────────────────────────────────────────────
+
+def adb_devices() -> dict[str, str]:
+    """Return {serial: state} for all ADB-visible devices."""
+    rc, out, _ = _run("adb devices", check=False)
+    if rc != 0:
+        log.warning("adb devices failed — is adb installed?")
+        return {}
+    result: dict[str, str] = {}
+    for line in out.splitlines()[1:]:
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            result[parts[0]] = parts[1]
+    return result
+
+
+def adb_shell(serial: str, cmd: str) -> tuple[int, str, str]:
+    return _run(f"adb -s {serial} shell {cmd}", check=False)
+
+
+def get_watch_codename(serial: str) -> str | None:
+    """
+    Read the AsteroidOS codename from the watch.
+
+    AsteroidOS is a plain Linux OS, not Android, so getprop is not available.
+    We read /etc/asteroid-release (MACHINE= key) first, then fall back to
+    /etc/os-release and finally hostname.
+    """
+    rc, out, _ = adb_shell(serial, "cat /etc/asteroid-release 2>/dev/null")
+    if rc == 0:
+        for line in out.splitlines():
+            line = line.strip()
+            for key in ("MACHINE=", "IMAGE_CODENAME="):
+                if line.startswith(key):
+                    return line.split("=", 1)[1].strip("\"'")
+
+    rc, out, _ = adb_shell(serial, "cat /etc/os-release 2>/dev/null")
+    if rc == 0:
+        for line in out.splitlines():
+            if line.strip().startswith("VARIANT_ID="):
+                return line.split("=", 1)[1].strip("\"'")
+
+    # Last resort: hostname (often set to the codename on AsteroidOS).
+    rc, out, _ = adb_shell(serial, "hostname")
+    if rc == 0 and out.strip() not in ("", "localhost"):
+        return out.strip()
+
+    return None
+
+
+def get_battery_level(serial: str) -> int | None:
+    """
+    Read battery percentage from sysfs.
+
+    AsteroidOS exposes battery state via standard Linux power_supply class.
+    dumpsys is Android-only and not available here.
+    """
+    candidate_paths = [
+        "/sys/class/power_supply/battery/capacity",
+        "/sys/class/power_supply/Battery/capacity",
+        "/sys/class/power_supply/max170xx_battery/capacity",
+    ]
+    for path in candidate_paths:
+        rc, out, _ = adb_shell(serial, f"cat {path} 2>/dev/null")
+        if rc == 0 and out.strip().isdigit():
+            return int(out.strip())
+    return None
+
+
+# ── Config lookups ────────────────────────────────────────────────────────────
+
+def find_port_for_codename(cfg: dict, codename: str) -> tuple[str | None, int | None]:
+    """Return (hub_location, port) for a codename, or (None, None)."""
+    for hub in cfg.get("hubs", []):
+        for port_str, cname in hub.get("ports", {}).items():
+            if cname.lower() == codename.lower():
+                return hub["location"], int(port_str)
+    return None, None
+
+
+def find_serial_for_codename(cfg: dict, codename: str) -> str | None:
+    for serial, cname in cfg.get("serials", {}).items():
+        if cname.lower() == codename.lower():
+            return serial
+    return None
+
+
+def all_configured_codenames(cfg: dict) -> list[str]:
+    names: list[str] = []
+    for hub in cfg.get("hubs", []):
+        names.extend(hub.get("ports", {}).values())
+    return names
+
+
+def _resolve_targets(codename_arg: str, cfg: dict) -> list[str]:
+    if codename_arg == "all":
+        return all_configured_codenames(cfg)
+    return [codename_arg]
+
+
+# ── ADB wait helper ───────────────────────────────────────────────────────────
+
+def wait_for_adb(codename: str, cfg: dict, charge_cfg: dict) -> str | None:
+    """
+    Poll ADB until the watch with the given codename appears as 'device'.
+    Returns the serial string, or None on timeout.
+
+    If the watch needs a physical power button press after USB power-on,
+    this function will time out and log an actionable warning.
+    """
+    wait_secs = charge_cfg.get("adb_wait_seconds", 15)
+    retries = charge_cfg.get("adb_wait_retries", 8)
+    known_serial = find_serial_for_codename(cfg, codename)
+
+    for attempt in range(1, retries + 1):
+        devices = adb_devices()
+
+        # Fast path: known serial is already online.
+        if known_serial and devices.get(known_serial) == "device":
+            log.debug("%s: ADB online (serial %s)", codename, known_serial)
+            return known_serial
+
+        # Slower path: scan all 'device'-state entries for the codename.
+        for serial, state in devices.items():
+            if state != "device":
+                continue
+            detected = get_watch_codename(serial)
+            if detected and detected.lower() == codename.lower():
+                log.info("%s: ADB online as %s", codename, serial)
+                cfg.setdefault("serials", {})[serial] = codename
+                save_config(cfg)
+                return serial
+
+        log.info(
+            "%s: waiting for ADB (%d/%d, %ds intervals)…",
+            codename, attempt, retries, wait_secs,
+        )
+        time.sleep(wait_secs)
+
+    log.warning(
+        "%s: ADB not available after %ds total wait.\n"
+        "  If this watch requires a physical power button press after USB power-on,\n"
+        "  press it now and re-run: asteroid-docking-bay charge %s",
+        codename, wait_secs * retries, codename,
+    )
+    return None
+
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+def cmd_status(args, cfg: dict):
+    devices = adb_devices()
+    rows: list[tuple] = []
+    seen_serials: set[str] = set()
+
+    for hub in cfg.get("hubs", []):
+        loc = hub["location"]
+        for port_str, codename in sorted(hub.get("ports", {}).items(), key=lambda x: int(x[0])):
+            port = int(port_str)
+            power = uhubctl_get_power(loc, port)
+            power_str = "ON " if power is True else ("OFF" if power is False else "---")
+
+            serial = find_serial_for_codename(cfg, codename)
+            adb_state = devices.get(serial, "--") if serial else "--"
+            if serial:
+                seen_serials.add(serial)
+
+            battery_str = "--"
+            if adb_state == "device":
+                level = get_battery_level(serial)
+                battery_str = f"{level}%" if level is not None else "err"
+
+            rows.append((codename, f"{loc}:p{port}", power_str, adb_state, battery_str))
+
+    # Show ADB-visible watches not yet mapped to a hub port.
+    for serial, state in devices.items():
+        if serial in seen_serials:
+            continue
+        codename = cfg.get("serials", {}).get(serial) or get_watch_codename(serial) or serial
+        rows.append((codename, "(unmapped)", "---", state, "--"))
+
+    if not rows:
+        print("No watches configured.  Run: asteroid-docking-bay map")
+        return
+
+    hdr = f"{'WATCH':<16}  {'PORT':<14}  {'POWER':<5}  {'ADB':<14}  BATTERY"
+    sep = "-" * len(hdr)
+    print(hdr)
+    print(sep)
+    for name, port, power, adb, bat in rows:
+        print(f"{name:<16}  {port:<14}  {power:<5}  {adb:<14}  {bat}")
+
+
+def cmd_on(args, cfg: dict):
+    for codename in _resolve_targets(args.codename, cfg):
+        loc, port = find_port_for_codename(cfg, codename)
+        if loc is None:
+            log.error("%s: not mapped to any hub port (run: asteroid-docking-bay map)", codename)
+            continue
+        log.info("%s: powering on hub %s port %d", codename, loc, port)
+        uhubctl_set_power(loc, port, True)
+        print(f"{codename}: hub {loc} port {port} → ON")
+
+
+def cmd_off(args, cfg: dict):
+    targets = _resolve_targets(args.codename, cfg)
+
+    if args.codename == "all" and not args.force:
+        ans = input(f"Power off ALL {len(targets)} configured watches? [y/N] ").strip().lower()
+        if ans != "y":
+            print("Aborted.")
+            return
+
+    for codename in targets:
+        loc, port = find_port_for_codename(cfg, codename)
+        if loc is None:
+            log.error("%s: not mapped to any hub port", codename)
+            continue
+        log.info("%s: powering off hub %s port %d", codename, loc, port)
+        uhubctl_set_power(loc, port, False)
+        print(f"{codename}: hub {loc} port {port} → OFF")
+
+
+def cmd_cycle(args, cfg: dict):
+    wait = args.wait
+    for codename in _resolve_targets(args.codename, cfg):
+        loc, port = find_port_for_codename(cfg, codename)
+        if loc is None:
+            log.error("%s: not mapped to any hub port", codename)
+            continue
+        log.info("%s: cycling hub %s port %d (off for %ds)", codename, loc, port, wait)
+        uhubctl_set_power(loc, port, False)
+        print(f"{codename}: OFF — waiting {wait}s…", flush=True)
+        time.sleep(wait)
+        uhubctl_set_power(loc, port, True)
+        print(f"{codename}: ON")
+
+
+def cmd_charge(args, cfg: dict):
+    """Manual one-time charge cycle, bypassing the low_threshold check."""
+    charge_cfg = cfg["charge"]
+    duration = args.duration if args.duration is not None else charge_cfg["charge_duration_minutes"]
+    for codename in _resolve_targets(args.codename, cfg):
+        _charge_one(codename, cfg, charge_cfg, duration_minutes=duration, force=True)
+
+
+def _charge_one(
+    codename: str,
+    cfg: dict,
+    charge_cfg: dict,
+    duration_minutes: int | None = None,
+    force: bool = False,
+) -> bool:
+    """
+    Power on a watch, optionally check battery, charge for duration_minutes, power off.
+    Returns True on success, False if the port is not mapped.
+    """
+    loc, port = find_port_for_codename(cfg, codename)
+    if loc is None:
+        log.error("%s: not mapped to any hub port", codename)
+        return False
+
+    duration = duration_minutes or charge_cfg["charge_duration_minutes"]
+    high = charge_cfg["high_threshold"]
+
+    log.info("%s: starting charge cycle (hub %s port %d)", codename, loc, port)
+    uhubctl_set_power(loc, port, True)
+
+    serial = wait_for_adb(codename, cfg, charge_cfg)
+
+    if serial:
+        level = get_battery_level(serial)
+        if level is not None:
+            log.info("%s: battery at %d%%", codename, level)
+            if not force and level >= high:
+                log.info("%s: already at %d%% (≥%d%%), skipping charge", codename, level, high)
+                uhubctl_set_power(loc, port, False)
+                return True
+        else:
+            log.warning("%s: could not read battery level — charging anyway", codename)
+    else:
+        log.warning("%s: ADB unavailable — charging blind for %d minutes", codename, duration)
+
+    log.info("%s: charging for %d minutes…", codename, duration)
+    time.sleep(duration * 60)
+
+    if serial:
+        level_after = get_battery_level(serial)
+        if level_after is not None:
+            log.info("%s: battery now at %d%% after charging", codename, level_after)
+
+    uhubctl_set_power(loc, port, False)
+    log.info("%s: port powered off, charge cycle complete", codename)
+    return True
+
+
+def cmd_check_charge(args, cfg: dict):
+    """
+    Periodic charge check — called by the systemd timer.
+
+    For each configured watch:
+      - Wake it (power on).
+      - Wait for ADB.
+      - If battery < low_threshold: charge for charge_duration_minutes.
+      - Power back off.
+    Watches that are already powered on have their battery checked in-place;
+    if they are above high_threshold they are powered down.
+    """
+    charge_cfg = cfg["charge"]
+    low = charge_cfg["low_threshold"]
+    high = charge_cfg["high_threshold"]
+    duration = charge_cfg["charge_duration_minutes"]
+
+    log.info("Periodic charge check starting")
+
+    for hub in cfg.get("hubs", []):
+        loc = hub["location"]
+        for port_str, codename in hub.get("ports", {}).items():
+            port = int(port_str)
+            power_was_on = uhubctl_get_power(loc, port)
+
+            if not power_was_on:
+                log.info("%s: waking to check battery", codename)
+                uhubctl_set_power(loc, port, True)
+
+            serial = wait_for_adb(codename, cfg, charge_cfg)
+
+            if serial is None:
+                if not power_was_on:
+                    # Left powered on — operator should inspect.
+                    log.warning(
+                        "%s: ADB unavailable after wake — leaving port ON for manual check",
+                        codename,
+                    )
+                continue
+
+            level = get_battery_level(serial)
+            if level is None:
+                log.warning("%s: could not read battery level — leaving port state unchanged", codename)
+                continue
+
+            log.info("%s: battery at %d%%", codename, level)
+
+            if level >= high and power_was_on:
+                log.info("%s: at %d%% (≥%d%%), powering off", codename, level, high)
+                uhubctl_set_power(loc, port, False)
+            elif level < low:
+                log.info("%s: at %d%% (<%d%%), charging for %d minutes", codename, level, low, duration)
+                time.sleep(duration * 60)
+                level_after = get_battery_level(serial)
+                if level_after is not None:
+                    log.info("%s: battery now %d%% after charging", codename, level_after)
+                uhubctl_set_power(loc, port, False)
+                log.info("%s: port powered off", codename)
+            else:
+                log.info("%s: battery OK (%d%% — between %d%%–%d%%)", codename, level, low, high)
+                if not power_was_on:
+                    uhubctl_set_power(loc, port, False)
+                    log.info("%s: port powered off (was off before check)", codename)
+
+    log.info("Periodic charge check complete")
+
+
+def cmd_map(args, cfg: dict):
+    """
+    Interactive wizard to assign watch codenames to hub ports, and discover
+    the ADB serial number for each watch.
+
+    After running this, 'asteroid-docking-bay status' should show all
+    configured watches with correct port and codename.
+    """
+    print("=== asteroid-docking-bay hub mapping wizard ===\n")
+    print("This wizard maps USB hub ports to AsteroidOS watch codenames.")
+    print("Press Enter to keep the current value, or type a new codename.")
+    print("Enter '-' to remove a mapping.\n")
+
+    hubs = uhubctl_list()
+    if not hubs:
+        print("No smart USB hubs found.")
+        print("Is uhubctl installed?  https://github.com/mvp/uhubctl")
+        print("Are the hubs connected and do they support per-port power switching?")
+        return
+
+    print(f"Found {len(hubs)} controllable hub(s):\n")
+    for hub in hubs:
+        print(f"  {hub['location']:12}  {hub['description']}")
+        print(f"    Ports: {hub['ports']}")
+    print()
+
+    new_hubs: list[dict] = []
+
+    for hub in hubs:
+        loc = hub["location"]
+        print(f"--- Hub {loc}  {hub['description']} ---")
+        existing = next((h for h in cfg.get("hubs", []) if h["location"] == loc), None)
+        port_map: dict[str, str] = dict(existing.get("ports", {})) if existing else {}
+
+        for port in hub["ports"]:
+            current = port_map.get(str(port), "(none)")
+            resp = input(f"  Port {port}  [current: {current}]  codename: ").strip()
+            if resp == "":
+                pass
+            elif resp == "-":
+                port_map.pop(str(port), None)
+                print(f"    → cleared")
+            else:
+                port_map[str(port)] = resp
+                print(f"    → '{resp}'")
+
+        new_hubs.append({"location": loc, "ports": port_map})
+
+    # Merge: keep hubs not touched by this wizard.
+    touched_locs = {h["location"] for h in new_hubs}
+    cfg["hubs"] = new_hubs + [h for h in cfg.get("hubs", []) if h["location"] not in touched_locs]
+    save_config(cfg)
+    print(f"\nPort mapping saved to {CONFIG_FILE}")
+
+    # Now discover ADB serials for all newly-mapped watches.
+    all_codenames = all_configured_codenames(cfg)
+    unmapped = [c for c in all_codenames if find_serial_for_codename(cfg, c) is None]
+    if not unmapped:
+        print("All watches already have known ADB serials.\n")
+    else:
+        print(f"\nPowering on ports to discover ADB serials for: {', '.join(unmapped)}")
+        print("NOTE: if a watch requires a physical power button press after USB power-on,")
+        print("      press it now when the port powers on.\n")
+        for hub in cfg["hubs"]:
+            for port_str, codename in hub["ports"].items():
+                if codename in unmapped:
+                    uhubctl_set_power(hub["location"], int(port_str), True)
+
+        print(f"Waiting for ADB (up to {cfg['charge']['adb_wait_seconds'] * cfg['charge']['adb_wait_retries']}s)…")
+        for codename in unmapped:
+            serial = wait_for_adb(codename, cfg, cfg["charge"])
+            if serial:
+                print(f"  ✓ {codename}: serial {serial}")
+            else:
+                print(f"  ✗ {codename}: not found — run 'asteroid-docking-bay discover' when the watch is online")
+
+    print(f"\nDone. Run 'asteroid-docking-bay status' to verify.")
+
+
+def cmd_discover(args, cfg: dict):
+    """Scan for ADB-connected watches and show codename + serial."""
+    print("Scanning for ADB-connected watches…\n")
+    devices = adb_devices()
+    if not devices:
+        print("No ADB devices found.")
+        return
+
+    print(f"{'SERIAL':<24}  {'STATE':<14}  CODENAME")
+    print("-" * 60)
+    for serial, state in sorted(devices.items()):
+        codename = "--"
+        if state == "device":
+            codename = get_watch_codename(serial) or "--"
+        known = cfg.get("serials", {}).get(serial)
+        if known and known != codename:
+            codename += f"  (config: {known})"
+        print(f"{serial:<24}  {state:<14}  {codename}")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="asteroid-docking-bay",
+        description="USB hub power manager for AsteroidOS smartwatches",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Hub mapping:    asteroid-docking-bay map\n"
+            "Quick start:    asteroid-docking-bay status\n"
+            "Config file:    ~/.config/asteroid-docking-bay/config.json\n"
+        ),
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose/debug output")
+
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
+
+    sub.add_parser("status", help="show all watches: port, power, ADB state, battery")
+
+    p_on = sub.add_parser("on", help="power on a watch's USB port")
+    p_on.add_argument("codename", help="watch codename, or 'all'")
+
+    p_off = sub.add_parser("off", help="power off a watch's USB port")
+    p_off.add_argument("codename", help="watch codename, or 'all'")
+    p_off.add_argument("-f", "--force", action="store_true", help="skip confirmation for 'all'")
+
+    p_cy = sub.add_parser("cycle", help="power-cycle a watch's USB port")
+    p_cy.add_argument("codename", help="watch codename, or 'all'")
+    p_cy.add_argument("--wait", type=int, default=5, metavar="SEC",
+                      help="seconds to leave port off (default: 5)")
+
+    p_ch = sub.add_parser("charge", help="manual one-time charge cycle (ignores high_threshold)")
+    p_ch.add_argument("codename", help="watch codename, or 'all'")
+    p_ch.add_argument("--duration", type=int, metavar="MIN",
+                      help="charge duration in minutes (overrides config)")
+
+    sub.add_parser(
+        "check-charge",
+        help="periodic charge check — run by systemd timer, safe to run manually",
+    )
+
+    sub.add_parser("map", help="interactive wizard: assign codenames to hub ports")
+    sub.add_parser("discover", help="scan for ADB-connected watches and show codenames")
+
+    args = parser.parse_args()
+    setup_logging(args.verbose)
+    cfg = load_config()
+
+    dispatch = {
+        "status": cmd_status,
+        "on": cmd_on,
+        "off": cmd_off,
+        "cycle": cmd_cycle,
+        "charge": cmd_charge,
+        "check-charge": cmd_check_charge,
+        "map": cmd_map,
+        "discover": cmd_discover,
+    }
+
+    try:
+        dispatch[args.command](args, cfg)
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(1)
+    except RuntimeError as e:
+        log.error("%s", e)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

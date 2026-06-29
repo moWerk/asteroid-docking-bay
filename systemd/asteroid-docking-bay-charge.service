@@ -1,0 +1,18 @@
+[Unit]
+Description=AsteroidOS Docking Bay — periodic charge check
+Documentation=https://github.com/moWerk/asteroid-docking-bay
+# adb needs the user session to be running.
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/asteroid-docking-bay check-charge
+# KillMode=process lets the script finish a charge cycle if the timer fires again.
+KillMode=process
+TimeoutStartSec=3h
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=asteroid-docking-bay
+
+[Install]
+WantedBy=default.target

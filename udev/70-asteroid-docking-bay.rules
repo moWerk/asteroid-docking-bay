@@ -1,0 +1,38 @@
+# udev rules for asteroid-docking-bay
+# ------------------------------------
+# Grants the 'plugdev' group access to smart USB hubs (for uhubctl) and
+# AsteroidOS watches (for adb) without requiring root.
+#
+# Usage:
+#   sudo cp 70-asteroid-docking-bay.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   sudo usermod -aG plugdev $USER   # then log out and back in
+#
+# Finding your hub's Vendor/Product ID:
+#   lsusb | grep -i hub
+#   uhubctl -l            # shows hub locations and IDs
+#
+# Add one SUBSYSTEM line per smart hub. Common examples below — uncomment
+# and adjust to match your hardware.
+
+# ── Smart USB hubs (for uhubctl) ──────────────────────────────────────────────
+
+# Vendor ID 0bda = Realtek (common in USB 3 hubs)
+# SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", MODE="0664", GROUP="plugdev"
+
+# Vendor ID 2109 = VIA Labs (common in USB 3 hubs)
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2109", MODE="0664", GROUP="plugdev"
+
+# Vendor ID 0424 = Microchip/SMSC (common in Pi hats and dev-board hubs)
+# SUBSYSTEM=="usb", ATTR{idVendor}=="0424", MODE="0664", GROUP="plugdev"
+
+# Vendor ID 05e3 = Genesys Logic (common in USB 3 hubs)
+# SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", MODE="0664", GROUP="plugdev"
+
+# ── AsteroidOS watches (for adb) ──────────────────────────────────────────────
+# AsteroidOS uses the Android gadget framework, so standard Android rules apply.
+# On Arch Linux: install 'android-udev' from AUR.
+# On Debian/Ubuntu: install 'android-sdk-platform-tools' or add rules manually.
+#
+# Generic fallback (covers most watches; prefer the android-udev package):
+# SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0664", GROUP="plugdev"

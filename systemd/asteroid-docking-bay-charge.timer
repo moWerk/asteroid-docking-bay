@@ -1,0 +1,15 @@
+[Unit]
+Description=AsteroidOS Docking Bay — periodic charge check (every 12 hours)
+Documentation=https://github.com/moWerk/asteroid-docking-bay
+
+[Timer]
+# Fire 5 minutes after login, then every 12 hours.
+OnBootSec=5min
+OnUnitActiveSec=12h
+# Spread load if multiple hosts run this — no effect on single-user setups.
+RandomizedDelaySec=5min
+# Re-fire a missed run on next boot (e.g. laptop was sleeping).
+Persistent=true
+
+[Install]
+WantedBy=timers.target
