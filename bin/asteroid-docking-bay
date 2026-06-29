@@ -691,7 +691,11 @@ def cmd_map(args, cfg: dict):
     No prompts mid-run.  Summary at the end lists what was found and which
     ports had no response (empty or ADB not working).
     """
-    print("=== asteroid-docking-bay automatic port mapping ===\n")
+    print()
+    print("   ✨  ⋆  ˚  ✦   asteroid-docking-bay   ✦  ˚  ⋆  ✨")
+    print("   ───── automatic port mapping & battery care ─────")
+    print("          Docking sequence initialized...")
+    print()
 
     hubs = uhubctl_list()
     if not hubs:
