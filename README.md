@@ -132,8 +132,20 @@ below `low_threshold`, powers off.
 ```
 asteroid-docking-bay map
 ```
-Interactive wizard to assign watch codenames to hub ports, then auto-discovers
-ADB serial numbers. Re-run any time you add or move a watch.
+Interactive wizard that:
+1. Assigns watch codenames to hub ports.
+2. **Tests each port's power switching capability** with a live toggle (~3 s per port).
+3. Discovers ADB serial numbers.
+
+Re-run any time you add or move a watch. The switching test can be skipped and
+run separately with `test-ports`.
+
+```
+asteroid-docking-bay test-ports [codename]
+```
+Re-test per-port power switching for all configured ports (or a specific watch).
+Updates the config and reports smart vs. non-smart results. Run this after
+moving a watch to a different hub port, or if you skipped the test during `map`.
 
 ```
 asteroid-docking-bay discover
@@ -144,12 +156,17 @@ finding serials after a new watch is connected.
 ## Typical status output
 
 ```
-WATCH             PORT            POWER  ADB             BATTERY
-nemo              1-1:p1          ON     device          67%
-sparrow           1-1:p2          OFF    --              --
-dory              1-1:p3          ON     unauthorized    --
-beluga            2-3.4:p2        ON     offline         --
+WATCH             PORT            POWER  SMART  ADB             BATTERY
+nemo              1-1:p1          ON     yes    device          67%
+sparrow           1-1:p2          OFF    yes    --              --
+dory              1-1:p3          ON     NO!    unauthorized    --
+beluga            2-3.4:p2        ON     ?      offline         --
 ```
+
+SMART column values:
+- `yes` — per-port power switching confirmed by live test
+- `NO!` — confirmed NOT switchable; on/off/cycle/charge have no effect
+- `?`   — not yet tested; run `test-ports` to check
 
 ADB states:
 - `device` — fully authorized and online

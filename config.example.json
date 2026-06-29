@@ -2,6 +2,12 @@
   "hubs": [
     {
       "location": "1-1",
+      "ppps": true,
+      "port_smart": {
+        "1": true,
+        "2": true,
+        "3": false
+      },
       "ports": {
         "1": "nemo",
         "2": "sparrow",
@@ -10,6 +16,10 @@
     },
     {
       "location": "2-3.4",
+      "ppps": true,
+      "port_smart": {
+        "2": true
+      },
       "ports": {
         "2": "beluga"
       }
