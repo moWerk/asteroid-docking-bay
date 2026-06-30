@@ -793,9 +793,14 @@ _WEB_TEMPLATE = """\
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
+    .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px}
+    .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
+    .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
+    .ico{background:none;border:1px solid #30363d;color:#6e7681;padding:2px 6px;border-radius:4px;cursor:pointer;font:13px monospace;vertical-align:middle}
+    .ico:hover{background:#21262d;color:#c9d1d9}
+    .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin-right:3px}
     .btn:hover{background:#21262d}
-    .cy{border-color:#d29922;color:#d29922}.cy:hover{background:#2a2113}
     .fl{border-color:#58a6ff;color:#58a6ff}.fl:hover{background:#111d2e}
     .ch{border-color:#3fb950;color:#3fb950}.ch:hover{background:#0f2a18}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
@@ -856,18 +861,20 @@ function render(data){
         const d=busy?' disabled':'';
         const adb=p.adb==='device'?'<span class="on">device</span>':p.adb?`<span class="dim">${esc(p.adb)}</span>`:'<span class="dim">&mdash;</span>';
         const bat=charging?'<span class="warn">&#9889;&hellip;</span>':mkbat(p.battery,lo,hi);
+        const pwrFn=p.power===true?`doOff('${esc(p.codename)}')`:`doOn('${esc(p.codename)}')`;
+        const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
+        const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         rows.push(
           `<tr class="wr" id="wr-${esc(p.codename)}">` +
           `<td class="tc">${tree}</td>` +
           `<td><b>${esc(p.codename)}</b></td>` +
           `<td class="dim">p${p.port}</td>` +
-          `<td>${mkpwr(p.power)}</td>` +
+          `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${esc(p.codename)}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adb}</td>` +
           `<td id="bat-${esc(p.codename)}">${bat}</td>` +
           `<td>` +
           `<button class="btn"${d} onclick="doRefresh()">Refresh</button>` +
-          `<button class="btn cy"${d} onclick="doCy('${esc(p.codename)}')">Cycle</button>` +
           `<button class="btn ch"${d} onclick="doCharge('${esc(p.codename)}')">&#9889; Charge</button>` +
           `<button class="btn fl"${d} onclick="doFl('${esc(p.codename)}')">Flash nightly</button>` +
           `</td></tr>` +
@@ -883,6 +890,12 @@ function refresh(){
   fetch('/api/status').then(r=>r.json()).then(d=>{render(d);document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString()}).catch(()=>{document.getElementById('ts').textContent='connection error'});
 }
 function doRefresh(){refresh()}
+function doOn(c){
+  fetch('/api/on/'+c,{method:'POST'}).then(()=>setTimeout(refresh,2000));
+}
+function doOff(c){
+  fetch('/api/off/'+c,{method:'POST'}).then(()=>refresh());
+}
 function doCy(c){
   const r=document.getElementById('wr-'+c);
   if(r)r.querySelectorAll('button').forEach(b=>b.disabled=true);
@@ -1300,6 +1313,32 @@ def cmd_serve(args, cfg: dict):
     @app.post("/api/update/<codename>")
     def api_update(codename):
         resp.content_type = "application/json"
+        return json.dumps({"ok": True})
+
+    @app.post("/api/on/<codename>")
+    def api_on(codename):
+        resp.content_type = "application/json"
+        c_cfg = load_config()
+        loc, port = find_port_for_codename(c_cfg, codename)
+        if loc is None:
+            return json.dumps({"error": "not mapped"})
+        try:
+            uhubctl_set_power(loc, port, True)
+        except RuntimeError as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"ok": True})
+
+    @app.post("/api/off/<codename>")
+    def api_off(codename):
+        resp.content_type = "application/json"
+        c_cfg = load_config()
+        loc, port = find_port_for_codename(c_cfg, codename)
+        if loc is None:
+            return json.dumps({"error": "not mapped"})
+        try:
+            uhubctl_set_power(loc, port, False)
+        except RuntimeError as e:
+            return json.dumps({"error": str(e)})
         return json.dumps({"ok": True})
 
     @app.post("/api/cycle/<codename>")
