@@ -803,6 +803,10 @@ _WEB_TEMPLATE = """\
     .btn:hover{background:#21262d}
     .fl{border-color:#58a6ff;color:#58a6ff}.fl:hover{background:#111d2e}
     .ch{border-color:#3fb950;color:#3fb950}.ch:hover{background:#0f2a18}
+    .ht{border-color:#6e7681;color:#6e7681}.ht:hover{background:#1c1c1c}
+    .hcut{border-color:#f85149;color:#f85149}.hcut:hover{background:#2a0d0b}
+    .hrb{border-color:#d29922;color:#d29922}.hrb:hover{background:#2a2113}
+    .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .lr td{padding:0 12px 8px}
     .log{display:none;background:#010409;border:1px solid #21262d;border-radius:4px;padding:10px;font-size:12px;color:#8b949e;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
@@ -873,8 +877,9 @@ function render(data){
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adb}</td>` +
           `<td id="bat-${esc(p.codename)}">${bat}</td>` +
-          `<td>` +
+          `<td id="act-${esc(p.codename)}">` +
           `<button class="btn"${d} onclick="doRefresh()">Refresh</button>` +
+          (p.power===true?`<button class="btn ht"${d} onclick="doHalt('${esc(p.codename)}')">&#x23FB; Halt</button>`:'')+
           `<button class="btn ch"${d} onclick="doCharge('${esc(p.codename)}')">&#9889; Charge</button>` +
           `<button class="btn fl"${d} onclick="doFl('${esc(p.codename)}')">Flash nightly</button>` +
           `</td></tr>` +
@@ -894,7 +899,31 @@ function doOn(c){
   fetch('/api/on/'+c,{method:'POST'}).then(()=>setTimeout(refresh,2000));
 }
 function doOff(c){
+  _haltClear(c);
   fetch('/api/off/'+c,{method:'POST'}).then(()=>refresh());
+}
+const halting={};const haltTimers={};
+function _haltClear(c){delete halting[c];clearTimeout(haltTimers[c]);}
+function doHalt(c){
+  if(halting[c])return;
+  halting[c]=true;
+  const cell=document.getElementById('act-'+c);
+  if(!cell)return;
+  cell.innerHTML=
+    `<button class="btn hcut" onclick="doOff('${c}')">Cut power</button>`+
+    `<button class="btn hrb" onclick="doReboot('${c}')">Reboot</button>`+
+    `<button class="btn hbl" onclick="doBootloader('${c}')">Bootloader</button>`+
+    `<button class="btn" onclick="closeHalt('${c}')">&#x2715;</button>`;
+  haltTimers[c]=setTimeout(()=>closeHalt(c),4000);
+}
+function closeHalt(c){_haltClear(c);refresh();}
+function doReboot(c){
+  _haltClear(c);
+  fetch('/api/reboot/'+c,{method:'POST'}).then(()=>setTimeout(refresh,3000));
+}
+function doBootloader(c){
+  _haltClear(c);
+  fetch('/api/bootloader/'+c,{method:'POST'}).then(()=>setTimeout(refresh,3000));
 }
 function doCy(c){
   const r=document.getElementById('wr-'+c);
@@ -1339,6 +1368,30 @@ def cmd_serve(args, cfg: dict):
             uhubctl_set_power(loc, port, False)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
+        return json.dumps({"ok": True})
+
+    @app.post("/api/reboot/<codename>")
+    def api_reboot(codename):
+        resp.content_type = "application/json"
+        c_cfg = load_config()
+        serial = find_serial_for_codename(c_cfg, codename)
+        if not serial:
+            return json.dumps({"error": "no serial for codename"})
+        rc, _, err = _run(f"adb -s {serial} reboot", check=False)
+        if rc != 0:
+            return json.dumps({"error": err or "adb reboot failed"})
+        return json.dumps({"ok": True})
+
+    @app.post("/api/bootloader/<codename>")
+    def api_bootloader(codename):
+        resp.content_type = "application/json"
+        c_cfg = load_config()
+        serial = find_serial_for_codename(c_cfg, codename)
+        if not serial:
+            return json.dumps({"error": "no serial for codename"})
+        rc, _, err = _run(f"adb -s {serial} reboot bootloader", check=False)
+        if rc != 0:
+            return json.dumps({"error": err or "adb reboot bootloader failed"})
         return json.dumps({"ok": True})
 
     @app.post("/api/cycle/<codename>")
