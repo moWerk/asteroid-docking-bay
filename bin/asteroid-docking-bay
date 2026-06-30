@@ -620,35 +620,65 @@ def _flash_one_watch(
 
 
 def _web_status_data(cfg: dict) -> list[dict]:
-    """Collect current status for all configured watches as a list of dicts."""
+    """
+    Return hub-structured status including unmapped (empty) ports.
+    Result: [{"location", "description", "ports": [...]}, ...]
+    Mapped ports sort first (by number) within each hub; empty ports follow.
+    Empty ports skip the per-port uhubctl query to keep refresh time low.
+    """
     devices = adb_devices()
-    rows: list[dict] = []
-    for hub in cfg.get("hubs", []):
-        loc = hub["location"]
-        for port_str, codename in sorted(hub.get("ports", {}).items(), key=lambda x: int(x[0])):
-            port = int(port_str)
-            power = uhubctl_get_power(loc, port)
-            smart = hub.get("port_smart", {}).get(port_str)
-            serial = find_serial_for_codename(cfg, codename)
+    physical = {h["location"]: h for h in uhubctl_list()}
+    result: list[dict] = []
+
+    for cfg_hub in cfg.get("hubs", []):
+        loc         = cfg_hub["location"]
+        mapped      = cfg_hub.get("ports", {})        # {str(port): codename}
+        port_smart  = cfg_hub.get("port_smart", {})
+
+        phys        = physical.get(loc, {})
+        all_ports   = phys.get("ports", sorted(int(p) for p in mapped))
+        description = phys.get("description", "")
+
+        mapped_nums = sorted(int(p) for p in mapped)
+        empty_nums  = sorted(n for n in all_ports if str(n) not in mapped)
+
+        hub_ports: list[dict] = []
+
+        for port_num in mapped_nums:
+            port_str  = str(port_num)
+            codename  = mapped[port_str]
+            power     = uhubctl_get_power(loc, port_num)
+            smart     = port_smart.get(port_str)
+            serial    = find_serial_for_codename(cfg, codename)
             adb_state = devices.get(serial) if serial else None
-            battery = None
-            if adb_state == "device":
-                battery = get_battery_level(serial)
-            flashing = (
+            battery   = get_battery_level(serial) if adb_state == "device" else None
+            flashing  = (
                 codename in _flash_tasks
                 and not _flash_tasks[codename].get("done", True)
             )
-            rows.append({
-                "codename": codename,
-                "hub": loc,
-                "port": port,
-                "power": power,
-                "smart": smart,
-                "adb": adb_state,
-                "battery": battery,
-                "flashing": flashing,
+            hub_ports.append({
+                "port": port_num, "codename": codename,
+                "power": power, "smart": smart,
+                "adb": adb_state, "battery": battery,
+                "flashing": flashing, "empty": False,
             })
-    return rows
+
+        for port_num in empty_nums:
+            hub_ports.append({
+                "port": port_num, "codename": None,
+                "power": None,  # skip per-port query for empty slots
+                "smart": port_smart.get(str(port_num)),
+                "adb": None, "battery": None,
+                "flashing": False, "empty": True,
+            })
+
+        result.append({
+            "location": loc,
+            "description": description,
+            "ports": hub_ports,
+        })
+
+    return result
 
 
 def _sse_flash_gen(codename: str, cfg: dict):
@@ -711,8 +741,15 @@ _WEB_TEMPLATE = """\
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
+    th:first-child,td.tc{width:22px;padding-right:0}
     td{padding:7px 12px;border-bottom:1px solid #161b22;vertical-align:middle}
     .wr:hover td{background:#161b22}
+    .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
+    .hub-hdr:first-child td{border-top:none;padding-top:0}
+    .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
+    td.tc{color:#30363d;font-size:12px;user-select:none}
+    tr.empty td{color:#6e7681}
+    tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
@@ -731,7 +768,7 @@ _WEB_TEMPLATE = """\
   <p class="meta">USB hub power manager for AsteroidOS &nbsp;&middot;&nbsp; <span id="ts">loading&hellip;</span></p>
   <table>
     <thead><tr>
-      <th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
+      <th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
       <th>ADB</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -739,36 +776,61 @@ _WEB_TEMPLATE = """\
 <script>
 const srcs={};
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
-function render(ws){
+function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
+function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
+function render(data){
   const tb=document.getElementById('tb');
-  if(!ws||!ws.length){tb.innerHTML='<tr><td colspan="7" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
-  const h=[];
-  ws.forEach(w=>{
-    const busy=!!(srcs[w.codename]||w.flashing);
-    const d=busy?' disabled':'';
-    const pwr=w.power===true?'<span class="dot don"></span><span class="on">ON</span>':w.power===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>';
-    const smt=w.smart===true?'<span class="on">yes</span>':w.smart===false?'<span class="err">NO!</span>':'<span class="warn">?</span>';
-    const adb=w.adb==='device'?'<span class="on">device</span>':w.adb?'<span class="dim">'+esc(w.adb)+'</span>':'<span class="dim">--</span>';
-    const bat=w.battery!=null?w.battery+'%':'<span class="dim">--</span>';
-    h.push(
-      `<tr class="wr" id="wr-${esc(w.codename)}"><td><b>${esc(w.codename)}</b></td><td class="dim">${esc(w.hub)}:p${w.port}</td><td>${pwr}</td><td>${smt}</td><td>${adb}</td><td>${bat}</td><td>`+
-      `<button class="btn"${d} onclick="doUpd('${esc(w.codename)}')">Update</button>`+
-      `<button class="btn cy"${d} onclick="doCy('${esc(w.codename)}')">Cycle</button>`+
-      `<button class="btn fl"${d} onclick="doFl('${esc(w.codename)}')">Flash nightly</button>`+
-      `</td></tr>`+
-      `<tr class="lr" id="lr-${esc(w.codename)}"><td colspan="7"><div class="log${busy?' show':''}" id="log-${esc(w.codename)}"></div></td></tr>`
-    );
+  const hubs=(data&&data.hubs)||[];
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  const rows=[];
+  hubs.forEach(hub=>{
+    rows.push(`<tr class="hub-hdr"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span></td></tr>`);
+    hub.ports.forEach((p,i)=>{
+      const tree=i===hub.ports.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
+      if(p.empty){
+        rows.push(
+          `<tr class="wr empty">` +
+          `<td class="tc">${tree}</td>` +
+          `<td class="dim">&mdash;</td>` +
+          `<td class="dim">p${p.port}</td>` +
+          `<td>${mkpwr(p.power)}</td>` +
+          `<td>${mksmt(p.smart)}</td>` +
+          `<td class="dim">&mdash;</td>` +
+          `<td class="dim">&mdash;</td>` +
+          `<td><button class="btn" onclick="doRefresh()">Refresh</button></td>` +
+          `</tr>`
+        );
+      }else{
+        const busy=!!(srcs[p.codename]||p.flashing);
+        const d=busy?' disabled':'';
+        const adb=p.adb==='device'?'<span class="on">device</span>':p.adb?`<span class="dim">${esc(p.adb)}</span>`:'<span class="dim">&mdash;</span>';
+        const bat=p.battery!=null?p.battery+'%':'<span class="dim">&mdash;</span>';
+        rows.push(
+          `<tr class="wr" id="wr-${esc(p.codename)}">` +
+          `<td class="tc">${tree}</td>` +
+          `<td><b>${esc(p.codename)}</b></td>` +
+          `<td class="dim">p${p.port}</td>` +
+          `<td>${mkpwr(p.power)}</td>` +
+          `<td>${mksmt(p.smart)}</td>` +
+          `<td>${adb}</td>` +
+          `<td id="bat-${esc(p.codename)}">${bat}</td>` +
+          `<td>` +
+          `<button class="btn"${d} onclick="doRefresh()">Refresh</button>` +
+          `<button class="btn cy"${d} onclick="doCy('${esc(p.codename)}')">Cycle</button>` +
+          `<button class="btn fl"${d} onclick="doFl('${esc(p.codename)}')">Flash nightly</button>` +
+          `</td></tr>` +
+          `<tr class="lr" id="lr-${esc(p.codename)}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${esc(p.codename)}"></div></td></tr>`
+        );
+      }
+    });
   });
-  tb.innerHTML=h.join('');
+  tb.innerHTML=rows.join('');
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show')});
 }
 function refresh(){
-  fetch('/api/status').then(r=>r.json()).then(d=>{
-    render(d.watches);
-    document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString();
-  }).catch(()=>{document.getElementById('ts').textContent='connection error'});
+  fetch('/api/status').then(r=>r.json()).then(d=>{render(d);document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString()}).catch(()=>{document.getElementById('ts').textContent='connection error'});
 }
-function doUpd(c){fetch('/api/update/'+c,{method:'POST'}).then(()=>refresh())}
+function doRefresh(){refresh()}
 function doCy(c){
   const r=document.getElementById('wr-'+c);
   if(r)r.querySelectorAll('button').forEach(b=>b.disabled=true);
@@ -784,15 +846,8 @@ function doFl(c){
   const es=new EventSource('/api/flash/'+c);
   srcs[c]=es;
   es.onmessage=ev=>{box.textContent+=ev.data+'\\n';box.scrollTop=box.scrollHeight};
-  es.addEventListener('done',()=>{
-    box.textContent+='\\n── done ──\\n';
-    box.scrollTop=box.scrollHeight;
-    es.close();delete srcs[c];refresh();
-  });
-  es.onerror=()=>{
-    box.textContent+='\\n── connection lost ──\\n';
-    es.close();delete srcs[c];refresh();
-  };
+  es.addEventListener('done',()=>{box.textContent+='\\n\\u2500\\u2500 done \\u2500\\u2500\\n';box.scrollTop=box.scrollHeight;es.close();delete srcs[c];refresh()});
+  es.onerror=()=>{box.textContent+='\\n\\u2500\\u2500 connection lost \\u2500\\u2500\\n';es.close();delete srcs[c];refresh()};
 }
 refresh();setInterval(refresh,15000);
 </script>
@@ -1157,12 +1212,13 @@ def cmd_serve(args, cfg: dict):
     @app.get("/api/status")
     def api_status():
         resp.content_type = "application/json"
-        return json.dumps({"watches": _web_status_data(load_config())})
+        c_cfg = load_config()
+        return json.dumps({"hubs": _web_status_data(c_cfg)})
 
     @app.post("/api/update/<codename>")
     def api_update(codename):
         resp.content_type = "application/json"
-        return json.dumps({"watches": _web_status_data(load_config())})
+        return json.dumps({"ok": True})
 
     @app.post("/api/cycle/<codename>")
     def api_cycle(codename):
