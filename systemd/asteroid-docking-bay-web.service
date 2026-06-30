@@ -8,7 +8,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/asteroid-docking-bay serve
+ExecStart=%h/.local/bin/asteroid-docking-bay serve --host 0.0.0.0
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
