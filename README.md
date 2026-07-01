@@ -309,6 +309,31 @@ the watch doesn't appear. You will need to press the button manually.
 Known behavior by codename is not tracked here; check your watch's hardware
 documentation or the AsteroidOS porting guide.
 
+### Hub PPPS: data-line disconnect vs true VBUS switching
+
+`uhubctl` marks a hub as `ppps` (per-port power switching) if it responds
+to power commands. There are two very different hardware behaviours hiding
+behind this label:
+
+**True VBUS switching** — the hub physically gates the 5 V supply rail.
+The watch loses both USB data and charging current. This is required for
+battery management (the charge timer is useless without it).
+
+**Data-line disconnect only** — the hub disconnects D+/D− so the device
+stops enumerating on USB (`adb devices` drops, port shows `0000 off`), but
+VBUS stays live and the watch keeps charging. This is what many cheap hubs
+do, including ALCOR 05e3:0606 units.
+
+To tell which you have: switch a port off with `uhubctl`, then check whether
+the watch is still charging. If it is, the hub only controls data lines.
+
+Data-line-only hubs are still useful for ADB operations (flash, reboot,
+bootloader) since those require a live USB data connection. They cannot
+stop or control charging.
+
+The [uhubctl compatible devices list](https://github.com/mvp/uhubctl#compatible-usb-hubs)
+notes which hubs do true VBUS switching.
+
 ### Identifying smart hub ports
 
 After `uhubctl -l` shows your hub location (e.g. `1-1`), plug in one watch at
