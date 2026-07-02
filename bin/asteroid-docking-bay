@@ -509,6 +509,20 @@ def _sysfs_usb_path(serial: str) -> str | None:
     return None
 
 
+def _sysfs_path_to_serial_map(serials: set[str]) -> dict[str, str]:
+    """Single-pass sysfs scan: return {sysfs_path: serial} for the given serials."""
+    result: dict[str, str] = {}
+    for path in glob.glob("/sys/bus/usb/devices/*/serial"):
+        try:
+            with open(path) as f:
+                s = f.read().strip()
+                if s in serials:
+                    result[os.path.basename(os.path.dirname(path))] = s
+        except OSError:
+            pass
+    return result
+
+
 def _fastboot_list() -> dict[str, str | None]:
     """
     Return {serial: sysfs_usb_path} for all devices currently in fastboot mode.
@@ -770,12 +784,13 @@ def _web_status_data(cfg: dict) -> list[dict]:
     """
     devices = adb_devices()
     fb_devices = _fastboot_list()   # {serial: sysfs_path | None}
-    # Reverse map for unknown-device lookup on empty ports: sysfs_path → serial
+    # Reverse maps for empty-port detection: sysfs_path → serial
     fb_by_path: dict[str, str] = {
         path: serial
         for serial, path in fb_devices.items()
         if path is not None
     }
+    adb_by_path: dict[str, str] = _sysfs_path_to_serial_map(set(devices.keys()))
     physical = {h["location"]: h for h in uhubctl_list()}
     result: list[dict] = []
 
@@ -828,18 +843,22 @@ def _web_status_data(cfg: dict) -> list[dict]:
         for port_num in empty_nums:
             sysfs_path = f"{loc}.{port_num}"
             fb_serial  = fb_by_path.get(sysfs_path)
+            adb_serial = adb_by_path.get(sysfs_path)
             fb_product = None
             if fb_serial:
                 # Prefer config-known name; fall back to fastboot getvar product.
                 fb_product = cfg.get("serials", {}).get(fb_serial) or _fastboot_getvar_product(fb_serial)
+            adb_codename = find_codename_for_serial(cfg, adb_serial) if adb_serial else None
             hub_ports.append({
-                "port": port_num, "codename": None,
+                "port": port_num, "codename": adb_codename,
+                "slot_loc": loc,
                 "power": None,  # skip per-port query for empty slots
                 "smart": port_smart.get(str(port_num)),
-                "adb": "fastboot" if fb_serial else None,
+                "adb": devices.get(adb_serial) if adb_serial else ("fastboot" if fb_serial else None),
                 "battery": None,
                 "flashing": False, "empty": True,
                 "fastboot_product": fb_product,
+                "unmapped": adb_codename is not None,
             })
 
         result.append({
@@ -997,17 +1016,24 @@ function render(data){
     hub.ports.forEach((p,i)=>{
       const tree=i===hub.ports.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
       if(p.empty){
+        const slot=p.slot_loc+':'+p.port;
+        const isRef=refreshing.has(slot);
         const fbLabel=p.fastboot_product?`fastboot: ${esc(p.fastboot_product)}`:(p.adb==='fastboot'?'fastboot':'');
+        const nameCell=p.unmapped
+          ?`<span class="dim">${esc(p.codename)} <span style="font-size:.8em;opacity:.6">(run map)</span></span>`
+          :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>');
+        const adbCell=p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`
+          :(p.adb?mkadb(p.adb,null):'<span class="dim">&mdash;</span>');
         rows.push(
-          `<tr class="wr empty">` +
+          `<tr class="wr empty${isRef?' refreshing':''}">` +
           `<td class="tc">${tree}</td>` +
-          `<td>${p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>'}</td>` +
+          `<td>${nameCell}</td>` +
           `<td class="dim">p${p.port}</td>` +
           `<td>${mkpwr(p.power)}</td>` +
           `<td>${mksmt(p.smart)}</td>` +
-          `<td>${p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`:'<span class="dim">&mdash;</span>'}</td>` +
+          `<td>${adbCell}</td>` +
           `<td class="dim">&mdash;</td>` +
-          `<td><button class="btn" onclick="doRefresh()">Refresh</button></td>` +
+          `<td><button class="btn btn-ref${isRef?' pulsing':''}" onclick="doRefresh('${esc(slot)}')">Refresh</button></td>` +
           `</tr>`
         );
       }else{
