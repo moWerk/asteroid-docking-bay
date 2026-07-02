@@ -186,7 +186,7 @@ def uhubctl_list() -> list[dict]:
 
 def uhubctl_get_power(location: str, port: int) -> bool | None:
     """Return True = powered on, False = powered off, None = unknown."""
-    rc, out, err = _run(f"uhubctl -l {location} -p {port}", check=False)
+    rc, out, err = _run(f"uhubctl -S -l {location} -p {port}", check=False)
     if rc != 0:
         if "Permission denied" in err or "Operation not permitted" in err:
             log.warning("uhubctl: permission denied querying %s port %d", location, port)
