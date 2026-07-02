@@ -100,7 +100,7 @@ By default uhubctl requires root. To run without sudo:
 ## Quick start
 
 ```sh
-# Step 1: map hub ports to watch codenames
+# Step 1: one-time hub setup — discovers hubs and tests per-port power switching
 asteroid-docking-bay map
 
 # Step 2: verify everything looks right
@@ -109,6 +109,12 @@ asteroid-docking-bay status
 # Step 3: enable the automatic charging timer
 systemctl --user enable --now asteroid-docking-bay-charge.timer
 ```
+
+After the initial `map`, the **web UI handles everything else** — plugging in a
+new watch, moving a watch to a different port, or adding a watch to a previously
+empty slot. Click **Refresh** on any empty port row to detect and configure the
+watch automatically (reads the codename from the device, tests PPPS, updates
+config). No CLI intervention needed for day-to-day use.
 
 <img width="999" height="907" alt="After executing asteroid-docking-bay map" src="https://github.com/user-attachments/assets/07f0756e-3188-44df-8b3e-905e868177f1" />
 
@@ -150,13 +156,16 @@ below `low_threshold`, powers off.
 ```
 asteroid-docking-bay map
 ```
-Interactive wizard that:
-1. Assigns watch codenames to hub ports.
-2. **Tests each port's power switching capability** with a live toggle (~3 s per port).
-3. Discovers ADB serial numbers.
+One-time hub setup wizard:
+1. Discovers all connected smart hubs.
+2. Powers each port on in sequence and identifies the watch via ADB.
+3. **Tests per-port power switching (PPPS)** with a live toggle (~3 s per port).
+4. Saves hub topology, port assignments, and serial numbers to config.
 
-Re-run any time you add or move a watch. The switching test can be skipped and
-run separately with `test-ports`.
+Run once when you first connect a hub, and again only if the hub itself
+moves to a different USB port on the host. Adding or moving watches between
+ports does not require re-running `map` — use **Refresh** in the web UI instead.
+The switching test can be run independently with `test-ports`.
 
 ```
 asteroid-docking-bay test-ports [codename]
@@ -177,14 +186,19 @@ asteroid-docking-bay serve [--host HOST] [--port PORT]
 Start the web UI (requires `pip install bottle`). Serves a live status page at
 `http://HOST:PORT/` (default: `http://127.0.0.1:8080/`).
 
-Each configured watch is shown as a table row with three per-row buttons:
+Each configured watch is shown as a table row. **Empty port rows** (no watch
+assigned) show a **Refresh** button that triggers a full per-port remap: powers
+the port on, waits for a watch, reads its codename, tests PPPS, and updates
+config — all streamed live into an inline log below the row.
 
-- **Update** — re-reads ADB state and battery level for that watch.
-- **Cycle** — power-cycles the USB port (off → 5 s → on). Buttons are
-  re-enabled automatically after ADB is expected back (~7 s).
-- **Flash nightly** — runs a full nightly flash for that watch with live
-  streaming output (server-sent events). The log box appears inline below
-  the row and streams `fastboot` + download progress until done.
+**Mapped watch rows** offer:
+
+- **Refresh** — re-polls ADB state and battery level.
+- **ON / OFF toggle** — switches hub port power; confirms the state changed.
+- **⟳** — power-cycles the port (off → 5 s → on).
+- **⏻ Halt** — submenu: graceful OS shutdown, reboot, or reboot to bootloader.
+- **⚡ Charge** — manual one-shot charge cycle with a live countdown.
+- **Flash nightly** — full nightly flash streamed live into the inline log.
 
 The page auto-refreshes every 15 seconds. `--host 0.0.0.0` makes it
 reachable from other machines on the network.
