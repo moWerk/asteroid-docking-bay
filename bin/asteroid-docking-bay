@@ -1668,6 +1668,10 @@ def cmd_map(args, cfg: dict):
     new_hubs: list[dict] = []
     no_response: list[str] = []   # ports where no watch appeared
 
+    # Track serials already assigned so a reconnecting watch from a previous
+    # port's PPPS cycle doesn't get double-detected on the next port.
+    known_serials: set[str] = set(adb_devices().keys())
+
     # Scan deepest child hubs first so parent cascade ports stay live throughout.
     hubs_sorted = sorted(hubs, key=lambda h: h["location"].count("."), reverse=True)
 
@@ -1686,7 +1690,9 @@ def cmd_map(args, cfg: dict):
 
             print(f"  Port {port}: ", end="", flush=True)
 
-            before = set(adb_devices().keys())
+            # Use known_serials as baseline: excludes watches already mapped on
+            # earlier ports even if they're still reconnecting after a PPPS cycle.
+            before = set(adb_devices().keys()) | known_serials
             uhubctl_set_power(loc, port, True)
 
             serial = _wait_for_new_adb_device(before, timeout=10)
@@ -1696,6 +1702,7 @@ def cmd_map(args, cfg: dict):
                 print(f"{codename}  ({serial})", end="", flush=True)
                 port_map[str(port)] = codename
                 cfg.setdefault("serials", {})[serial] = codename
+                known_serials.add(serial)
 
                 # PPPS test inline — port is ON, takes ~3 s.
                 print(f"  …testing PPPS…", end="", flush=True)
