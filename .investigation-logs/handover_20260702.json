@@ -160,6 +160,21 @@
     }
   ],
 
+  "incoming_hardware": [
+    {
+      "product": "RSHTECH A-16 (16-port USB hub)",
+      "ordered": "2026-07-02",
+      "eta": "~2026-07-06",
+      "reason": "First hub explicitly on uhubctl supported list — expected to do true per-port VBUS switching",
+      "on_arrival": [
+        "uhubctl -l to confirm ppps detection",
+        "Test VBUS cut with charging watch",
+        "asteroid-docking-bay map to assign watches",
+        "Re-enable charge timer and verify battery management works"
+      ]
+    }
+  ],
+
   "pending_features_discussed_not_implemented": [
     {
       "feature": "Charge behaviour logging",

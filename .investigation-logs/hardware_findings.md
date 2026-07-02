@@ -101,11 +101,24 @@ Running as user `mo` (systemd user service, no sudo):
 
 ---
 
+## Ordered / incoming hardware
+
+### RSHTECH A-16 (16-port) — arriving ~2026-07-06
+Explicitly listed on the uhubctl compatible devices list as fully supported with per-port
+PPPS. First hub in the fleet expected to do true VBUS switching. Once it arrives:
+1. Connect to w541, confirm uhubctl detects it and lists ppps
+2. Test VBUS cut: switch a port off, confirm watch stops charging
+3. `asteroid-docking-bay map` to assign watches to ports
+4. Re-enable charge timer and verify battery management actually works
+
+---
+
 ## What to buy for true VBUS switching
 
 Reference: https://github.com/mvp/uhubctl#compatible-usb-hubs
 
 Known good:
+- **RSHTECH A-16** — ordered 2026-07-02, explicitly on uhubctl supported list (incoming)
 - **Yepkit YKUSH** — explicit per-port VBUS control, confirmed working
 - **Acroname USB 3.1** — gold standard, expensive
 - Via Labs / Terminus USB 3 hubs — check list; some (not all) do true VBUS
