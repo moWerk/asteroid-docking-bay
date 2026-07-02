@@ -55,7 +55,7 @@
         "topology": "VIA Labs VL813 root (4 ports, ppps) cascading into 6 Huasheng sub-hubs (4 ports each, ganged) = 24 usable downstream ports",
         "group_switching": "Works — switching VIA root port 2 (uhubctl -l 1-3 -p 2 -a off) powers the entire cascade off. ADB devices reappear on restore.",
         "individual_port_switching": "Does NOT work — Huasheng sub-hubs are ganged. Physical front-panel rocker switches are mechanical only.",
-        "vbus_verdict": "Inconclusive. Individual port VBUS untestable (ganged). Group-level VBUS cut (via root port) was not conclusively tested for VBUS vs data-line-only before issue was closed. Given ALCOR pattern, treat as suspect until confirmed with a charging device on the group switch.",
+        "vbus_verdict": "CONFIRMED data-line only (tested 2026-07-02). Both levels tested: individual ports (ganged, no switching at all) and group switch (VIA root port 2 off — VBUS stays live, watch continues charging). The 2109:2813 VIA Labs chip in this product does NOT cut VBUS despite ppps flag.",
         "issue_filed_and_closed": "moWerk filed #665 to add to uhubctl supported list, then closed after discovering per-port switching is impossible."
       }
     },
@@ -147,10 +147,10 @@
       "workaround": "None in software. Need different hubs."
     },
     {
-      "id": "MONDOHUB-VBUS-UNCONFIRMED",
-      "severity": "minor / open question",
-      "description": "Manhattan MondoHub II group switch (VIA root port) may cut VBUS for all 28 ports — not conclusively tested. Individual port VBUS untestable (ganged sub-hubs). See hardware.hubs.mondo_hub.",
-      "workaround": "Test by plugging a charging watch, switching -l 1-3 -p 2 -a off, observing charging indicator."
+      "id": "MONDOHUB-NO-VBUS",
+      "severity": "fundamental hardware",
+      "description": "Manhattan MondoHub II VIA Labs root switch (2109:2813) confirmed data-line only — VBUS stays live even when group switch reports off. Individual ports (Huasheng ganged sub-hubs) also non-functional for switching.",
+      "workaround": "None in software. Need different hubs."
     },
     {
       "id": "STALE-ROW-ON-UNPLUG",

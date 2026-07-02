@@ -63,16 +63,15 @@ The Huasheng sub-hubs are **ganged** — per-port switching is not possible in s
 The physical rocker switches on the MondoHub II front panel are mechanical only and
 cannot be replicated via uhubctl.
 
-### Verdict on VBUS: unclear / likely data-line only
+### Verdict on VBUS: CONFIRMED data-line only (2026-07-02)
 
-The user observed that toggling individual ports (sub-hub level) "does nothing physically
-and always stays powered." Since individual port switching doesn't work at all (ganged),
-this is expected at that level.
+Both levels tested:
+- Individual ports (Huasheng sub-hubs, ganged): no effect at all — no switching possible
+- Group switch (VIA Labs root, `uhubctl -l 1-3 -p 2 -a off`): data-line disconnect only —
+  VBUS stays live, watch continues charging
 
-Whether the *group* switch (VIA root port 2 off) actually cuts VBUS to all 28 ports
-or only disconnects data lines was not conclusively tested before the issue was closed.
-Given the pattern seen with the ALCOR hubs, treat as data-line only until proven otherwise
-with a charging device test on the group switch.
+The VIA Labs `2109:2813` chip in this product does NOT cut VBUS despite being marked ppps.
+Same failure mode as the ALCOR hubs.
 
 **Note:** `2109:2813` is already in the uhubctl list (Aukey CB-C59, AmazonBasics U3-7HUB).
 Issue #665 was filed to add Manhattan MondoHub II as another product on the same chip.
