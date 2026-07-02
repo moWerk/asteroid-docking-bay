@@ -1,0 +1,179 @@
+{
+  "_meta": {
+    "created": "2026-07-02",
+    "purpose": "Session handover — captures all context relevant to continue this session or pick up in a new one after compaction or restart.",
+    "supersedes": "~/Git/llm-rag/AsteroidOS/HANDOVERS/20260627_nemo_nougat_port_handover.json (different project — that one is the AsteroidOS porting session, not this repo)",
+    "update_this_file": "Each session should update the 'session_state' block and append to 'session_log'."
+  },
+
+  "project": {
+    "name": "asteroid-docking-bay",
+    "repo": "https://github.com/moWerk/asteroid-docking-bay",
+    "local_path": "~/Git/asteroid-docking-bay",
+    "description": "Python 3 CLI + web UI for managing USB hub port power and ADB operations for a fleet of AsteroidOS smartwatches docked on a w541 ThinkPad.",
+    "license": "GPL-3.0-only",
+    "co_maintainers": "two-eyes principle — co-maintainer reviews all PRs"
+  },
+
+  "infrastructure": {
+    "hub_host": {
+      "hostname": "mo-w541-eos",
+      "role": "Always-on hub controller. No GitHub SSH key — code gets here via rsync from p14s.",
+      "deploy_workflow": [
+        "git push  (from p14s)",
+        "rsync -av ~/Git/asteroid-docking-bay/ mo@mo-w541-eos:Git/asteroid-docking-bay/",
+        "ssh mo@mo-w541-eos './install.sh && systemctl --user restart asteroid-docking-bay-web.service'"
+      ],
+      "web_ui": "http://mo-w541-eos:8080/  (0.0.0.0 bind, systemd user service)",
+      "bottle_installed_via": "sudo pacman -S python-bottle  (NOT pip — Arch PEP 668)"
+    },
+    "dev_machine": "mo-p14s-omarchy"
+  },
+
+  "hardware": {
+    "watches": [
+      {"codename": "sturgeon",  "serial": "MQB7N15C09000847", "hub": "1-6", "port": 3},
+      {"codename": "catfish",   "serial": "720EX8C130737",    "hub": "1-3", "port": 3},
+      {"codename": "skipjack",  "serial": "870AX0A150253",    "hub": "1-2", "port": 3},
+      {"codename": "narwhal",   "serial": "901KPRW0013510",   "hub": "1-1", "port": 2, "device": "LG Watch W7",   "note": "Recently moved to test 'mondo hub' — may need remapping. Check config."},
+      {"codename": "sawfish",   "serial": "TKQ7N17406001852", "hub": "1-1", "port": 3, "device": "HUAWEI LEO-BX9"},
+      {"codename": "beluga",    "serial": "100c0a32",         "hub": null,  "port": null, "note": "In serials dict but not currently mapped to a port."}
+    ],
+
+    "hubs": {
+      "confirmed_in_config": [
+        {"location": "1-1", "chip": "ALCOR 05e3:0606", "usb": "2.0", "ports": 4},
+        {"location": "1-2", "chip": "ALCOR 05e3:0606", "usb": "2.0", "ports": 4},
+        {"location": "1-3", "chip": "ALCOR 05e3:0606", "usb": "2.0", "ports": 4},
+        {"location": "1-6", "chip": "ALCOR 05e3:0606", "usb": "2.0", "ports": 4}
+      ],
+      "mondo_hub": {
+        "status": "CONTEXT LOST TO COMPACTION",
+        "what_we_know": "User referred to it as 'the mondo hub'. Was tested with the cycle command and showed physical LED blinking (suggested real switching). Narwhal (W7) was plugged in for a remap test. However the hub turned out to also NOT do true VBUS switching — uhubctl reports 0000 off but VBUS stays live and watch keeps charging. Brand/model unknown — lost before compaction.",
+        "action_needed": "Ask user what the Manhattan/Mondo hub brand is for the record."
+      }
+    },
+
+    "critical_hardware_finding": {
+      "title": "ALCOR 05e3:0606 does data-line disconnect only, NOT true VBUS switching",
+      "detail": "All four docked hubs are ALCOR 05e3:0606 USB 2.0. uhubctl marks them as ppps=true and all commands exit 0. Port state correctly shows '0000 off' after switching. BUT: VBUS (5V) stays live on the pin. Watches keep charging regardless of port state. USB data lines are disconnected (ADB drops, device vanishes from USB enumeration) so ADB-based operations work. The 'mondo hub' exhibited the same behaviour despite LED blinking during cycle tests.",
+      "implication_for_battery_management": "The charge timer (the original core feature) does NOT work with these hubs. Watches charge continuously.",
+      "implication_for_adb_ops": "Reboot, Bootloader, Flash nightly all work fine — they use ADB which needs data lines, not VBUS.",
+      "fix": "Buy hubs with confirmed true VBUS switching. Yepkit YKUSH is confirmed. Check uhubctl compatible devices list: https://github.com/mvp/uhubctl#compatible-usb-hubs",
+      "uhubctl_permissions": "uhubctl runs as user 'mo' without sudo. Sysfs path fails with Permission denied but libusb fallback works (exit 0). Fixed spurious log noise by adding -S flag to uhubctl_set_power() call."
+    }
+  },
+
+  "codebase_state": {
+    "branch": "main",
+    "head": "8e693ea",
+    "recent_commits": [
+      "8e693ea docs: document data-line-only vs true VBUS PPPS hub behaviour",
+      "f69379d uhubctl: add -S flag to skip sysfs path and suppress spurious warning",
+      "7a40efc serve: fix Power off semantics; add uhubctl read-back verification",
+      "4f1f608 ui: polish pass — title, fonts, animations, halt rename, flash command rename",
+      "93316d6 serve: add ⏻ Halt submenu with Cut power / Reboot / Bootloader options",
+      "c1d41b1 serve: power column becomes clickable pill toggle with ↺ cycle icon",
+      "2e3081b serve: add per-watch charge button with live countdown",
+      "e14d0c8 serve: color-code battery cell by threshold (red/green/muted)",
+      "aab7a7c serve: group ports by hub with tree connectors, show empty ports, rename Update→Refresh",
+      "b625679 serve: fix JS syntax error in web UI template"
+    ]
+  },
+
+  "web_ui_feature_map": {
+    "api_routes": [
+      "GET  /              → serves _WEB_TEMPLATE",
+      "GET  /api/status    → {hubs:[...], thresholds:{low,high}}",
+      "POST /api/update/<codename>   → {ok:true} (noop, triggers client refresh)",
+      "POST /api/on/<codename>       → {ok, confirmed}",
+      "POST /api/off/<codename>      → {ok, confirmed}  (USB data cut only on ALCOR hubs)",
+      "POST /api/poweroff/<codename> → {ok, adb_shutdown, confirmed}  (adb shell poweroff + 3s + USB cut)",
+      "POST /api/reboot/<codename>   → {ok}  adb reboot",
+      "POST /api/bootloader/<codename> → {ok}  adb reboot bootloader",
+      "POST /api/cycle/<codename>    → {ok}  off 5s on",
+      "POST /api/charge/<codename>   → {ok, duration_seconds}  starts _run_charge_for_web thread",
+      "GET  /api/flash/<codename>    → SSE stream of flash log lines"
+    ],
+    "ui_features": [
+      "Hub grouping with ├─/└─ tree connectors and hub header rows",
+      "Empty ports shown at bottom of each hub group (Refresh button only)",
+      "Power column: pill toggle (green=ON / grey=OFF) + ↺ cycle icon",
+      "Battery cell: red < low_threshold, green in-band, muted > high_threshold",
+      "⏻ Halt submenu (appears when power ON): Power off | Reboot | Bootloader | ✕ — auto-collapses 4s",
+      "⚡ Charge button: starts charge cycle, live countdown in battery cell",
+      "Flash nightly: SSE log stream in inline expandable box below row",
+      "Refresh button: row pulses subtly, button pulses blue for 10s",
+      "All buttons: :active scale-down press feel, touch-action:manipulation for tablets",
+      "Title: Archivo Narrow 700 22px with ✨ ⋆ ˚ ✦ decoration matching CLI header",
+      "Red row flash if uhubctl confirmed=false (hub didn't actually switch)",
+      "Auto-refresh every 15s"
+    ],
+    "module_level_state_dicts": [
+      "_flash_tasks  — tracks in-progress flash SSE sessions",
+      "_charge_tasks — tracks in-progress charge cycles with charge_end_ts"
+    ]
+  },
+
+  "cli_commands": {
+    "status": "show all watches with hub, port, power, smart, ADB, battery",
+    "on / off / cycle": "port power control",
+    "charge": "manual charge cycle (adb wait → charge_duration_minutes → off)",
+    "check-charge": "periodic logic run by systemd timer",
+    "map": "auto-discover hub ports and assign codenames",
+    "test-ports": "re-test per-port PPPS for configured ports",
+    "discover": "scan ADB for watches and print serial+codename",
+    "flash [codename|all]": "flash AsteroidOS nightlies (renamed from flash-all)",
+    "serve [--host HOST] [--port PORT]": "start web UI"
+  },
+
+  "systemd_units": [
+    "asteroid-docking-bay-charge.timer  — periodic charge check (12h default)",
+    "asteroid-docking-bay-charge.service",
+    "asteroid-docking-bay-web.service   — web UI on 0.0.0.0:8080, Restart=on-failure"
+  ],
+
+  "known_bugs_and_limitations": [
+    {
+      "id": "ALCOR-NO-VBUS",
+      "severity": "fundamental hardware",
+      "description": "All current hubs do data-line disconnect only. Battery management non-functional.",
+      "workaround": "None in software. Need different hubs."
+    },
+    {
+      "id": "MONDO-HUB-UNKNOWN",
+      "severity": "documentation gap",
+      "description": "The 'Manhattan Mondo Hub' brand/model was lost to compaction. User should clarify.",
+      "workaround": "Ask user."
+    },
+    {
+      "id": "STALE-ROW-ON-UNPLUG",
+      "severity": "minor UX",
+      "description": "Unplugging a watch does not remove its row — the port mapping persists in config. Row stays, ADB column shows —.",
+      "workaround": "Manual edit of config.json to remove port entry, or add Unmap button (not yet implemented)."
+    }
+  ],
+
+  "pending_features_discussed_not_implemented": [
+    {
+      "feature": "Charge behaviour logging",
+      "detail": "Store per-watch charge history in a separate JSON. 3-cycle minimum before trusting calculated duration. Rolling average Δ%/min. Readjust after every charge.",
+      "storage": "Separate JSON file per watch (not config.json)"
+    },
+    {
+      "feature": "Unmap button in web UI",
+      "detail": "Remove a port-to-codename mapping from config.json via the UI. Currently requires manual config.json edit."
+    }
+  ],
+
+  "session_log": [
+    {
+      "date": "2026-07-01",
+      "summary": "Built entire web UI from scratch: Bottle-based serve command, SSE flash streaming, hub grouping with tree connectors, battery color-coding, charge countdown, power toggle pill, halt submenu, UI polish pass (Archivo Narrow, animations, touch feel). Debugged ALCOR hub VBUS-only issue. Added uhubctl -S flag and read-back verification. Renamed flash-all→flash. Documented hub hardware limitation."
+    },
+    {
+      "date": "2026-07-02",
+      "summary": "Investigated mondo hub — also data-line only. User gave up on VBUS management for now. Created this handover document. Established .investigation-logs/ incremental logging practice."
+    }
+  ]
+}
