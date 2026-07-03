@@ -212,8 +212,11 @@ config — all streamed live into an inline log below the row.
 - **ON / OFF toggle** — switches hub port power; confirms the state changed.
 - **⟳** — power-cycles the port (off → 5 s → on).
 - **⏻ Halt** — submenu: graceful OS shutdown, reboot, or reboot to bootloader.
-- **⚡ Charge** — manual one-shot charge cycle with a live countdown, and a
-  **◼ Stop charge** button while it runs.
+- **⚡ Charge** — charges to `high_threshold` (shown live as `⚡ 64% → 80%`),
+  polling the battery every 2 minutes and stopping exactly at the target
+  (capped by `charge_max_minutes`). Watches whose battery can't be read fall
+  back to a fixed `charge_duration_minutes` countdown. A **◼ Stop charge**
+  button is available while it runs.
 - **📉 Drain test** — standby battery drain measurement: powers the port off
   and lets the watch run on battery, waking it every 30 minutes for a battery
   reading until it reaches 15% or you press **◼ Stop test**. The battery
@@ -311,7 +314,8 @@ See `config.example.json` in this repo for a fully-annotated example.
 |---|---|---|
 | `low_threshold` | `40` | Charge if battery is below this % |
 | `high_threshold` | `80` | Power off if battery is at or above this % |
-| `charge_duration_minutes` | `30` | How long to charge per cycle |
+| `charge_duration_minutes` | `30` | Blind-mode charge duration (battery unreadable) |
+| `charge_max_minutes` | `240` | Hard cap for a charge-to-target cycle |
 | `adb_wait_seconds` | `15` | Seconds between ADB availability retries |
 | `adb_wait_retries` | `8` | Max retries (total wait: wait_seconds × retries) |
 | `check_interval_hours` | `12` | Documentation only — actual interval is set in the systemd timer |
