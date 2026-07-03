@@ -79,6 +79,12 @@ _adb_lock = threading.Lock()
 # Cache: fastboot serial → product codename, populated on first getvar call.
 _fastboot_products: dict[str, str] = {}
 
+# Serialises all uhubctl invocations: every call rescans the USB bus via
+# libusb, and concurrent scans (parallel web requests, background tasks)
+# contend with adb's libusb use during device churn.  RLock because
+# uhubctl_set_power read-backs via uhubctl_get_power.
+_uhubctl_lock = threading.RLock()
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -162,10 +168,14 @@ def _require_uhubctl():
 def uhubctl_list() -> list[dict]:
     """
     Return a list of controllable hubs as dicts:
-        {"location": "1-1", "description": "...", "ports": [1, 2, 3, 4]}
+        {"location": "1-1", "description": "...", "ports": [1, 2, 3, 4],
+         "power": {1: True, 2: False, ...}}
+    One full scan carries every port's power state, so callers that need
+    many ports should use "power" instead of per-port uhubctl_get_power calls.
     """
     _require_uhubctl()
-    rc, out, err = _run("uhubctl -S", check=False)
+    with _uhubctl_lock:
+        rc, out, err = _run("uhubctl -S", check=False)
     if rc != 0:
         if "Permission denied" in err or "Operation not permitted" in err:
             log.error(
@@ -191,11 +201,14 @@ def uhubctl_list() -> list[dict]:
             # "ppps" in the description flags per-port power switching support
             # at the hub level.  We still do a live per-port test in 'map'.
             ppps = "ppps" in desc.lower()
-            current = {"location": loc, "description": desc, "ppps": ppps, "ports": []}
+            current = {"location": loc, "description": desc, "ppps": ppps,
+                       "ports": [], "power": {}}
         elif stripped.startswith("Port ") and current is not None:
             try:
-                port_num = int(stripped.split()[1].rstrip(":"))
+                parts = stripped.split()
+                port_num = int(parts[1].rstrip(":"))
                 current["ports"].append(port_num)
+                current["power"][port_num] = "power" in parts[2:]
             except (ValueError, IndexError):
                 pass
     if current is not None:
@@ -205,7 +218,8 @@ def uhubctl_list() -> list[dict]:
 
 def uhubctl_get_power(location: str, port: int) -> bool | None:
     """Return True = powered on, False = powered off, None = unknown."""
-    rc, out, err = _run(f"uhubctl -S -l {location} -p {port}", check=False)
+    with _uhubctl_lock:
+        rc, out, err = _run(f"uhubctl -S -l {location} -p {port}", check=False)
     if rc != 0:
         if "Permission denied" in err or "Operation not permitted" in err:
             log.warning("uhubctl: permission denied querying %s port %d", location, port)
@@ -229,12 +243,13 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
     Raises RuntimeError on uhubctl command failure.
     """
     action = "on" if on else "off"
-    rc, _, err = _run(f"uhubctl -S -l {location} -p {port} -a {action}", check=False)
-    if rc != 0:
-        raise RuntimeError(
-            f"uhubctl failed setting hub {location} port {port} {action}: {err}"
-        )
-    confirmed = uhubctl_get_power(location, port) == on
+    with _uhubctl_lock:
+        rc, _, err = _run(f"uhubctl -S -l {location} -p {port} -a {action}", check=False)
+        if rc != 0:
+            raise RuntimeError(
+                f"uhubctl failed setting hub {location} port {port} {action}: {err}"
+            )
+        confirmed = uhubctl_get_power(location, port) == on
     if not confirmed:
         log.warning(
             "uhubctl set %s port %d %s: command succeeded but port state did not change"
@@ -242,6 +257,14 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
             location, port, action,
         )
     return confirmed
+
+
+def uhubctl_cycle(location: str, port: int, delay: int = 3) -> None:
+    """Power-cycle a port in a single uhubctl invocation (off → delay → on).
+    Used as the stale-node recovery primitive: unlike a plain off→on pair,
+    the cycle makes this dock raise a proper connect event."""
+    with _uhubctl_lock:
+        _run(f"uhubctl -S -l {location} -p {port} -a cycle -d {delay}", check=False)
 
 
 def _port_device_present(location: str, port: int) -> bool:
@@ -373,8 +396,7 @@ def test_port_power_switching(location: str, port: int,
                 # The dock can fail to raise a connect event after plain
                 # off→on, leaving a stale dark node that blocks
                 # re-enumeration; a power cycle makes it signal properly.
-                _run(f"uhubctl -S -l {location} -p {port} -a cycle -d 3",
-                     check=False)
+                uhubctl_cycle(location, port)
                 _wait_adb_state(serial, present=True, timeout=30)
         time.sleep(1)
         confirmed_on = (uhubctl_get_power(location, port) is True)
@@ -963,7 +985,7 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
                 # re-enumeration; a power cycle raises a proper connect event.
                 log.info("drain: %s not enumerating on %s:%s — power-cycling once",
                          serial, loc, port)
-                _run(f"uhubctl -S -l {loc} -p {port} -a cycle -d 3", check=False)
+                uhubctl_cycle(loc, port)
         log.warning("drain: ADB timeout for %s on %s:%s", serial, loc, port)
         return None
     finally:
@@ -1101,7 +1123,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
         for port_num in mapped_nums:
             port_str  = str(port_num)
             codename  = mapped[port_str]
-            power     = uhubctl_get_power(loc, port_num)
+            # Power state comes from the single full uhubctl scan above —
+            # a per-port uhubctl_get_power here would spawn one bus rescan
+            # per mapped port on every refresh.
+            power     = phys.get("power", {}).get(port_num)
             smart     = port_smart.get(port_str)
             slot      = f"{loc}:{port_num}"
             # Prefer a currently-connected serial over the first config match so
@@ -2036,18 +2061,28 @@ def cmd_serve(args, cfg: dict):
     def index():
         return _WEB_TEMPLATE
 
+    # Status responses are cached briefly and rebuilt under a lock so
+    # parallel tabs share one uhubctl/adb scan instead of racing their own.
+    status_cache = {"ts": 0.0, "body": ""}
+    status_lock = threading.Lock()
+
     @app.get("/api/status")
     def api_status():
         resp.content_type = "application/json"
-        c_cfg = load_config()
-        charge_cfg = c_cfg.get("charge", c_cfg)
-        return json.dumps({
-            "hubs": _web_status_data(c_cfg),
-            "thresholds": {
-                "low":  charge_cfg.get("low_threshold",  40),
-                "high": charge_cfg.get("high_threshold", 80),
-            },
-        })
+        with status_lock:
+            now = time.monotonic()
+            if now - status_cache["ts"] > 2.0:
+                c_cfg = load_config()
+                charge_cfg = c_cfg.get("charge", c_cfg)
+                status_cache["body"] = json.dumps({
+                    "hubs": _web_status_data(c_cfg),
+                    "thresholds": {
+                        "low":  charge_cfg.get("low_threshold",  40),
+                        "high": charge_cfg.get("high_threshold", 80),
+                    },
+                })
+                status_cache["ts"] = now
+            return status_cache["body"]
 
     @app.post("/api/update/<loc>/<port:int>")
     def api_update(loc, port):
