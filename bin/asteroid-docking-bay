@@ -944,11 +944,18 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
         uhubctl_set_power(loc, port, True)
         wait_secs = charge_cfg.get("adb_wait_seconds", 15)
         retries   = charge_cfg.get("adb_wait_retries", 8)
-        for _ in range(retries):
-            if adb_devices().get(serial) == "device":
-                return get_battery_level(serial)
-            if stop_event.wait(timeout=wait_secs):
-                return None
+        for attempt in range(2):
+            for _ in range(retries):
+                if adb_devices().get(serial) == "device":
+                    return get_battery_level(serial)
+                if stop_event.wait(timeout=wait_secs):
+                    return None
+            if attempt == 0:
+                # Stale dark node from the last power-off can block
+                # re-enumeration; a power cycle raises a proper connect event.
+                log.info("drain: %s not enumerating on %s:%s — power-cycling once",
+                         serial, loc, port)
+                _run(f"uhubctl -S -l {loc} -p {port} -a cycle -d 3", check=False)
         log.warning("drain: ADB timeout for %s on %s:%s", serial, loc, port)
         return None
     finally:
