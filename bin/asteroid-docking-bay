@@ -244,51 +244,160 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
     return confirmed
 
 
-def test_port_power_switching(location: str, port: int) -> tuple[bool, str]:
+def _port_device_present(location: str, port: int) -> bool:
+    """Kernel's view: does an enumerated USB device exist on this hub port?"""
+    child = f"{location}.{port}" if "-" in location else f"{location}-{port}"
+    return Path(f"/sys/bus/usb/devices/{child}").exists()
+
+
+def _wait_port_device(location: str, port: int, present: bool, timeout: float) -> bool:
+    """Poll sysfs until the port's device is present/absent. True if reached."""
+    deadline = time.time() + timeout
+    while True:
+        if _port_device_present(location, port) is present:
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.5)
+
+
+def _wait_adb_state(serial: str, present: bool, timeout: float) -> bool:
+    """Poll `adb devices` until serial is present/absent. True if reached.
+
+    Samples from a failed adb invocation are discarded: the adb server is
+    known to segfault during disconnect storms, and its freshly-restarted
+    replacement briefly reports an empty device list — which would read as
+    "device gone" and fake a VBUS-cut confirmation.
     """
-    Confirm a hub port actually responds to power commands by toggling it.
-    Briefly interrupts power to any connected device (~3 seconds total).
-    Returns (smart: bool, reason: str).
+    deadline = time.time() + timeout
+    while True:
+        devs = adb_devices_checked()
+        if devs is not None and ((devs.get(serial) == "device") is present):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(1)
+
+
+def adb_external_power(serial: str) -> bool | None:
+    """Watch's own view: is it on external power (AC/USB/wireless)? None = unknown."""
+    rc, out, _ = _run(f"adb -s {serial} shell dumpsys battery", check=False)
+    if rc != 0 or not out.strip():
+        return None
+    vals = []
+    for line in out.splitlines():
+        line = line.strip().lower()
+        for key in ("ac powered:", "usb powered:", "wireless powered:"):
+            if line.startswith(key):
+                vals.append(line.split(":", 1)[1].strip() == "true")
+    return any(vals) if vals else None
+
+
+def test_port_power_switching(location: str, port: int,
+                              serial: str | None = None) -> tuple[bool | None, str]:
+    """
+    Confirm a hub port actually cuts VBUS, not just its status register.
+    Briefly interrupts power to any connected device (up to ~30 s with a device).
+
+    Hubs are known to acknowledge power commands and toggle the status bit
+    while VBUS stays hot, so the status register alone proves nothing.  sysfs
+    is also unreliable here: hubs don't always raise a disconnect event for a
+    port they powered off, leaving a stale kernel device node behind while the
+    device is actually dark.  Evidence hierarchy, strongest first:
+      1. ADB: the adb server actively talks to the device — if VBUS is cut it
+         drops the device within seconds; if the device keeps chatting, ask it
+         directly (dumpsys battery) whether it still sees external power.
+      2. sysfs disappearance: positive proof of a cut (but persistence proves
+         nothing, see above).
+    Returns (smart, reason): True = VBUS cut confirmed, False = device
+    demonstrably kept external power, None = could not be verified.
 
     Tests in the direction that restores the port to its initial state:
-    - If port is ON:  off → verify off → on → verify on  (ends ON)
-    - If port is OFF: on → verify on → off → verify off  (ends OFF)
+    - If port is ON:  off → verify → on   (ends ON)
+    - If port is OFF: on → verify → off   (ends OFF)
     """
     initial = uhubctl_get_power(location, port)
 
-    if initial is not False:
-        uhubctl_set_power(location, port, False)
-        time.sleep(1.5)
-        confirmed_off = (uhubctl_get_power(location, port) is False)
+    if initial is False:
+        # Bring the port up first; a running battery-powered watch re-attaches
+        # in a few seconds.  One that must cold-boot won't make the window and
+        # stays unverified — rerun test-ports once the fleet is up.
         uhubctl_set_power(location, port, True)
-        time.sleep(1.5)
+        if serial:
+            _wait_adb_state(serial, present=True, timeout=25)
+        else:
+            _wait_port_device(location, port, present=True, timeout=8)
+        time.sleep(1)
         confirmed_on = (uhubctl_get_power(location, port) is True)
     else:
-        uhubctl_set_power(location, port, True)
-        time.sleep(1.5)
-        confirmed_on = (uhubctl_get_power(location, port) is True)
-        uhubctl_set_power(location, port, False)
-        time.sleep(1.5)
-        confirmed_off = (uhubctl_get_power(location, port) is False)
+        confirmed_on = True  # measured again after the restore below
 
-    if confirmed_off and confirmed_on:
-        return True, "per-port power switching confirmed"
-    parts = []
-    if not confirmed_off:
-        parts.append("power-off unresponsive")
-    if not confirmed_on:
-        parts.append("power-on unresponsive")
-    return False, "; ".join(parts) or "no state change observed"
+    adb_before    = bool(serial) and adb_devices().get(serial) == "device"
+    device_before = _port_device_present(location, port)
+
+    uhubctl_set_power(location, port, False)
+    time.sleep(1)
+    confirmed_off = (uhubctl_get_power(location, port) is False)
+
+    verdict: bool | None
+    if adb_before:
+        if _wait_adb_state(serial, present=False, timeout=10):
+            verdict, why = True, "VBUS cut confirmed — device dropped off ADB"
+        else:
+            powered = adb_external_power(serial)
+            if powered is False:
+                verdict, why = True, ("VBUS cut confirmed — device reports no "
+                                      "external power (self-powered data link)")
+            elif powered is True:
+                verdict, why = False, ("device still reports external power — "
+                                       "VBUS not actually switched")
+            else:
+                verdict, why = None, ("device stayed on ADB but its power state "
+                                      "is unreadable — VBUS cut unverified")
+    elif device_before:
+        if _wait_port_device(location, port, present=False, timeout=8):
+            verdict, why = True, "VBUS cut confirmed — device dropped off the bus"
+        else:
+            verdict, why = None, ("device stayed enumerated — can't distinguish a "
+                                  "VBUS cut from a stale kernel node without ADB")
+    else:
+        verdict, why = None, "no device on port — VBUS cut unverified"
+
+    # Restore the port to its initial state.  For an initially-off port the
+    # off-verify above already left it off; for an initially-on port power it
+    # back up and re-measure the register.
+    if initial is not False:
+        uhubctl_set_power(location, port, True)
+        if adb_before and verdict is True:
+            if not _wait_adb_state(serial, present=True, timeout=30):
+                # The dock can fail to raise a connect event after plain
+                # off→on, leaving a stale dark node that blocks
+                # re-enumeration; a power cycle makes it signal properly.
+                _run(f"uhubctl -S -l {location} -p {port} -a cycle -d 3",
+                     check=False)
+                _wait_adb_state(serial, present=True, timeout=30)
+        time.sleep(1)
+        confirmed_on = (uhubctl_get_power(location, port) is True)
+
+    if not (confirmed_off and confirmed_on):
+        parts = []
+        if not confirmed_off:
+            parts.append("power-off unresponsive")
+        if not confirmed_on:
+            parts.append("power-on unresponsive")
+        return False, "; ".join(parts)
+    return verdict, why
 
 
 # ── ADB wrappers ──────────────────────────────────────────────────────────────
 
-def adb_devices() -> dict[str, str]:
-    """Return {serial: state} for all ADB-visible devices."""
-    rc, out, _ = _run("adb devices", check=False)
+def adb_devices_checked() -> dict[str, str] | None:
+    """Like adb_devices, but None when the adb call itself failed (server
+    crash / not installed) — distinct from a genuinely empty device list."""
+    rc, out, err = _run("adb devices", check=False)
     if rc != 0:
-        log.warning("adb devices failed — is adb installed?")
-        return {}
+        log.warning("adb devices failed (rc=%s): %s", rc, err.strip() or "no stderr")
+        return None
     result: dict[str, str] = {}
     for line in out.splitlines()[1:]:
         if not line.strip():
@@ -297,6 +406,11 @@ def adb_devices() -> dict[str, str]:
         if len(parts) >= 2:
             result[parts[0]] = parts[1]
     return result
+
+
+def adb_devices() -> dict[str, str]:
+    """Return {serial: state} for all ADB-visible devices ({} on failure)."""
+    return adb_devices_checked() or {}
 
 
 def adb_shell(serial: str, cmd: str) -> tuple[int, str, str]:
@@ -1175,9 +1289,9 @@ def _sse_remap_gen(loc: str, port: int):
 
                     _emit(f"Mapped {loc}:p{port} → {codename}")
 
-                    _emit("Testing port switching (PPPS, ~3 s)…")
+                    _emit("Testing port switching (PPPS, up to ~30 s)…")
                     try:
-                        smart, msg = test_port_power_switching(loc, port)
+                        smart, msg = test_port_power_switching(loc, port, found_serial)
                         with _config_lock:
                             cfg = load_config()
                             for hub in cfg.get("hubs", []):
@@ -1185,7 +1299,9 @@ def _sse_remap_gen(loc: str, port: int):
                                     hub.setdefault("port_smart", {})[str(port)] = smart
                                     break
                             save_config(cfg)
-                        _emit(f"Port: {'SMART ✓' if smart else 'NOT SMART'} — {msg}")
+                        verdict = ("SMART ✓" if smart
+                                   else "NOT SMART" if smart is False else "UNVERIFIED")
+                        _emit(f"Port: {verdict} — {msg}")
                     except RuntimeError as e:
                         _emit(f"PPPS test error: {e}")
 
@@ -2190,14 +2306,14 @@ def cmd_map(args, cfg: dict):
                 cfg.setdefault("serials", {})[serial] = codename
                 known_serials.add(serial)
 
-                # PPPS test inline — port is ON, takes ~3 s.
+                # PPPS test inline — port is ON, takes up to ~30 s.
                 print(f"  …testing PPPS…", end="", flush=True)
                 try:
-                    smart, msg = test_port_power_switching(loc, port)
+                    smart, msg = test_port_power_switching(loc, port, serial)
                 except RuntimeError as e:
                     smart, msg = False, str(e)
                 port_smart[str(port)] = smart
-                print(f"  {'[smart]' if smart else '[NOT SMART]'}")
+                print(f"  {'[smart]' if smart else '[NOT SMART]' if smart is False else '[unverified]'}")
             else:
                 print("(no response)")
                 no_response.append(f"{loc}:p{port}")
@@ -2253,28 +2369,35 @@ def cmd_test_ports(args, cfg: dict):
     Updates the config with the results.  Useful after moving watches between ports
     or if the initial 'map' test was skipped.
     """
-    targets = _resolve_targets(args.codename, cfg)
-    if not targets:
+    wanted = _resolve_targets(args.codename, cfg)
+    if not wanted:
         print("No watches configured. Run: asteroid-docking-bay map")
         return
 
-    print(f"Testing per-port power switching for: {', '.join(targets)}")
-    print("Each port is toggled off then on (~3 seconds per port).\n")
+    # Iterate mapped ports, not codenames: a codename can be mapped on more
+    # than one port (two units of the same watch), and a per-codename lookup
+    # only ever finds the first.
+    targets = [(hub["location"], int(p), cn)
+               for hub in cfg.get("hubs", [])
+               for p, cn in hub.get("ports", {}).items()
+               if cn in wanted]
+
+    print(f"Testing per-port power switching for: "
+          f"{', '.join(f'{cn}@{loc}:p{port}' for loc, port, cn in targets)}")
+    print("Each port is toggled off then on (up to ~30 s per port).\n")
 
     results: list[tuple[str, str, int, bool, str]] = []
 
-    for codename in targets:
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port", codename)
-            continue
+    for loc, port, codename in targets:
         print(f"  {codename} (hub {loc} port {port})… ", end="", flush=True)
         try:
-            smart, msg = test_port_power_switching(loc, port)
+            smart, msg = test_port_power_switching(
+                loc, port, find_serial_for_loc_port(cfg, loc, port))
         except RuntimeError as e:
             smart, msg = False, str(e)
 
-        icon = "SMART  [OK]" if smart else "NOT SMART [!!]"
+        icon = ("SMART  [OK]" if smart
+                else "NOT SMART [!!]" if smart is False else "UNVERIFIED [?]")
         print(f"{icon}  — {msg}")
         results.append((codename, loc, port, smart, msg))
 
@@ -2287,7 +2410,7 @@ def cmd_test_ports(args, cfg: dict):
         save_config(cfg)
         print(f"\nResults saved to {CONFIG_FILE}")
 
-        non_smart = [(c, loc, p) for c, loc, p, s, _ in results if not s]
+        non_smart = [(c, loc, p) for c, loc, p, s, _ in results if s is False]
         if non_smart:
             print("\nNOT power-switchable:")
             for codename, loc, port in non_smart:
