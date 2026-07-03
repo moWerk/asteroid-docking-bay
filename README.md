@@ -222,6 +222,11 @@ config — all streamed live into an inline log below the row.
   `~/.local/share/asteroid-docking-bay/drain-tests/`.
 - **Flash nightly** — full nightly flash streamed live into the inline log.
 
+The ADB column shows the AsteroidOS logo next to `device` when the watch is
+detected running AsteroidOS; other watches show their detected OS instead
+(e.g. `WearOS`) — handy for mixed collections that dock non-AsteroidOS
+watches for battery care. Detection runs once per boot over ADB.
+
 **Physical moves are followed automatically for booted watches.** Every
 status refresh compares each ADB-online watch's real hub port (from sysfs)
 against the config; when a watch has demonstrably moved — relocated to

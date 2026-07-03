@@ -1118,6 +1118,37 @@ def _parse_hub_port_path(path: str) -> "tuple[str, int] | None":
 # Serials that could not be identified via ADB — don't re-probe every refresh.
 _soft_remap_unknown: set[str] = set()
 
+# Cache: serial → detected OS ("asteroidos", "WearOS", or an os-release NAME).
+# Entries are dropped when the watch goes offline, so a reflash is re-detected
+# on its next boot.
+_watch_os: dict[str, str] = {}
+
+
+def detect_watch_os(serial: str) -> str:
+    """Best-effort OS identification for an ADB-online watch."""
+    rc, out, _ = adb_shell(serial, "cat /etc/os-release 2>/dev/null")
+    if rc == 0 and out.strip():
+        kv = {}
+        for line in out.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                kv[k.strip()] = v.strip().strip('"')
+        if kv.get("ID", "").lower() == "asteroid" or "asteroid" in kv.get("NAME", "").lower():
+            return "asteroidos"
+        if kv.get("NAME"):
+            return kv["NAME"]
+    # Android-based (Wear OS) watches have getprop instead of os-release.
+    rc, out, _ = adb_shell(serial, "getprop ro.build.version.release")
+    if rc == 0 and out.strip():
+        return "WearOS"
+    return "unknown"
+
+
+def _watch_os_for(serial: str) -> str:
+    if serial not in _watch_os:
+        _watch_os[serial] = detect_watch_os(serial)
+    return _watch_os[serial]
+
 
 def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     """
@@ -1227,6 +1258,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
     online_by_path = {p: s for p, s in adb_by_path.items()
                       if devices.get(s) == "device"}
     cfg = _soft_remap(cfg, online_by_path) or cfg
+    # Evict OS cache entries for offline watches → re-detected on next boot.
+    for s in list(_watch_os):
+        if devices.get(s) != "device":
+            _watch_os.pop(s)
     physical = {h["location"]: h for h in uhubctl_list()}
     result: list[dict] = []
 
@@ -1267,6 +1302,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
             if adb_state is None and serial and serial in fb_devices:
                 adb_state = "fastboot"
             battery   = get_battery_level(serial) if adb_state == "device" else None
+            watch_os  = _watch_os_for(serial) if adb_state == "device" else None
             flashing  = ((slot in _flash_tasks and not _flash_tasks[slot].get("done", True))
                          or (slot in _remap_tasks and not _remap_tasks[slot].get("done", True)))
             charging_active = (slot in _charge_tasks
@@ -1291,7 +1327,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "port": port_num, "codename": codename, "serial": serial,
                 "slot_loc": loc,
                 "power": power, "smart": smart,
-                "adb": adb_state, "battery": battery,
+                "adb": adb_state, "battery": battery, "os": watch_os,
                 "flashing": flashing, "empty": False,
                 "charging_active": charging_active,
                 "charge_end_ts": charge_end_ts,
@@ -1316,6 +1352,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "power": None,  # skip per-port query for empty slots
                 "smart": port_smart.get(str(port_num)),
                 "adb": devices.get(adb_serial) if adb_serial else ("fastboot" if fb_serial else None),
+                "os": (_watch_os_for(adb_serial)
+                       if adb_serial and devices.get(adb_serial) == "device" else None),
                 "battery": None,
                 "flashing": remapping, "empty": True,
                 "fastboot_product": fb_product,
@@ -1609,8 +1647,13 @@ function mkbat(v,lo,hi){
   const cls=v<lo?'err':v<=hi?'on':'dim';
   return `<span class="${cls}">${v}%</span>`;
 }
-function mkadb(adb,fbprod){
-  if(adb==='device')return '<span class="on">device</span>';
+const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
+function mkadb(adb,fbprod,os){
+  if(adb==='device'){
+    if(os==='asteroidos')return `${AOSLOGO}<span class="on" title="AsteroidOS">device</span>`;
+    if(os&&os!=='unknown')return `<span class="on">${esc(os)}</span>`;
+    return '<span class="on">device</span>';
+  }
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="warn">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -1636,7 +1679,7 @@ function render(data){
           ?`<span class="dim">${esc(p.codename)} <span style="font-size:.8em;opacity:.6">(click Refresh)</span></span>`
           :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>');
         const adbCell=p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`
-          :(p.adb?mkadb(p.adb,null):'<span class="dim">&mdash;</span>');
+          :(p.adb?mkadb(p.adb,null,p.os):'<span class="dim">&mdash;</span>');
         rows.push(
           `<tr class="wr empty" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
@@ -1663,7 +1706,7 @@ function render(data){
         const noSw=p.smart===false;
         const dp=(busy||noSw)?' disabled':'';
         const noSwT=noSw?' title="port cannot switch power (not smart)"':'';
-        const adb=mkadb(p.adb,null);
+        const adb=mkadb(p.adb,null,p.os);
         let bat;
         if(charging){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">&#9889; ${m}m${String(s).padStart(2,'0')}s</span>`;}
         else if(draining){
