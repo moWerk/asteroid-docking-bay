@@ -19,8 +19,8 @@ one command (`flash`).
 2. The `asteroid-docking-bay` CLI controls hub port power via `uhubctl` and
    communicates with watches via `adb`.
 3. A systemd user timer fires every 12 hours, powers each watch on, checks
-   the battery over ADB, charges for ~30 minutes if below 40%, then powers
-   the port back off.
+   the battery over ADB, charges it to 80% if below 40%, then powers the
+   port back off.
 
 Battery level is read from `/sys/class/power_supply/battery/capacity` over
 ADB shell. This is the standard Linux power-supply class — `dumpsys` and
@@ -142,16 +142,17 @@ stuck watch.
 ```
 asteroid-docking-bay charge <codename|all> [--duration MIN]
 ```
-Manual one-time charge cycle: power on → wait for ADB → charge for
-`--duration` minutes (or `charge_duration_minutes` from config) → power off.
-The `high_threshold` check is skipped — the charge always runs.
+Manual one-time charge cycle: power on → wait for ADB → charge to
+`high_threshold` (polling the battery, capped by `charge_max_minutes`) →
+power off. `--duration MIN` forces a timed charge instead; watches whose
+battery can't be read fall back to `charge_duration_minutes`.
 
 ```
 asteroid-docking-bay check-charge
 ```
 Periodic charge logic (same as what the timer runs). Safe to run manually for
-testing. For each configured watch: wakes it, checks battery, charges if
-below `low_threshold`, powers off.
+testing. For each configured watch: wakes it, checks battery, and if below
+`low_threshold` charges it to `high_threshold` before powering off.
 
 ```
 asteroid-docking-bay map

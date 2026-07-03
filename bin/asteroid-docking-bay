@@ -940,6 +940,47 @@ def _flash_one_watch(
 _CHARGE_POLL_SEC = 120  # battery poll interval in charge-to-target mode
 
 
+def charge_to_target(codename: str, serial: "str | None",
+                     charge_cfg: dict) -> "int | None":
+    """
+    Charge a watch whose port is already powered until high_threshold,
+    polling the battery every _CHARGE_POLL_SEC and hard-capped by
+    charge_max_minutes.  Falls back to a blind charge_duration_minutes sleep
+    when the battery can't be read.  Returns the final battery level (None
+    in blind mode).  Used by the CLI charge command and the periodic timer;
+    the web UI has its own loop with stop-event and live task state.
+    """
+    target  = charge_cfg.get("high_threshold", 80)
+    max_sec = charge_cfg.get("charge_max_minutes", 240) * 60
+    level = get_battery_level(serial) if serial else None
+    if level is None:
+        duration = charge_cfg.get("charge_duration_minutes", 30)
+        log.info("%s: battery unreadable — charging blind for %d min",
+                 codename, duration)
+        time.sleep(duration * 60)
+        return None
+    if level >= target:
+        log.info("%s: already at %d%% (≥%d%%) — nothing to do",
+                 codename, level, target)
+        return level
+    log.info("%s: charging %d%% → %d%%", codename, level, target)
+    deadline = time.time() + max_sec
+    while time.time() < deadline:
+        time.sleep(_CHARGE_POLL_SEC)
+        lvl = get_battery_level(serial)
+        if lvl is None:
+            continue  # transient read failure — keep charging
+        if lvl != level:
+            log.info("%s: %d%%", codename, lvl)
+        level = lvl
+        if level >= target:
+            log.info("%s: reached %d%% (target %d%%)", codename, level, target)
+            return level
+    log.warning("%s: target %d%% not reached within charge_max_minutes — "
+                "stopping at %d%%", codename, target, level)
+    return level
+
+
 def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
     """Run a manual charge cycle for the web UI; updates _charge_tasks[slot].
 
@@ -2121,11 +2162,12 @@ def cmd_cycle(args, cfg: dict):
 
 
 def cmd_charge(args, cfg: dict):
-    """Manual one-time charge cycle, bypassing the low_threshold check."""
+    """Manual one-time charge cycle, bypassing the low_threshold check.
+    Charges to high_threshold unless --duration forces a timed charge."""
     charge_cfg = cfg["charge"]
-    duration = args.duration if args.duration is not None else charge_cfg["charge_duration_minutes"]
     for codename in _resolve_targets(args.codename, cfg):
-        _charge_one(codename, cfg, charge_cfg, duration_minutes=duration, force=True)
+        _charge_one(codename, cfg, charge_cfg,
+                    duration_minutes=args.duration, force=True)
 
 
 def _charge_one(
@@ -2136,11 +2178,13 @@ def _charge_one(
     force: bool = False,
 ) -> bool:
     """
-    Power on a watch, optionally check battery, charge for duration_minutes, power off.
+    Power on a watch and charge it, then power off.
     Returns True on success, False if the port is not mapped.
 
-    If the port is confirmed non-smart, power cycling is skipped but ADB is still
-    used to read the battery level (useful even without switching capability).
+    Default is charge-to-target: poll the battery and stop at high_threshold.
+    An explicit duration_minutes forces a timed charge instead.  If the port
+    is confirmed non-smart, power cycling is skipped but ADB is still used to
+    read the battery level (useful even without switching capability).
     """
     loc, port = find_port_for_codename(cfg, codename)
     if loc is None:
@@ -2150,7 +2194,6 @@ def _charge_one(
     smart = is_port_smart(cfg, codename)
     can_switch = smart is not False
 
-    duration = duration_minutes or charge_cfg["charge_duration_minutes"]
     high = charge_cfg["high_threshold"]
 
     if not can_switch:
@@ -2175,22 +2218,20 @@ def _charge_one(
                 if can_switch:
                     uhubctl_set_power(loc, port, False)
                 return True
-        else:
-            log.warning("%s: could not read battery level — charging anyway", codename)
-    else:
-        if not can_switch:
-            log.warning("%s: ADB unavailable and port is non-smart — nothing to do", codename)
-            return True
-        log.warning("%s: ADB unavailable — charging blind for %d minutes", codename, duration)
+    elif not can_switch:
+        log.warning("%s: ADB unavailable and port is non-smart — nothing to do", codename)
+        return True
 
     if can_switch:
-        log.info("%s: charging for %d minutes…", codename, duration)
-        time.sleep(duration * 60)
-
-        if serial:
-            level_after = get_battery_level(serial)
-            if level_after is not None:
-                log.info("%s: battery now at %d%% after charging", codename, level_after)
+        if duration_minutes is not None:
+            log.info("%s: timed charge for %d minutes…", codename, duration_minutes)
+            time.sleep(duration_minutes * 60)
+            if serial:
+                level_after = get_battery_level(serial)
+                if level_after is not None:
+                    log.info("%s: battery now at %d%% after charging", codename, level_after)
+        else:
+            charge_to_target(codename, serial, charge_cfg)
 
         uhubctl_set_power(loc, port, False)
         log.info("%s: port powered off, charge cycle complete", codename)
@@ -2205,7 +2246,8 @@ def cmd_check_charge(args, cfg: dict):
     For each configured watch:
       - Wake it (power on).
       - Wait for ADB.
-      - If battery < low_threshold: charge for charge_duration_minutes.
+      - If battery < low_threshold: charge to high_threshold
+        (charge_to_target; blind charge_duration_minutes fallback).
       - Power back off.
     Watches that are already powered on have their battery checked in-place;
     if they are above high_threshold they are powered down.
@@ -2213,7 +2255,6 @@ def cmd_check_charge(args, cfg: dict):
     charge_cfg = cfg["charge"]
     low = charge_cfg["low_threshold"]
     high = charge_cfg["high_threshold"]
-    duration = charge_cfg["charge_duration_minutes"]
 
     log.info("Periodic charge check starting")
 
@@ -2262,11 +2303,8 @@ def cmd_check_charge(args, cfg: dict):
                 log.info("%s: at %d%% (≥%d%%), powering off", codename, level, high)
                 uhubctl_set_power(loc, port, False)
             elif level < low:
-                log.info("%s: at %d%% (<%d%%), charging for %d minutes", codename, level, low, duration)
-                time.sleep(duration * 60)
-                level_after = get_battery_level(serial)
-                if level_after is not None:
-                    log.info("%s: battery now %d%% after charging", codename, level_after)
+                log.info("%s: at %d%% (<%d%%), charging to %d%%", codename, level, low, high)
+                charge_to_target(codename, serial, charge_cfg)
                 uhubctl_set_power(loc, port, False)
                 log.info("%s: port powered off", codename)
             else:
