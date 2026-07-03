@@ -1150,6 +1150,7 @@ def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
     try:
         log.info("%s: drain test — reading initial battery", codename)
         serial = find_serial_for_loc_port(cfg, loc, port)
+        task["serial"] = serial
         start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
         if start_pct is None:
             log.warning("%s: drain test: could not read initial battery — aborting", codename)
@@ -1214,6 +1215,7 @@ def _save_drain_results(slot: str, codename: str) -> None:
         payload = {
             "codename":               codename,
             "slot":                   slot,
+            "serial":                 task.get("serial"),
             "start_ts":               task["start_ts"],
             "start_pct":              task["start_pct"],
             "end_pct":                task.get("last_pct"),
@@ -1370,6 +1372,40 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+# Latest completed drain test per codename, cached on the results dir mtime.
+_drain_summary_cache: dict = {"mtime": None, "by_codename": {}}
+
+
+def _latest_drain_summaries() -> dict[str, dict]:
+    """{codename(lower): {ts, rate, est_h, serial}} from the newest saved
+    drain test per watch.  est_h = estimated 100→15% standby time — the
+    battery-health / wearability figure."""
+    try:
+        mtime = _DRAIN_RESULTS_DIR.stat().st_mtime
+    except OSError:
+        return {}
+    if _drain_summary_cache["mtime"] == mtime:
+        return _drain_summary_cache["by_codename"]
+    best: dict[str, dict] = {}
+    for f in _DRAIN_RESULTS_DIR.glob("*.json"):
+        try:
+            with f.open() as fh:
+                d = json.load(fh)
+        except Exception:
+            continue
+        cn   = (d.get("codename") or "").lower()
+        rate = d.get("drain_rate_pct_per_hour")
+        ts   = d.get("start_ts") or 0
+        if not cn or not rate or rate <= 0:
+            continue
+        if cn not in best or ts > best[cn]["ts"]:
+            best[cn] = {"ts": ts, "rate": rate, "est_h": 85.0 / rate,
+                        "serial": d.get("serial")}
+    _drain_summary_cache["mtime"] = mtime
+    _drain_summary_cache["by_codename"] = best
+    return best
+
+
 def _web_status_data(cfg: dict) -> list[dict]:
     """
     Return hub-structured status including unmapped (empty) ports.
@@ -1395,6 +1431,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
         if devices.get(s) != "device":
             _watch_os.pop(s)
     physical = {h["location"]: h for h in uhubctl_list()}
+    drain_summaries = _latest_drain_summaries()
     result: list[dict] = []
 
     for cfg_hub in cfg.get("hubs", []):
@@ -1454,6 +1491,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
             charge_end_ts = ct.get("charge_end_ts")
             charge_pct    = ct.get("pct")    if charging_active else None
             charge_target = ct.get("target") if charging_active else None
+            drain_last = drain_summaries.get(codename.lower())
+            if (drain_last and drain_last.get("serial") and serial
+                    and drain_last["serial"] != serial):
+                drain_last = None  # result belongs to another unit of this codename
             drain = None
             if slot in _drain_tasks:
                 dt = _drain_tasks[slot]
@@ -1475,7 +1516,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "charging_active": charging_active,
                 "charge_end_ts": charge_end_ts,
                 "charge_pct": charge_pct, "charge_target": charge_target,
-                "drain": drain,
+                "drain": drain, "drain_last": drain_last,
             })
 
         for port_num in empty_nums:
@@ -1814,6 +1855,7 @@ function render(data){
   const lo=(data&&data.thresholds&&data.thresholds.low)||40;
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
+  const wearH=(data&&data.wearable_min_hours)||24;
   if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   hubs.forEach(hub=>{
@@ -1875,7 +1917,17 @@ function render(data){
           const dr=p.drain;
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
           bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
-        }else{bat=mkbat(p.battery,lo,hi);}
+        }else{
+          bat=mkbat(p.battery,lo,hi);
+          if(p.drain_last&&p.drain_last.est_h!=null){
+            const ok=p.drain_last.est_h>=wearH;
+            const when=new Date(p.drain_last.ts*1000).toLocaleDateString();
+            const tip=ok
+              ?`holds ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — wearable`
+              :`holds only ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — below ${wearH}h wearable threshold: battery swap candidate / dev watch`;
+            bat+=` <span class="${ok?'dim':'err'}" style="font-size:10px" title="${tip}">${ok?'&#8986;':'&#129707;'}~${fmtDur(p.drain_last.est_h)}</span>`;
+          }
+        }
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
@@ -2021,21 +2073,28 @@ function toggleHistory(){
       el.innerHTML='<p class="dim" style="margin-top:14px">No drain tests recorded yet &mdash; results land here after the first &#x1F4C9; Drain test finishes.</p>';
       return;
     }
+    const wh=d.wearable_min_hours||24;
     const rows=d.tests.map(t=>{
       const dur=(t.end_ts&&t.start_ts&&t.end_ts>t.start_ts)?fmtDur((t.end_ts-t.start_ts)/3600):'&mdash;';
       const rate=t.rate!=null?t.rate.toFixed(2)+'%/h':'&mdash;';
-      const est=(t.rate!=null&&t.rate>0)?'~'+fmtDur(85/t.rate):'&mdash;';
+      const estH=(t.rate!=null&&t.rate>0)?85/t.rate:null;
+      const est=estH!=null?'~'+fmtDur(estH):'&mdash;';
+      const verdict=estH==null?'<span class="dim">&mdash;</span>'
+        :estH>=wh?'<span class="on">&#8986; wearable</span>'
+        :'<span class="err">&#129707; swap candidate</span>';
       const dt=t.start_ts?new Date(t.start_ts*1000).toLocaleString([],{dateStyle:'medium',timeStyle:'short'}):'&mdash;';
       return `<tr><td><b>${esc(t.codename)}</b></td><td class="dim">${dt}</td>`+
         `<td>${t.start_pct}% &rarr; ${t.end_pct!=null?t.end_pct+'%':'?'}</td>`+
         `<td class="dim">${dur}</td><td>${rate}</td><td class="dim">${est}</td>`+
+        `<td>${verdict}</td>`+
         `<td class="dim">${t.stopped?'stopped':'done'} (${t.samples} samples)</td></tr>`;
     }).join('');
     el.innerHTML=
       `<h1 style="font-size:15px;margin:24px 0 4px">&#x1F4C9; drain test history</h1>`+
-      `<p class="meta">standby drain per test &mdash; a rising rate across months means battery wear</p>`+
+      `<p class="meta">standby drain per test &mdash; a rising rate across months means battery wear; `+
+      `&#8986; = holds &ge;${wh}h standby (wearable_min_hours)</p>`+
       `<table><thead><tr><th>Watch</th><th>Date</th><th>Charge</th><th>Duration</th>`+
-      `<th>Rate</th><th>Est. 100&rarr;15%</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
+      `<th>Rate</th><th>Est. 100&rarr;15%</th><th>Verdict</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
   });
 }
 function doStopDrain(c){
@@ -2444,6 +2503,7 @@ def cmd_serve(args, cfg: dict):
                         "high": charge_cfg.get("high_threshold", 80),
                     },
                     "drain_floor": _DRAIN_FLOOR_PCT,
+                    "wearable_min_hours": c_cfg.get("wearable_min_hours", 24),
                 })
                 status_cache["ts"] = now
             return status_cache["body"]
@@ -2590,7 +2650,9 @@ def cmd_serve(args, cfg: dict):
                 "samples":   len(readings),
             })
         tests.sort(key=lambda t: t.get("start_ts") or 0, reverse=True)
-        return json.dumps({"tests": tests})
+        c_cfg = load_config()
+        return json.dumps({"tests": tests,
+                           "wearable_min_hours": c_cfg.get("wearable_min_hours", 24)})
 
     @app.post("/api/drain/<loc>/<port:int>")
     def api_drain(loc, port):

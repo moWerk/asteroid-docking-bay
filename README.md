@@ -225,8 +225,16 @@ config — all streamed live into an inline log below the row.
   floor. Results are saved as JSON to
   `~/.local/share/asteroid-docking-bay/drain-tests/`, and the **📉 drain
   history** link in the page header lists every recorded test — per-watch
-  drain rate and estimated 100→15% standby life. A rate that rises across
-  months means battery wear.
+  drain rate, estimated 100→15% standby life, and a wearability verdict. A
+  rate that rises across months means battery wear.
+
+  Each watch's latest drain result also annotates its battery column
+  permanently: **⌚ ~3d** means the battery holds at least
+  `wearable_min_hours` (default 24 h) of standby — wearable; **🪫 ~9h**
+  marks a battery-swap candidate that's best kept as a dock-sustained dev /
+  flash-test watch. This is the fleet triage view for aging collections:
+  which watches still hold a day, and which only survive because the
+  periodic charge keeps them in the 40–80% band.
 - **Flash nightly** — full nightly flash streamed live into the inline log.
 
 The ADB column shows the AsteroidOS logo next to `device` when the watch is
@@ -320,6 +328,7 @@ See `config.example.json` in this repo for a fully-annotated example.
 | `high_threshold` | `80` | Power off if battery is at or above this % |
 | `charge_duration_minutes` | `30` | Blind-mode charge duration (battery unreadable) |
 | `charge_max_minutes` | `240` | Hard cap for a charge-to-target cycle |
+| `wearable_min_hours` | `24` | Estimated standby (100→15%) above which a watch counts as wearable |
 | `adb_wait_seconds` | `15` | Seconds between ADB availability retries |
 | `adb_wait_retries` | `8` | Max retries (total wait: wait_seconds × retries) |
 | `check_interval_hours` | `12` | Documentation only — actual interval is set in the systemd timer |
