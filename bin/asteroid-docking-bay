@@ -817,24 +817,31 @@ _DRAIN_RESULTS_DIR = Path.home() / ".local/share/asteroid-docking-bay/drain-test
 
 def _adb_read_battery(loc: str, port: int, serial: str | None,
                       charge_cfg: dict, stop_event: threading.Event) -> int | None:
-    """Power on port, wait for ADB, read battery %, power off. Returns None on failure."""
-    with _adb_lock:
+    """Power on port, wait for ADB, read battery %, power off. Returns None on failure.
+
+    Intentionally does NOT hold _adb_lock: each drain test is pinned to one
+    port via _drain_tasks, so port-level exclusion is already guaranteed by the
+    UI.  Holding the lock for the full ADB wait (up to ~2 min) blocks charge,
+    flash and remap on every other port.
+    """
+    if not serial:
+        return None
+    try:
+        uhubctl_set_power(loc, port, True)
+        wait_secs = charge_cfg.get("adb_wait_seconds", 15)
+        retries   = charge_cfg.get("adb_wait_retries", 8)
+        for _ in range(retries):
+            if adb_devices().get(serial) == "device":
+                return get_battery_level(serial)
+            if stop_event.wait(timeout=wait_secs):
+                return None
+        log.warning("drain: ADB timeout for %s on %s:%s", serial, loc, port)
+        return None
+    finally:
         try:
-            uhubctl_set_power(loc, port, True)
-            if serial:
-                wait_secs = charge_cfg.get("adb_wait_seconds", 15)
-                retries   = charge_cfg.get("adb_wait_retries", 8)
-                for _ in range(retries):
-                    if adb_devices().get(serial) == "device":
-                        break
-                    if stop_event.wait(timeout=wait_secs):
-                        return None
-            return get_battery_level(serial) if serial else None
-        finally:
-            try:
-                uhubctl_set_power(loc, port, False)
-            except Exception:
-                pass
+            uhubctl_set_power(loc, port, False)
+        except Exception:
+            pass
 
 
 def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
@@ -854,6 +861,8 @@ def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
         start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
         if start_pct is None:
             log.warning("%s: drain test: could not read initial battery — aborting", codename)
+            # Remove task so the UI doesn't show a stale done/null state.
+            _drain_tasks.pop(slot, None)
             return
 
         now = time.time()
