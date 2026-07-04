@@ -1,14 +1,32 @@
 # asteroid-docking-bay
 
-USB hub power manager for [AsteroidOS](https://asteroidos.org) smartwatches.
+Fleet manager for [AsteroidOS](https://asteroidos.org) smartwatches —
+because you can only wear one at a time.
 
-Manages per-port power switching on smart USB hubs (via
-[uhubctl](https://github.com/mvp/uhubctl)) to keep watch batteries in a
-healthy mid-range (40–80% by default) without constant trickle charging or
-deep discharge while the watches are physically docked.
+Anyone who flashes AsteroidOS tends to accumulate watches, and their
+2014–2018-era batteries spend most of their lives in a drawer: either
+drained flat (worn cells lose charge fast — a watch "powered off at 100%"
+is still empty months later) or pegged at 100% on a permanently powered
+dock. Both abuse aging cells, and deep discharge feeds the notorious
+low-charge panic-reboot loop.
 
-Also automates flashing AsteroidOS nightlies to an entire docked fleet in
-one command (`flash`).
+asteroid-docking-bay keeps the whole collection docked on smart USB hubs
+(per-port power switching via [uhubctl](https://github.com/mvp/uhubctl))
+and sustains every battery in a healthy mid-range band (40–80% by default)
+— always boot-ready, never trickle-cooked:
+
+- **Web dashboard** for the whole fleet: per-port power, ADB and OS
+  detection, battery state, live operations — and it follows physically
+  relocated watches automatically.
+- **Battery care**: charge-to-target instead of charging by the clock, a
+  periodic sustain timer, and a workbench mode that holds the band while
+  you do hands-on work on a watch over WiFi/SSH.
+- **Battery triage**: standby drain tests with history — measure which
+  watches still hold a day of standby (wearable ⌚) and which are
+  battery-swap candidates best kept as dock-sustained dev units (🪫).
+- **Fleet flashing**: download, verify, and flash AsteroidOS nightlies to
+  every docked watch in one command — build-testing on real hardware
+  across every codename you own instead of waiting for user error reports.
 
 <img width="1501" height="631" alt="asteroid-docking-bay Web UI" src="https://github.com/user-attachments/assets/3bf9cc0e-ac0c-4aee-97b9-0624f2b92bb6" />
 
