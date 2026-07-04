@@ -235,6 +235,17 @@ config — all streamed live into an inline log below the row.
   flash-test watch. This is the fleet triage view for aging collections:
   which watches still hold a day, and which only survive because the
   periodic charge keeps them in the 40–80% band.
+- **🔧 Workbench** — check a watch out for hands-on work. The rig powers it
+  up and then holds its battery in the low–high band for the whole session:
+  charge to `high_threshold`, rest with the port off, re-check every
+  `workbench_poll_minutes`, charge again at `low_threshold` — instead of a
+  powered dock pegging the watch at 100% while you work. Do your work over
+  WiFi/SSH (the USB link drops during rest phases); the rig's brief ADB
+  battery reads don't interfere. If the battery can't be read (USB switched
+  to RNDIS/SSH mode), it falls back to a blind duty cycle of
+  `workbench_blind_charge_minutes` of power per rest period. **↩ Return**
+  puts the watch back into the normal fleet, already inside the band.
+  Charge, drain and flash actions refuse while a watch is checked out.
 - **Flash nightly** — full nightly flash streamed live into the inline log.
 
 The ADB column shows the AsteroidOS logo next to `device` when the watch is
@@ -329,6 +340,8 @@ See `config.example.json` in this repo for a fully-annotated example.
 | `charge_duration_minutes` | `30` | Blind-mode charge duration (battery unreadable) |
 | `charge_max_minutes` | `240` | Hard cap for a charge-to-target cycle |
 | `wearable_min_hours` | `24` | Estimated standby (100→15%) above which a watch counts as wearable |
+| `workbench_poll_minutes` | `30` | Workbench rest-phase re-check interval |
+| `workbench_blind_charge_minutes` | `15` | Workbench charge burst per rest period when the battery is unreadable |
 | `adb_wait_seconds` | `15` | Seconds between ADB availability retries |
 | `adb_wait_retries` | `8` | Max retries (total wait: wait_seconds × retries) |
 | `check_interval_hours` | `12` | Documentation only — actual interval is set in the systemd timer |

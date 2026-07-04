@@ -65,6 +65,10 @@ _charge_stop: dict[str, threading.Event] = {}
 _drain_tasks: dict[str, dict] = {}
 _drain_stop:  dict[str, threading.Event] = {}
 
+# Per-slot workbench (checked-out watch) state and cancellation events.
+_workbench_tasks: dict[str, dict] = {}
+_workbench_stop:  dict[str, threading.Event] = {}
+
 # Per-slot remap task state for the web UI's SSE streaming.
 _remap_tasks: dict[str, dict] = {}
 
@@ -1136,6 +1140,81 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
             pass
 
 
+def _run_workbench_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
+    """
+    Workbench mode: the watch is checked out for hands-on work (over
+    WiFi/SSH), and the rig babysits its battery in the low–high band instead
+    of letting a powered dock peg it at 100%.
+
+    Hysteresis loop: charge (port on, battery polls) until high_threshold,
+    then rest (port off, watch on battery) and re-check every
+    workbench_poll_minutes; charge again once at/below low_threshold.  If
+    the battery can't be read (e.g. USB switched to RNDIS/SSH mode), fall
+    back to a blind duty cycle: workbench_blind_charge_minutes of power per
+    rest period.  Note the port is unpowered during rest phases — hands-on
+    work is expected to happen over WiFi, not the USB link.
+    """
+    charge_cfg = cfg.get("charge", cfg)
+    low   = charge_cfg.get("low_threshold", 40)
+    high  = charge_cfg.get("high_threshold", 80)
+    rest_sec  = cfg.get("workbench_poll_minutes", 30) * 60
+    blind_sec = cfg.get("workbench_blind_charge_minutes", 15) * 60
+    codename   = find_codename_for_loc_port(cfg, loc, port) or slot
+    stop_event = _workbench_stop[slot]
+    task       = _workbench_tasks[slot]
+
+    def _rest_and_recheck(serial: "str | None") -> None:
+        task["phase"] = "resting"
+        uhubctl_set_power(loc, port, False)
+        if stop_event.wait(timeout=rest_sec):
+            return
+        task["phase"] = "checking"
+        uhubctl_set_power(loc, port, True)
+        if serial:
+            wait_serial_online(serial,
+                               charge_cfg.get("adb_wait_seconds", 15), 4,
+                               stop_event, recover_loc_port=(loc, port))
+
+    try:
+        log.info("%s: workbench mode — holding %d–%d%%", codename, low, high)
+        serial = find_serial_for_loc_port(cfg, loc, port)
+        task["phase"] = "boot"
+        uhubctl_set_power(loc, port, True)
+        if serial:
+            wait_serial_online(serial,
+                               charge_cfg.get("adb_wait_seconds", 15),
+                               charge_cfg.get("adb_wait_retries", 8),
+                               stop_event, recover_loc_port=(loc, port))
+        while not stop_event.is_set():
+            lvl = get_battery_level(serial) if serial else None
+            if lvl is not None:
+                task["pct"], task["blind"] = lvl, False
+                if lvl >= high or (task.get("phase") == "checking" and lvl > low):
+                    _rest_and_recheck(serial)
+                    continue
+                task["phase"] = "charging"
+                if stop_event.wait(timeout=_CHARGE_POLL_SEC):
+                    break
+                _ensure_port_powered(codename, loc, port)
+            else:
+                # Battery unreadable — blind duty cycle.
+                task["blind"] = True
+                task["phase"] = "charging (blind)"
+                if stop_event.wait(timeout=blind_sec):
+                    break
+                _rest_and_recheck(serial)
+    except Exception as exc:
+        log.warning("%s: workbench failed: %s", codename, exc)
+    finally:
+        try:
+            uhubctl_set_power(loc, port, False)
+        except Exception:
+            pass
+        task["done"] = True
+        _workbench_stop.pop(slot, None)
+        log.info("%s: workbench ended — returned to fleet (port off)", codename)
+
+
 def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
     """
     Standby drain test: power off the watch, poll battery every 30 min,
@@ -1491,6 +1570,12 @@ def _web_status_data(cfg: dict) -> list[dict]:
             charge_end_ts = ct.get("charge_end_ts")
             charge_pct    = ct.get("pct")    if charging_active else None
             charge_target = ct.get("target") if charging_active else None
+            wb = _workbench_tasks.get(slot)
+            workbench = None
+            if wb and not wb.get("done", True):
+                workbench = {"active": True, "pct": wb.get("pct"),
+                             "phase": wb.get("phase"),
+                             "blind": wb.get("blind", False)}
             drain_last = drain_summaries.get(codename.lower())
             if (drain_last and drain_last.get("serial") and serial
                     and drain_last["serial"] != serial):
@@ -1517,6 +1602,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "charge_end_ts": charge_end_ts,
                 "charge_pct": charge_pct, "charge_target": charge_target,
                 "drain": drain, "drain_last": drain_last,
+                "workbench": workbench,
             })
 
         for port_num in empty_nums:
@@ -1797,6 +1883,7 @@ _WEB_TEMPLATE = """\
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn.dr{border-color:#388bfd;color:#388bfd}
+    .btn.wb{border-color:#bc8cff;color:#bc8cff}.btn.wb:hover{background:#1d1430}
     .lr td{padding:0 12px 8px}
     .log{display:none;background:#010409;border:1px solid #21262d;border-radius:4px;padding:10px;font-size:12px;color:#8b949e;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
     .log.show{display:block}
@@ -1891,16 +1978,21 @@ function render(data){
         if(!p.charging_active&&chargeEnd[slot])delete chargeEnd[slot];
         const charging=!!p.charging_active;
         const draining=!!(p.drain&&p.drain.active);
+        const wb=!!(p.workbench&&p.workbench.active);
         const isFb=p.adb==='fastboot';
         const logActive=!!(srcs[slot]||p.flashing);
-        const busy=!!(logActive||charging||draining);
+        const busy=!!(logActive||charging||draining||wb);
         const d=busy?' disabled':'';
         const noSw=p.smart===false;
         const dp=(busy||noSw)?' disabled':'';
         const noSwT=noSw?' title="port cannot switch power (not smart)"':'';
         const adb=mkadbrow(p);
         let bat;
-        if(charging){
+        if(wb){
+          const w=p.workbench;
+          const pct=w.pct!=null?w.pct+'% ':'';
+          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">&#128295; ${pct}${esc(w.phase||'')}</span>`;
+        }else if(charging){
           if(p.charge_target!=null){bat=`<span class="warn">&#9889; ${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
           else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">&#9889; ${m}m${String(s).padStart(2,'0')}s</span>`;}
           else{bat='<span class="warn">&#9889; starting&hellip;</span>';}
@@ -1951,6 +2043,10 @@ function render(data){
           (!isFb?(draining
             ?`<button class="btn dr" onclick="doStopDrain('${slot}')">&#9632; Stop test</button>`
             :`<button class="btn dr"${dp}${noSwT} onclick="doDrain('${slot}')">&#x1F4C9; Drain test</button>`
+          ):'')+
+          (!isFb?(wb
+            ?`<button class="btn wb" onclick="doStopWb('${slot}')">&#8617; Return</button>`
+            :`<button class="btn wb"${dp}${noSwT} onclick="doWb('${slot}')" title="check out for hands-on work: battery held ${lo}&ndash;${hi}% while you work over WiFi/SSH">&#128295; Workbench</button>`
           ):'')+
           `<button class="btn fl"${d} onclick="doFl('${slot}')">Flash nightly</button>` +
           `</td></tr>` +
@@ -2099,6 +2195,12 @@ function toggleHistory(){
 }
 function doStopDrain(c){
   fetch('/api/drain/stop/'+_api(c),{method:'POST'}).then(()=>refresh());
+}
+function doWb(c){
+  fetch('/api/workbench/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
+}
+function doStopWb(c){
+  fetch('/api/workbench/stop/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
 }
 function doFl(c){
   if(srcs[c])return;
@@ -2602,6 +2704,8 @@ def cmd_serve(args, cfg: dict):
             existing_ts = _charge_tasks[slot].get("charge_end_ts", 0)
             return json.dumps({"ok": False, "error": "charge already running",
                                 "charge_end_ts": existing_ts})
+        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
+            return json.dumps({"ok": False, "error": "watch is checked out (workbench)"})
         c_cfg = load_config()
         if is_slot_smart(c_cfg, loc, port) is False:
             return json.dumps({"ok": False,
@@ -2625,6 +2729,37 @@ def cmd_serve(args, cfg: dict):
             ev.set()
             return json.dumps({"ok": True})
         return json.dumps({"ok": False, "error": "no charge running"})
+
+    @app.post("/api/workbench/<loc>/<port:int>")
+    def api_workbench(loc, port):
+        resp.content_type = "application/json"
+        slot = f"{loc}:{port}"
+        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
+            return json.dumps({"ok": False, "error": "workbench already active"})
+        for tasks, what in ((_charge_tasks, "charge"), (_drain_tasks, "drain test"),
+                            (_flash_tasks, "flash")):
+            if slot in tasks and not tasks[slot].get("done", True):
+                return json.dumps({"ok": False, "error": f"{what} in progress"})
+        c_cfg = load_config()
+        if is_slot_smart(c_cfg, loc, port) is False:
+            return json.dumps({"ok": False,
+                               "error": "non-smart port — power cannot be switched"})
+        _workbench_tasks[slot] = {"done": False}
+        _workbench_stop[slot]  = threading.Event()
+        t = threading.Thread(
+            target=_run_workbench_for_web, args=(slot, loc, port, c_cfg), daemon=True
+        )
+        t.start()
+        return json.dumps({"ok": True})
+
+    @app.post("/api/workbench/stop/<loc>/<port:int>")
+    def api_workbench_stop(loc, port):
+        resp.content_type = "application/json"
+        ev = _workbench_stop.get(f"{loc}:{port}")
+        if ev:
+            ev.set()
+            return json.dumps({"ok": True})
+        return json.dumps({"ok": False, "error": "no workbench active"})
 
     @app.get("/api/drain/history")
     def api_drain_history():
@@ -2660,6 +2795,8 @@ def cmd_serve(args, cfg: dict):
         slot = f"{loc}:{port}"
         if slot in _drain_tasks and not _drain_tasks[slot].get("done", True):
             return json.dumps({"ok": False, "error": "drain test already running"})
+        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
+            return json.dumps({"ok": False, "error": "watch is checked out (workbench)"})
         c_cfg = load_config()
         if is_slot_smart(c_cfg, loc, port) is False:
             return json.dumps({"ok": False,
