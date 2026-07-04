@@ -1,3 +1,5 @@
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/b1db0126-f8fc-4924-8491-7a067ae13928" />
+
 # asteroid-docking-bay
 
 Fleet manager for [AsteroidOS](https://asteroidos.org) smartwatches —
