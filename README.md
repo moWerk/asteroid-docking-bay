@@ -100,15 +100,25 @@ By default uhubctl requires root. To run without sudo:
    ```
 
 2. Edit `udev/70-asteroid-docking-bay.rules` to uncomment the line matching
-   your hub's vendor ID.
+   your hub's vendor ID. Lenovo (`17ef`) and Realtek RTS5411 (`0bda`, common
+   in 16-port hubs) are enabled by default and confirmed to do true per-port
+   VBUS switching.
 
 3. Install the rules:
    ```sh
    sudo cp udev/70-asteroid-docking-bay.rules /etc/udev/rules.d/
-   sudo udevadm control --reload-rules && sudo udevadm trigger
-   sudo usermod -aG plugdev $USER
-   # log out and back in
+   sudo udevadm control --reload-rules && sudo udevadm trigger --action=add
+   # verify (no sudo): uhubctl -l   should now list your hub
    ```
+   The rules grant access via `TAG+="uaccess"` (active local login seat) and
+   `GROUP="users"` (for SSH/headless access). If your user is not in the
+   `users` group, add yourself with `sudo usermod -aG users $USER` and log
+   back in, or change the group in the rules file to one you are in. Earlier
+   versions used `plugdev`, which many distros (Arch, EndeavourOS, Fedora) do
+   not create, so the rule silently did nothing; `users` is the safer default.
+
+   If a hub that is already plugged in does not pick up access after the
+   trigger, unplug and replug its upstream cable once.
 
 4. For ADB access (if not already configured):
    ```sh

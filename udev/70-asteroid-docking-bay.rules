@@ -3,37 +3,56 @@
 # SPDX-FileCopyrightText: 2023 Ed Beroset <beroset@ieee.org>
 # udev rules for asteroid-docking-bay
 # ------------------------------------
-# Grants the 'plugdev' group access to smart USB hubs (for uhubctl) and
-# AsteroidOS watches (for adb) without requiring root.
+# Grants non-root access to smart USB hubs (for uhubctl) and AsteroidOS
+# watches (for adb).
+#
+# Access is granted two ways, and each rule below uses both so it works on
+# desktop and headless/SSH setups alike:
+#   TAG+="uaccess"     hands the device to the user of the active local
+#                      login seat (works on a normal desktop login, and on
+#                      a machine with console autologin).
+#   GROUP="users"      gives every member of the 'users' group plain rw
+#                      access via file permissions. This is what makes it
+#                      work over SSH, where there is no active local seat.
+#
+# NOTE: earlier versions used GROUP="plugdev". Many distros (Arch,
+# EndeavourOS, Fedora) do not create a 'plugdev' group, in which case udev
+# silently cannot assign it and the device stays root-only. 'users' exists
+# almost everywhere; if your distro does not put you in it, pick a group you
+# are in (check with `groups`) or add yourself to 'users'.
 #
 # Usage:
 #   sudo cp 70-asteroid-docking-bay.rules /etc/udev/rules.d/
-#   sudo udevadm control --reload-rules && sudo udevadm trigger
-#   sudo usermod -aG plugdev $USER   # then log out and back in
+#   sudo udevadm control --reload-rules && sudo udevadm trigger --action=add
+#   # verify (no sudo): uhubctl -l    should now list your hub
+#
+# If a hub that is already plugged in does not pick up the new access after
+# the trigger, unplug and replug its upstream cable once.
 #
 # Finding your hub's Vendor/Product ID:
 #   lsusb | grep -i hub
 #   uhubctl -l            # shows hub locations and IDs
 #
-# Add one SUBSYSTEM line per smart hub. Common examples below — uncomment
-# and adjust to match your hardware.
+# Add one SUBSYSTEM line per smart hub. Confirmed and common examples below.
 
 # ── Smart USB hubs (for uhubctl) ──────────────────────────────────────────────
 
 # Vendor ID 17ef = Lenovo (ThinkPad USB 3.0 Ultra Dock DK-1523, confirmed true VBUS switching)
 SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", MODE="0664", GROUP="users", TAG+="uaccess"
 
-# Vendor ID 0bda = Realtek (common in USB 3 hubs)
-# SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", MODE="0664", GROUP="plugdev"
+# Vendor ID 0bda = Realtek (RTS5411, e.g. 16-port RSHTech-style hubs; confirmed
+# per-port power switching in the hub descriptor. Note: the RTS5411 reports
+# "Generic USB2.1 Hub", so uhubctl needs this rule to reach it by vendor ID.)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", MODE="0664", GROUP="users", TAG+="uaccess"
 
 # Vendor ID 2109 = VIA Labs (common in USB 3 hubs)
-# SUBSYSTEM=="usb", ATTR{idVendor}=="2109", MODE="0664", GROUP="plugdev"
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2109", MODE="0664", GROUP="users", TAG+="uaccess"
 
 # Vendor ID 0424 = Microchip/SMSC (common in Pi hats and dev-board hubs)
-# SUBSYSTEM=="usb", ATTR{idVendor}=="0424", MODE="0664", GROUP="plugdev"
+# SUBSYSTEM=="usb", ATTR{idVendor}=="0424", MODE="0664", GROUP="users", TAG+="uaccess"
 
-# Vendor ID 05e3 = Genesys Logic / ALCOR (data-line disconnect only — not true VBUS)
-# SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", MODE="0664", GROUP="plugdev"
+# Vendor ID 05e3 = Genesys Logic / ALCOR (data-line disconnect only, not true VBUS)
+# SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", MODE="0664", GROUP="users", TAG+="uaccess"
 
 # ── AsteroidOS watches (for adb) ──────────────────────────────────────────────
 # AsteroidOS uses the Android gadget framework, so standard Android rules apply.
@@ -41,4 +60,4 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", MODE="0664", GROUP="users", TAG+="uacc
 # On Debian/Ubuntu: install 'android-sdk-platform-tools' or add rules manually.
 #
 # Generic fallback (covers most watches; prefer the android-udev package):
-# SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0664", GROUP="plugdev"
+# SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0664", GROUP="users", TAG+="uaccess"
