@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import shlex
 import subprocess
 import sys
 import threading
@@ -1968,6 +1969,93 @@ def _latest_drain_summaries() -> dict[str, dict]:
     return best
 
 
+# ── Control Center: per-watch stats + hardware toggles over ADB ───────────────
+# Data sources mirror asteroid-settings AboutPage.qml / QuickPanelPage.qml,
+# confirmed on AsteroidOS 1.1 / kernel 3.10. adb shell runs as root. One shell
+# batch keeps it to a single round-trip. See reference_watch_control_commands.
+_CC_SCRIPT = r'''. /etc/os-release 2>/dev/null; echo "os=$NAME $VERSION"
+echo "host=$(hostname)"
+echo "kernel=$(uname -r)"
+echo "qt=$(ls /usr/lib/libQt*Core.so.*.*.* 2>/dev/null | grep -o "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1)"
+echo "uptime=$(cut -d" " -f1 /proc/uptime)"
+echo "load=$(cut -d" " -f1-3 /proc/loadavg)"
+echo "threads=$(cut -d" " -f4 /proc/loadavg)"
+echo "memtotal=$(grep -m1 MemTotal /proc/meminfo | tr -dc 0-9)"
+echo "memfree=$(grep -m1 MemFree /proc/meminfo | tr -dc 0-9)"
+echo "membuffers=$(grep -m1 Buffers /proc/meminfo | tr -dc 0-9)"
+echo "memcached=$(grep -m1 "^Cached" /proc/meminfo | tr -dc 0-9)"
+echo "wlanmac=$(cat /sys/class/net/wlan0/address 2>/dev/null)"
+echo "tz=$(readlink /etc/localtime 2>/dev/null | sed "s,.*/zoneinfo/,,")"
+echo "datetime=$(date "+%Y-%m-%d %H:%M:%S")"
+echo "--connman--"
+connmanctl technologies 2>/dev/null'''
+
+
+def _control_center_data(serial: str) -> dict:
+    """Read a watch's About-style stats + connman toggle states in one adb
+    batch. Returns {} if unreachable."""
+    rc, out, _ = _run(f"adb -s {serial} shell {shlex.quote(_CC_SCRIPT)}",
+                      check=False, timeout=12)
+    if rc != 0 or not out.strip():
+        return {}
+    info: dict = {}
+    in_conn = False
+    ctype = None
+    tech: dict = {}
+    for line in out.splitlines():
+        if line.strip() == "--connman--":
+            in_conn = True
+            continue
+        if not in_conn:
+            if "=" in line:
+                k, v = line.split("=", 1)
+                info[k.strip()] = v.strip()
+        else:
+            s = line.strip()
+            if s.startswith("Type ="):
+                ctype = s.split("=", 1)[1].strip()
+            elif s.startswith("Powered =") and ctype:
+                tech[ctype] = (s.split("=", 1)[1].strip().lower() == "true")
+    info["serial"] = serial
+    info["wifi"] = tech.get("wifi")
+    info["bluetooth"] = tech.get("bluetooth")
+    return info
+
+
+def _control_toggle(serial: str, tech: str, on: bool) -> bool:
+    """Enable/disable a connman technology (wifi|bluetooth) on the watch."""
+    action = "enable" if on else "disable"
+    rc, _, err = _run(f"adb -s {serial} shell connmanctl {action} {tech}",
+                      check=False, timeout=12)
+    if rc != 0:
+        log.warning("toggle %s %s on %s failed: %s", action, tech, serial,
+                    err.strip() or f"rc={rc}")
+    return rc == 0
+
+
+def _host_timezone() -> "str | None":
+    """Host IANA timezone (e.g. 'Europe/Berlin') to push to a watch."""
+    try:
+        tz = os.readlink("/etc/localtime")
+    except OSError:
+        return None
+    return tz.split("zoneinfo/", 1)[1] if "zoneinfo/" in tz else None
+
+
+def _control_set_time(serial: str) -> "str | None":
+    """Sync the watch's clock + timezone from the host (the priority action).
+    `date -s @<host UTC epoch>` then `timedatectl set-timezone`. Returns the tz
+    applied, or None."""
+    epoch = int(time.time())
+    _run(f"adb -s {serial} shell date -s @{epoch}", check=False, timeout=10)
+    tz = _host_timezone()
+    if tz:
+        _run(f"adb -s {serial} shell timedatectl set-timezone {shlex.quote(tz)}",
+             check=False, timeout=10)
+    log.info("%s: synced time from host (epoch=%d tz=%s)", serial, epoch, tz)
+    return tz
+
+
 def _web_status_data(cfg: dict) -> list[dict]:
     """
     Return hub-structured status including unmapped (empty) ports.
@@ -2400,6 +2488,26 @@ _WEB_TEMPLATE = """\
     .htxt{letter-spacing:3px}
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
     .hdr{text-align:center}
+    /* Control Center overlay */
+    .cn{cursor:pointer;border-bottom:1px dotted #4d5561}
+    .cn:hover{color:#58a6ff;border-bottom-color:#58a6ff}
+    .cc{position:fixed;z-index:100;display:none;width:340px;max-width:92vw;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 10px 34px rgba(0,0,0,.6);font-size:12px;overflow:hidden}
+    .cc-hd{padding:8px 30px 8px 12px;background:#0d1117;border-bottom:1px solid #30363d;font-weight:700;color:#58a6ff;position:relative}
+    .cc-hd .dim{font-weight:400}
+    .cc-x{position:absolute;right:10px;top:6px;cursor:pointer;color:#6e7681;font-weight:400;font-size:16px;line-height:1}
+    .cc-x:hover{color:#fff}
+    .cc-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;padding:10px 12px}
+    .cc-k{color:#6e7681}
+    .cc-v{color:#c9d1d9;text-align:right;font-variant-numeric:tabular-nums;word-break:break-all}
+    .cc-tgls{display:flex;gap:8px;padding:2px 12px 10px}
+    .cc-tgl{flex:1;padding:7px 4px;border-radius:6px;border:1px solid #30363d;background:transparent;cursor:pointer;font:inherit;color:#8b949e}
+    .cc-tgl.on{border-color:#3fb950;color:#3fb950}
+    .cc-tgl.busy{opacity:.5;cursor:progress}
+    .cc-tgl:hover{background:#0d1117}
+    .cc-acts{padding:0 12px 12px}
+    .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
+    .cc-act:hover{background:#0d1f3a}
+    .cc-act.done{border-color:#3fb950;color:#3fb950}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
     th:first-child,td.tc{width:22px;padding-right:0}
@@ -2463,6 +2571,7 @@ _WEB_TEMPLATE = """\
     <tbody id="tb"></tbody>
   </table>
   <div id="hist" style="display:none"></div>
+  <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
 <script>
 const srcs={};
 const chargeEnd={};
@@ -2604,7 +2713,9 @@ function render(data){
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
-          `<td><b>${esc(p.codename)}</b></td>` +
+          `<td>`+(p.adb==='device'
+            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
+            :`<b>${esc(p.codename)}</b>`)+`</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -2636,6 +2747,54 @@ function render(data){
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
+// ── Control Center overlay ──────────────────────────────────────────────────
+let ccSerial=null, ccName=null, ccTimer=null;
+function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
+function openCC(serial,name,ev){
+  ev.stopPropagation();
+  ccSerial=serial; ccName=name;
+  const cc=document.getElementById('cc');
+  cc.style.display='block';
+  const x=Math.min(ev.clientX,window.innerWidth-352), y=Math.min(ev.clientY+8,window.innerHeight-40);
+  cc.style.left=Math.max(8,x)+'px'; cc.style.top=Math.max(8,y)+'px';
+  cc.innerHTML=`<div class="cc-hd">${name} <span class="dim">loading&hellip;</span></div>`;
+  ccFetch();
+}
+function ccFetch(){
+  const s=ccSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(ccSerial===s)renderCC(d)}).catch(()=>{
+    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
+  });
+}
+function renderCC(d){
+  const cc=document.getElementById('cc');
+  if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;return;}
+  const mt=+d.memtotal,mf=+d.memfree,used=Math.round((mt-mf)/1024),tot=Math.round(mt/1024);
+  const rows=[['Kernel',d.kernel],['Qt',d.qt],['Uptime',fmtUp(d.uptime)],['Load 1/5/15',d.load],
+    ['Threads',d.threads],['Memory',used+' / '+tot+' MB'],['WLAN MAC',d.wlanmac],
+    ['Timezone',d.tz],['Watch clock',d.datetime],['Serial',d.serial]];
+  const info=rows.map(r=>`<div class="cc-k">${r[0]}</div><div class="cc-v">${esc(r[1]||'—')}</div>`).join('');
+  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ccToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
+  cc.innerHTML=
+    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`+
+    `<div class="cc-grid">${info}</div>`+
+    `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}</div>`+
+    `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">&#x21BB; Sync time from host</button></div>`;
+}
+function ccToggle(tech,on){
+  document.querySelectorAll('.cc-tgl').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
+    .then(()=>setTimeout(ccFetch,1600)).catch(()=>ccFetch());
+}
+function ccSyncTime(){
+  const b=document.getElementById('cc-time');if(b)b.textContent='syncing…';
+  fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
+    .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ccFetch();},700));
+}
+function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+function ccLeave(){ccTimer=setTimeout(closeCC,600);}
+function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+document.addEventListener('click',e=>{const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();});
 function refresh(){
   fetch('/api/status').then(r=>r.json()).then(d=>{render(d);document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString()}).catch(()=>{document.getElementById('ts').textContent='connection error'});
 }
@@ -3219,6 +3378,29 @@ def cmd_serve(args, cfg: dict):
                 })
                 status_cache["ts"] = now
             return status_cache["body"]
+
+    # ── Control Center: per-watch stats + hardware toggles ────────────────────
+    @app.get("/api/watch/<serial>")
+    def api_watch(serial):
+        """Stats + toggle states for the Control Center overlay."""
+        resp.content_type = "application/json"
+        return json.dumps(_control_center_data(serial))
+
+    @app.post("/api/watch/<serial>/toggle/<tech>/<state>")
+    def api_watch_toggle(serial, tech, state):
+        resp.content_type = "application/json"
+        if tech not in ("wifi", "bluetooth"):
+            return json.dumps({"ok": False, "error": f"unknown toggle {tech}"})
+        ok = _control_toggle(serial, tech, state == "on")
+        _bust_status_cache()
+        return json.dumps({"ok": ok})
+
+    @app.post("/api/watch/<serial>/settime")
+    def api_watch_settime(serial):
+        """Sync the watch clock + timezone from the host."""
+        resp.content_type = "application/json"
+        tz = _control_set_time(serial)
+        return json.dumps({"ok": True, "timezone": tz})
 
     @app.post("/api/on/<loc>/<port:int>")
     def api_on(loc, port):
