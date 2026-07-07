@@ -81,6 +81,88 @@ _config_lock = threading.Lock()
 # and release it only after powering the port back off.
 _adb_lock = threading.Lock()
 
+# ── Durable operation state ───────────────────────────────────────────────────
+# Charge, drain and workbench run in daemon threads whose state lives in the
+# dicts above — in-memory, so a web-service restart/crash silently kills them.
+# We mirror each running op to disk here; on startup the web service reloads
+# and resumes any unfinished one, so ops survive restarts/reboots.
+_TASKS_DIR = Path.home() / ".local/state/asteroid-docking-bay/tasks"
+
+
+def _task_file(kind: str, slot: str) -> Path:
+    safe = slot.replace(":", "-").replace(".", "_").replace("/", "_")
+    return _TASKS_DIR / f"{kind}__{safe}.json"
+
+
+def _persist_task(kind: str, slot: str, loc: str, port: int, task: dict) -> None:
+    """Atomically write a running op's resumable state to disk."""
+    try:
+        _TASKS_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {"kind": kind, "slot": slot, "loc": loc, "port": port,
+                   "task": task}
+        f = _task_file(kind, slot)
+        tmp = f.with_suffix(".tmp")
+        with tmp.open("w") as fh:
+            json.dump(payload, fh)
+        tmp.replace(f)
+    except Exception as exc:
+        log.debug("persist %s %s failed: %s", kind, slot, exc)
+
+
+def _unpersist_task(kind: str, slot: str) -> None:
+    try:
+        _task_file(kind, slot).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _load_persisted_tasks() -> "list[dict]":
+    """Return the persisted payloads for all ops that were running at shutdown."""
+    out: list[dict] = []
+    if not _TASKS_DIR.is_dir():
+        return out
+    for f in _TASKS_DIR.glob("*.json"):
+        try:
+            with f.open() as fh:
+                out.append(json.load(fh))
+        except Exception as exc:
+            log.warning("could not read persisted task %s: %s", f.name, exc)
+    return out
+
+
+def _resume_persisted_tasks() -> None:
+    """On web startup, re-spawn workers for any op that was running when the
+    service last stopped, so charge/drain/workbench survive restarts."""
+    cfg = load_config()
+    hub_locs = {h["location"] for h in cfg.get("hubs", [])}
+    runners = {"charge": (_charge_tasks, _charge_stop, _run_charge_for_web),
+               "drain":  (_drain_tasks,  _drain_stop,  _run_drain_for_web),
+               "workbench": (_workbench_tasks, _workbench_stop, _run_workbench_for_web)}
+    resumed = 0
+    for p in _load_persisted_tasks():
+        kind = p.get("kind"); slot = p.get("slot")
+        loc = p.get("loc"); port = p.get("port"); task = p.get("task") or {}
+        if kind not in runners or not slot:
+            _unpersist_task(kind or "?", slot or "?")
+            continue
+        if task.get("done") or loc not in hub_locs:
+            # already finished, or its hub is gone (config changed) — drop it.
+            if loc not in hub_locs:
+                log.warning("resume: hub %s missing, dropping %s task %s",
+                            loc, kind, slot)
+            _unpersist_task(kind, slot)
+            continue
+        tasks, stops, runner = runners[kind]
+        task["done"] = False
+        tasks[slot] = task
+        stops[slot] = threading.Event()
+        threading.Thread(target=runner, args=(slot, loc, port, cfg),
+                         daemon=True).start()
+        resumed += 1
+        log.info("resumed %s op on %s:%s", kind, loc, port)
+    if resumed:
+        log.info("resumed %d operation(s) from previous run", resumed)
+
 # Cache: fastboot serial → product codename, populated on first getvar call.
 _fastboot_products: dict[str, str] = {}
 
@@ -1079,6 +1161,7 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
                          codename, level, target)
             elif level is not None:
                 task["pct"], task["target"] = level, target
+                _persist_task("charge", slot, loc, port, task)
                 log.info("%s: charging %d%% → %d%%", codename, level, target)
                 deadline = time.time() + max_sec
                 while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
@@ -1092,6 +1175,7 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
                     if lvl is None:
                         continue  # transient read failure — keep charging
                     task["pct"] = lvl
+                    _persist_task("charge", slot, loc, port, task)
                     if lvl >= target:
                         log.info("%s: reached %d%% (target %d%%)",
                                  codename, lvl, target)
@@ -1099,6 +1183,7 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
             else:
                 end_ts = time.time() + duration_sec
                 task["charge_end_ts"] = end_ts
+                _persist_task("charge", slot, loc, port, task)
                 log.info("%s: battery unreadable — charging blind for %d min",
                          codename, duration_sec // 60)
                 # Sleep in 5-second chunks so a stop is noticed promptly.
@@ -1121,6 +1206,7 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
             task["done"] = True
             task.pop("charge_end_ts", None)
             _charge_stop.pop(slot, None)
+            _unpersist_task("charge", slot)
 
 
 _DRAIN_FLOOR_PCT   = 15   # stop test when battery reaches this level
@@ -1205,6 +1291,7 @@ def _run_workbench_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
             lvl = get_battery_level(serial) if serial else None
             if lvl is not None:
                 task["pct"], task["blind"] = lvl, False
+                _persist_task("workbench", slot, loc, port, task)
                 if lvl >= high or (task.get("phase") == "checking" and lvl > low):
                     _rest_and_recheck(serial)
                     continue
@@ -1216,6 +1303,7 @@ def _run_workbench_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
                 # Battery unreadable — blind duty cycle.
                 task["blind"] = True
                 task["phase"] = "charging (blind)"
+                _persist_task("workbench", slot, loc, port, task)
                 if stop_event.wait(timeout=blind_sec):
                     break
                 _rest_and_recheck(serial)
@@ -1228,6 +1316,7 @@ def _run_workbench_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
             pass
         task["done"] = True
         _workbench_stop.pop(slot, None)
+        _unpersist_task("workbench", slot)
         log.info("%s: workbench ended — returned to fleet (port off)", codename)
 
 
@@ -1241,28 +1330,38 @@ def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
     codename   = find_codename_for_loc_port(cfg, loc, port) or slot
     stop_event = _drain_stop[slot]
     task       = _drain_tasks[slot]
+    resuming   = bool(task.get("readings"))
 
     try:
-        log.info("%s: drain test — reading initial battery", codename)
-        serial = find_serial_for_loc_port(cfg, loc, port)
-        task["serial"] = serial
-        start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
-        if start_pct is None:
-            log.warning("%s: drain test: could not read initial battery — aborting", codename)
-            # Remove task so the UI doesn't show a stale done/null state.
-            _drain_tasks.pop(slot, None)
-            return
+        if resuming:
+            # Restored after a restart — keep the existing readings/start_ts and
+            # just continue polling. Rate math is timestamp-based so the gap is
+            # harmless.
+            log.info("%s: drain test resumed at %s%% (%d readings so far)",
+                     codename, task.get("last_pct"), len(task["readings"]))
+        else:
+            log.info("%s: drain test — reading initial battery", codename)
+            serial = find_serial_for_loc_port(cfg, loc, port)
+            task["serial"] = serial
+            start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
+            if start_pct is None:
+                log.warning("%s: drain test: could not read initial battery — aborting", codename)
+                # Remove task so the UI doesn't show a stale done/null state.
+                _drain_tasks.pop(slot, None)
+                _unpersist_task("drain", slot)
+                return
 
-        now = time.time()
-        task.update({
-            "start_ts":   now,
-            "start_pct":  start_pct,
-            "last_ts":    now,
-            "last_pct":   start_pct,
-            "drain_rate": None,
-            "readings":   [{"ts": now, "pct": start_pct}],
-        })
-        log.info("%s: drain test started at %d%%", codename, start_pct)
+            now = time.time()
+            task.update({
+                "start_ts":   now,
+                "start_pct":  start_pct,
+                "last_ts":    now,
+                "last_pct":   start_pct,
+                "drain_rate": None,
+                "readings":   [{"ts": now, "pct": start_pct}],
+            })
+            _persist_task("drain", slot, loc, port, task)
+            log.info("%s: drain test started at %d%%", codename, start_pct)
 
         while not stop_event.wait(timeout=_DRAIN_POLL_SEC):
             # Reload config in case serial mapping changed.
@@ -1282,6 +1381,7 @@ def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
             elapsed_h = (now - task["start_ts"]) / 3600
             if elapsed_h > 0:
                 task["drain_rate"] = (task["start_pct"] - new_pct) / elapsed_h
+            _persist_task("drain", slot, loc, port, task)
             log.info("%s: drain test: %d%% (%.2f%%/h)", codename,
                      new_pct, task["drain_rate"] or 0)
 
@@ -1295,6 +1395,7 @@ def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
         task["done"]    = True
         task["stopped"] = stop_event.is_set()
         _drain_stop.pop(slot, None)
+        _unpersist_task("drain", slot)
         _save_drain_results(slot, codename)
 
 
@@ -2871,6 +2972,7 @@ def cmd_serve(args, cfg: dict):
         duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
         _charge_tasks[slot] = {"done": False}
         _charge_stop[slot] = threading.Event()
+        _persist_task("charge", slot, loc, port, _charge_tasks[slot])
         t = threading.Thread(
             target=_run_charge_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )
@@ -2905,6 +3007,7 @@ def cmd_serve(args, cfg: dict):
                                "error": "non-smart port — power cannot be switched"})
         _workbench_tasks[slot] = {"done": False}
         _workbench_stop[slot]  = threading.Event()
+        _persist_task("workbench", slot, loc, port, _workbench_tasks[slot])
         t = threading.Thread(
             target=_run_workbench_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )
@@ -2964,6 +3067,7 @@ def cmd_serve(args, cfg: dict):
                                "error": "non-smart port — power cannot be switched"})
         _drain_tasks[slot] = {"done": False}
         _drain_stop[slot]  = threading.Event()
+        _persist_task("drain", slot, loc, port, _drain_tasks[slot])
         t = threading.Thread(
             target=_run_drain_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )
@@ -3014,6 +3118,8 @@ def cmd_serve(args, cfg: dict):
 
     class _ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
         daemon_threads = True
+
+    _resume_persisted_tasks()
 
     host, port = args.host, args.port
     log.info("Web UI starting on http://%s:%d/", host, port)
