@@ -1270,6 +1270,7 @@ def _flash_one_watch(
 
 
 _CHARGE_POLL_SEC = 120  # battery poll interval in charge-to-target mode
+_CHARGE_STALL_POLLS = 2  # consecutive drops while charging → "losing power" alarm
 
 
 def _ensure_port_powered(codename: str, loc: "str | None",
@@ -1410,6 +1411,8 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
                 _log_event(serial, codename, "charge_start", pct=level, target=target)
                 log.info("%s: charging %d%% → %d%%", codename, level, target)
                 deadline = time.time() + max_sec
+                prev_pct = level
+                dropping = 0
                 while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
                     if time.time() >= deadline:
                         log.warning("%s: target %d%% not reached within "
@@ -1421,6 +1424,27 @@ def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
                     if lvl is None:
                         continue  # transient read failure — keep charging
                     task["pct"] = lvl
+                    # Alarm: a charging watch must never LOSE charge. Consecutive
+                    # drops mean it's losing power despite the charge attempt —
+                    # dirty contacts / bad cable / failing port (the sawfish case
+                    # we used to silently discard). Flag it but keep trying; a
+                    # flaky contact may recover.
+                    if lvl < prev_pct:
+                        dropping += 1
+                        if dropping >= _CHARGE_STALL_POLLS and not task.get("losing_power"):
+                            task["losing_power"] = True
+                            log.warning("%s: battery DROPPING while charging "
+                                        "(%d%% → %d%%) — losing power despite charge; "
+                                        "check contacts/cable/port",
+                                        codename, prev_pct, lvl)
+                            _log_event(serial, codename, "charge_power_loss",
+                                       pct=lvl, from_pct=prev_pct)
+                    elif lvl > prev_pct:
+                        if task.pop("losing_power", None):
+                            log.info("%s: charge recovered — gaining again (%d%%)",
+                                     codename, lvl)
+                        dropping = 0
+                    prev_pct = lvl
                     _persist_task("charge", slot, loc, port, task)
                     if lvl >= target:
                         log.info("%s: reached %d%% (target %d%%)",
@@ -2159,6 +2183,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
             charge_end_ts = ct.get("charge_end_ts")
             charge_pct    = ct.get("pct")    if charging_active else None
             charge_target = ct.get("target") if charging_active else None
+            charge_losing = ct.get("losing_power") if charging_active else None
             wb = _workbench_tasks.get(slot)
             workbench = None
             if wb and not wb.get("done", True):
@@ -2190,6 +2215,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "charging_active": charging_active,
                 "charge_end_ts": charge_end_ts,
                 "charge_pct": charge_pct, "charge_target": charge_target,
+                "charge_losing": charge_losing,
                 "drain": drain, "drain_last": drain_last,
                 "workbench": workbench,
                 "socket": sockets.get(port_str),
@@ -2679,7 +2705,8 @@ function render(data){
           const pct=w.pct!=null?w.pct+'% ':'';
           bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">&#128295; ${pct}${esc(w.phase||'')}</span>`;
         }else if(charging){
-          if(p.charge_target!=null){bat=`<span class="warn">&#9889; ${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
+          if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">&#9888; ${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
+          else if(p.charge_target!=null){bat=`<span class="warn">&#9889; ${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
           else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">&#9889; ${m}m${String(s).padStart(2,'0')}s</span>`;}
           else{bat='<span class="warn">&#9889; starting&hellip;</span>';}
         }
