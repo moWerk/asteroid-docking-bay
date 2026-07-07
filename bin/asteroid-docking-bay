@@ -2151,6 +2151,7 @@ _WEB_TEMPLATE = """\
     .hdim{color:#30363d;font-weight:400;font-size:16px;letter-spacing:3px}
     .htxt{letter-spacing:3px}
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
+    .hdr{text-align:center}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
     th:first-child,td.tc{width:22px;padding-right:0}
@@ -2185,9 +2186,9 @@ _WEB_TEMPLATE = """\
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn.dr{border-color:#388bfd;color:#388bfd}
     .btn.wb{border-color:#bc8cff;color:#bc8cff}.btn.wb:hover{background:#1d1430}
-    .btn.ob{border-color:#3fb950;color:#3fb950}.btn.ob:hover{background:#0f2a18}
-    .hidebtn{color:#4d5561;text-decoration:none;font-size:11px;margin-left:6px;opacity:.6;cursor:pointer}
-    .hidebtn:hover{opacity:1;color:#8b949e}
+    .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
+    .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
+    .hidebtn:hover{color:#fff}
     tr.hiddenrow td,.wr.excl td{opacity:.5}
     .lr td{padding:0 12px 8px}
     .log{display:none;background:#010409;border:1px solid #21262d;border-radius:4px;padding:10px;font-size:12px;color:#8b949e;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
@@ -2202,8 +2203,10 @@ _WEB_TEMPLATE = """\
   </style>
 </head>
 <body>
+  <div class="hdr">
   <h1><span class="hdim">&#x2728;  &#x22C6;  &#x02DA; </span>&#x2726;<span class="htxt">  asteroid-docking-bay  </span>&#x2726;<span class="hdim"> &#x02DA;  &#x22C6;  &#x2728;</span></h1>
-  <p class="meta">USB hub power manager for AsteroidOS &nbsp;&middot;&nbsp; <span id="ts">loading&hellip;</span> &nbsp;&middot;&nbsp; <a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">&#x1F4C9; drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">&#x1F648; show hidden</a></p>
+  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <span id="ts">loading&hellip;</span></p>
+  </div>
   <table>
     <thead><tr>
       <th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
@@ -2219,7 +2222,7 @@ let countdownRunning=false;
 let showHidden=false;
 const refreshing=new Set();
 function mkhide(slot,excluded){
-  return `<a href="#" class="hidebtn" onclick="doHidePort('${slot}');return false" title="${excluded?'un-hide this row':'hide this row'}">${excluded?'&#x1F441; unhide':'&#x1F648;'}</a>`;
+  return `<a href="#" class="hidebtn" onclick="doHidePort('${slot}');return false" title="${excluded?'un-hide this row':'hide this row'}">${excluded?'&#x2295;':'&#x2296;'}</a>`;
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
@@ -2294,7 +2297,7 @@ function render(data){
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="dim">&mdash;</td>` +
-          `<td><button class="btn btn-ref"${d} onclick="doRefresh('${slot}')">Refresh</button>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
+          `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -2368,14 +2371,13 @@ function render(data){
           ):'')+
           (!isFb?(draining
             ?`<button class="btn dr" onclick="doStopDrain('${slot}')">&#9632; Stop test</button>`
-            :`<button class="btn dr"${dp}${noSwT} onclick="doDrain('${slot}')">&#x1F4C9; Drain test</button>`
+            :`<button class="btn dr"${dp}${noSwT} onclick="doDrain('${slot}')">Drain test</button>`
           ):'')+
           (!isFb?(wb
             ?`<button class="btn wb" onclick="doStopWb('${slot}')">&#8617; Return</button>`
             :`<button class="btn wb"${dp}${noSwT} onclick="doWb('${slot}')" title="check out for hands-on work: battery held ${lo}&ndash;${hi}% while you work over WiFi/SSH">&#128295; Workbench</button>`
           ):'')+
           `<button class="btn fl"${d} onclick="doFl('${slot}')">Flash nightly</button>` +
-          mkhide(slot,p.excluded) +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -2488,12 +2490,14 @@ let histShown=false;
 function toggleHistory(){
   const el=document.getElementById('hist');
   histShown=!histShown;
+  const l=document.getElementById('histlink');
+  if(l)l.textContent=histShown?'hide drain history':'show drain history';
   if(!histShown){el.style.display='none';return;}
   el.style.display='block';
   el.innerHTML='<p class="dim" style="margin-top:14px">loading&hellip;</p>';
   fetch('/api/drain/history').then(r=>r.json()).then(d=>{
     if(!d.tests.length){
-      el.innerHTML='<p class="dim" style="margin-top:14px">No drain tests recorded yet &mdash; results land here after the first &#x1F4C9; Drain test finishes.</p>';
+      el.innerHTML='<p class="dim" style="margin-top:14px">No drain tests recorded yet &mdash; results land here after the first Drain test finishes.</p>';
       return;
     }
     const wh=d.wearable_min_hours||24;
@@ -2513,7 +2517,7 @@ function toggleHistory(){
         `<td class="dim">${t.stopped?'stopped':'done'} (${t.samples} samples)</td></tr>`;
     }).join('');
     el.innerHTML=
-      `<h1 style="font-size:15px;margin:24px 0 4px">&#x1F4C9; drain test history</h1>`+
+      `<h1 style="font-size:15px;margin:24px 0 4px">drain test history</h1>`+
       `<p class="meta">standby drain per test &mdash; a rising rate across months means battery wear; `+
       `&#8986; = holds &ge;${wh}h standby (wearable_min_hours)</p>`+
       `<table><thead><tr><th>Watch</th><th>Date</th><th>Charge</th><th>Duration</th>`+
@@ -2526,7 +2530,7 @@ function doStopDrain(c){
 function toggleShowHidden(){
   showHidden=!showHidden;
   const l=document.getElementById('hidlink');
-  if(l)l.innerHTML=showHidden?'&#x1F441; hide avoided':'&#x1F648; show hidden';
+  if(l)l.textContent=showHidden?'hide avoided ports':'show all ports';
   refresh();
 }
 function doHidePort(c){
