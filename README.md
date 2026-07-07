@@ -36,8 +36,13 @@ and sustains every battery in a healthy mid-range band (40–80% by default)
 
 1. Watches are physically connected to smart USB hubs that support per-port
    power control.
-2. The `asteroid-docking-bay` CLI controls hub port power via `uhubctl` and
-   communicates with watches via `adb`.
+2. The `asteroid-docking-bay` CLI controls hub port power and communicates
+   with watches via `adb`. Port power is switched by writing the kernel's
+   per-port `disable` attribute in sysfs directly — a single targeted
+   operation with no bus scan, so it is near-instant. `uhubctl` is used only
+   for discovery/mapping (and as a fallback when the sysfs attribute is not
+   writable — see Rootless setup). This matters on deep hub cascades, where
+   `uhubctl`'s per-command libusb re-enumeration takes several seconds.
 3. A systemd user timer fires every 12 hours, powers each watch on, checks
    the battery over ADB, charges it to 80% if below 40%, then powers the
    port back off.
@@ -119,6 +124,16 @@ By default uhubctl requires root. To run without sudo:
 
    If a hub that is already plugged in does not pick up access after the
    trigger, unplug and replug its upstream cable once.
+
+   The same rules file also grants your `users` group **write** access to each
+   hub port's sysfs `disable` attribute, which is what enables near-instant
+   port switching (otherwise the tool falls back to slow `uhubctl`). The same
+   `udevadm trigger` above applies it. Verify:
+   ```sh
+   ls -l /sys/bus/usb/devices/*:1.0/*-port*/disable   # group 'users', -rw-rw-r--
+   ```
+   On startup the tool logs `Port switching: sysfs (instant)` when this is
+   active, or `uhubctl fallback (slow)` if the attribute is still read-only.
 
 4. For ADB access (if not already configured):
    ```sh

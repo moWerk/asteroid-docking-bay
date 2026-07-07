@@ -396,6 +396,25 @@ def _sysfs_hub_scan(cfg: dict) -> list[dict]:
     return hubs
 
 
+def _sysfs_switch_mode(cfg: dict) -> str:
+    """Human-readable: is port switching going via direct sysfs (instant) or
+    falling back to uhubctl (slow)? Determined by whether a configured hub's
+    port `disable` attr is writable by us — i.e. whether the udev rule is in
+    effect. Logged at startup so the fast/slow state is never a mystery."""
+    for h in cfg.get("hubs", []):
+        loc = h["location"]
+        for iface in _SYSFS_USB.glob(f"{loc}:*"):
+            for pd in sorted(iface.glob(f"{loc}-port*")):
+                cand = pd / "disable"
+                if cand.exists():
+                    if os.access(cand, os.W_OK):
+                        return "sysfs (instant)"
+                    return ("uhubctl fallback (slow) — the sysfs `disable` attr is "
+                            "read-only; install the udev rule (see udev/*.rules) "
+                            "for instant switching")
+    return "uhubctl (no sysfs `disable` attr found for configured hubs)"
+
+
 def _power_cache_warmer() -> None:
     """Background daemon: keep _power_cache populated for empty cascade ports so
     the status path never blocks on a slow, variable `disable` read. Sequential
@@ -3495,6 +3514,7 @@ def cmd_serve(args, cfg: dict):
 
     _resume_persisted_tasks()
     threading.Thread(target=_power_cache_warmer, daemon=True).start()
+    log.info("Port switching: %s", _sysfs_switch_mode(cfg))
 
     host, port = args.host, args.port
     log.info("Web UI starting on http://%s:%d/", host, port)

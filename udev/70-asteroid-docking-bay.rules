@@ -54,6 +54,31 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", MODE="0664", GROUP="users", TAG+="uacc
 # Vendor ID 05e3 = Genesys Logic / ALCOR (data-line disconnect only, not true VBUS)
 # SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", MODE="0664", GROUP="users", TAG+="uaccess"
 
+# ── Rootless port power switching (direct sysfs write) ────────────────────────
+# asteroid-docking-bay switches port power by writing the kernel's per-port
+# power attribute directly — near-instant, with no libusb bus scan (uhubctl's
+# per-command scan is what made switching slow and churned the bus):
+#     /sys/bus/usb/devices/<hub>:1.0/<hub>-portN/disable   (0 = on, 1 = off)
+# That attribute is root-only by default; without write access the tool falls
+# back to slow uhubctl. These rules grant the 'users' group write on the port
+# attributes of the smart hubs above.
+#
+# A USB *port* is not itself a udev device (no uevent), so we can't match it
+# directly — instead we match each hub on 'add' and chmod its child port
+# attributes. Match the SAME vendors you enabled for uhubctl above; the host's
+# own root hub is a different vendor and is never touched. Add a line per
+# vendor you use.
+#
+# After installing these rules run (or just replug the hub's upstream cable):
+#     sudo udevadm control --reload-rules
+#     sudo udevadm trigger --action=add
+# so the RUN fires with the ports already enumerated. Verify (no sudo):
+#     ls -l /sys/bus/usb/devices/*:1.0/*-port*/disable   # group 'users', -rw-rw-r--
+#
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", RUN+="/bin/sh -c 'for f in /sys%p/*:1.0/*-port*/disable; do test -e $f && chgrp users $f && chmod g+w $f; done'"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", RUN+="/bin/sh -c 'for f in /sys%p/*:1.0/*-port*/disable; do test -e $f && chgrp users $f && chmod g+w $f; done'"
+# ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2109", RUN+="/bin/sh -c 'for f in /sys%p/*:1.0/*-port*/disable; do test -e $f && chgrp users $f && chmod g+w $f; done'"
+
 # ── AsteroidOS watches (for adb) ──────────────────────────────────────────────
 # AsteroidOS uses the Android gadget framework, so standard Android rules apply.
 # On Arch Linux: install 'android-udev' from AUR.
