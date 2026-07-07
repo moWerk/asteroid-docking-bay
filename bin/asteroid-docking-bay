@@ -43,6 +43,12 @@ DEFAULT_CONFIG = {
         "check_interval_hours": 12,
         "adb_wait_seconds": 15,
         "adb_wait_retries": 8,
+        # Adaptive cadence: skip waking a watch during check-charge until its
+        # observed standby drain projects it near low_threshold. Watches with
+        # no drain history are always checked.
+        "adaptive_cadence": True,
+        "adaptive_margin_pct": 10,        # wake when projected to reach low+this
+        "adaptive_max_interval_days": 14, # never skip a watch longer than this
     },
     "flash": {
         "nightly_url": "https://release.asteroidos.org/nightlies",
@@ -1267,6 +1273,70 @@ def _read_events(serial: "str | None", codename: "str | None" = None) -> "list[d
     except OSError:
         pass
     return out
+
+
+def _standby_loss_rate(serial: "str | None", codename: "str | None",
+                       events: "list[dict] | None" = None) -> "float | None":
+    """Estimate a watch's standby drain in %/hour from its event log.
+
+    Pairs consecutive battery observations (check/drain readings) taken while
+    the watch was NOT charging, keeps only intervals where the charge dropped,
+    and returns the median rate (robust to outliers). A charge event breaks the
+    chain. Falls back to the latest drain-test rate when there are no usable
+    pairs. None when nothing is known.
+    """
+    evs = events if events is not None else _read_events(serial, codename)
+    rates: list[float] = []
+    prev: "tuple[float, float] | None" = None
+    for e in evs:
+        ev = e.get("event")
+        if ev in ("check_reading", "drain_reading"):
+            pct, ts = e.get("pct"), e.get("ts")
+            if pct is None or ts is None:
+                continue
+            if prev is not None:
+                dt_h = (ts - prev[1]) / 3600.0
+                drop = prev[0] - pct
+                if dt_h > 0.05 and drop > 0:
+                    r = drop / dt_h
+                    if 0 < r < 50:          # ignore absurd spikes
+                        rates.append(r)
+            prev = (pct, ts)
+        elif ev in ("charge_start", "charge_end"):
+            prev = None                     # charging breaks the standby chain
+    if rates:
+        rates.sort()
+        return rates[len(rates) // 2]
+    # Seed from the most recent completed drain test for this watch.
+    summ = _latest_drain_summaries().get((codename or "").lower())
+    if summ and summ.get("rate") and (not summ.get("serial") or summ["serial"] == serial):
+        return summ["rate"]
+    return None
+
+
+def _next_due_ts(serial: "str | None", codename: "str | None",
+                 cfg: dict) -> "float | None":
+    """When this watch should next be woken for a charge check, as an epoch ts.
+    None means 'no usable history — check now'."""
+    charge_cfg = cfg.get("charge", cfg)
+    low     = charge_cfg.get("low_threshold", 40)
+    margin  = charge_cfg.get("adaptive_margin_pct", 10)
+    max_days = charge_cfg.get("adaptive_max_interval_days", 14)
+    evs = _read_events(serial, codename)
+    last = next((e for e in reversed(evs)
+                 if e.get("event") in ("check_reading", "drain_reading")
+                 and e.get("pct") is not None), None)
+    if last is None:
+        return None
+    rate = _standby_loss_rate(serial, codename, evs)
+    if not rate or rate <= 0:
+        return None
+    headroom = last["pct"] - (low + margin)
+    cap = last["ts"] + max_days * 86400
+    if headroom <= 0:
+        return last["ts"]                   # already near target — due now
+    due = last["ts"] + (headroom / rate) * 3600
+    return min(due, cap)
 
 
 def _adb_read_battery(loc: str, port: int, serial: str | None,
@@ -2750,6 +2820,18 @@ def cmd_check_charge(args, cfg: dict):
                     codename,
                 )
             power_was_on = uhubctl_get_power(loc, port)
+
+            # Adaptive cadence: if the watch is off and its observed standby
+            # drain projects it is not yet near low_threshold, skip waking it.
+            if charge_cfg.get("adaptive_cadence", True) and not power_was_on:
+                known_serial = find_serial_for_loc_port(cfg, loc, port)
+                due = _next_due_ts(known_serial, codename, cfg)
+                if due is not None and time.time() < due:
+                    rate = _standby_loss_rate(known_serial, codename) or 0
+                    log.info("%s: not due — skipping (next in ~%.0f h, "
+                             "standby %.2f%%/h)", codename,
+                             (due - time.time()) / 3600, rate)
+                    continue
 
             if not power_was_on:
                 log.info("%s: waking to check battery", codename)

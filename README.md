@@ -184,6 +184,13 @@ Periodic charge logic (same as what the timer runs). Safe to run manually for
 testing. For each configured watch: wakes it, checks battery, and if below
 `low_threshold` charges it to `high_threshold` before powering off.
 
+With `adaptive_cadence` enabled (default), a watch is only woken once its
+observed standby drain — learned from past readings — projects it near
+`low_threshold`, so a watch that barely self-discharges gets checked rarely
+while a leaky one gets checked often. Watches with no drain history yet are
+always checked. Run the timer more frequently (e.g. hourly) to let this
+adapt; watches that are not due are skipped cheaply without being powered on.
+
 ```
 asteroid-docking-bay map
 ```
@@ -379,6 +386,9 @@ See `config.example.json` in this repo for a fully-annotated example.
 | `adb_wait_seconds` | `15` | Seconds between ADB availability retries |
 | `adb_wait_retries` | `8` | Max retries (total wait: wait_seconds × retries) |
 | `check_interval_hours` | `12` | Documentation only — actual interval is set in the systemd timer |
+| `adaptive_cadence` | `true` | Skip waking a watch during check-charge until its observed standby drain projects it near `low_threshold`; watches with no drain history are always checked |
+| `adaptive_margin_pct` | `10` | Adaptive cadence wakes a watch when projected to reach `low_threshold` + this |
+| `adaptive_max_interval_days` | `14` | Adaptive cadence never skips a watch longer than this |
 | `flash.nightly_url` | `https://release.asteroidos.org/nightlies` | Base URL for nightly image downloads |
 | `flash.download_dir` | `~/.local/share/asteroid-docking-bay/nightlies` | Local cache for downloaded images |
 
