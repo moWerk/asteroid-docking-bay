@@ -67,6 +67,10 @@ The charge loop used to discard a non-rising battery read as "transient — keep
 
 Charge and drain now end by shutting the watch down over ADB and cutting VBUS *immediately* — a shutdown that completes with power still present makes these watches auto-boot back — so a finished operation leaves the watch genuinely off rather than silently draining. It never powers a port on or blocks when adb is unhealthy.
 
+## First outside contribution
+
+[beroset](https://github.com/beroset)'s [#1](https://github.com/moWerk/asteroid-docking-bay/pull/1) is the first external code in what began as a pure-LLM experiment. It reworks `adb_devices` to parse `adb devices -l`, so each watch now carries a structured state — status plus its USB path, product, and model — rather than a bare `"device"` string. That richer data is the basis for the mapping rework proposed in #2. Merged into 0.3, with a follow-up commit making the new dict None-safe across the web builder and the ADB wait-loops (an absent serial used to index `None`).
+
 ## Provenance (unchanged stance)
 
 Written end-to-end by an LLM coding agent (Anthropic Claude), directed, tested, and reviewed by a human maintainer from the user/tester side, verified on a real mixed fleet before each commit. GPL-3.0-only. The flash sequence and the new backup / settings command patterns derive from beroset's GPL-3.0 [asteroid-hosttools](https://github.com/beroset/asteroid-hosttools). The commit history is the unedited record — including a genuine regression and a near-revert to 0.1, both left in the log.
