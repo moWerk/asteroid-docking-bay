@@ -42,10 +42,12 @@ client (split), so the contract has one implementation, not two.
 ## Wire protocol
 
 Newline-delimited JSON (one object per line, UTF-8) over a persistent TCP
-connection. Requests carry the token; the backend **silently drops** any
-line whose token does not match (no error reply, no log spam an attacker
-can use as an oracle — matching Beroset's "would only respond if the secret
-token was part of the received message").
+connection. Requests carry the token; a line whose token does not match gets
+**no reply on the wire** (no oracle for a probe — matching Beroset's "would
+only respond if the secret token was part of the received message"). Silent
+to the sender is not silent to the operator, though: every rejection is
+logged host-side with the peer address, and the backend escalates on repeat
+(see Abuse response below).
 
 Request:
 
@@ -75,9 +77,8 @@ already serves today.
 Binary payloads (the screenshot JPEG) are base64 in `data` — at ~60 KB per
 screenshot the overhead is irrelevant and keeps the protocol single-channel.
 
-**[Q1]** NDJSON vs length-prefixed framing — NDJSON is trivially debuggable
-(`nc` + eyeballs) and JSON cannot contain raw newlines, so the framing is
-sound. Veto if you want length-prefix anyway.
+Framing is NDJSON, no length prefix (confirmed in review) — trivially
+debuggable with `nc` and eyeballs, and JSON cannot contain a raw newline.
 
 ## Operation namespace
 
@@ -101,10 +102,33 @@ means adding a named op in a reviewable diff.
 
 ## Token
 
-Generated once (`secrets.token_urlsafe`), stored root-readable-only, and
-injected into both containers as a podman secret; constant-time comparison.
-**[Q2]** podman secrets vs a bind-mounted file vs env var — secrets is the
-cleanest on Fedora/Arch podman; env vars leak into `podman inspect`.
+Generated once (`secrets.token_urlsafe(32)`), delivered to both containers as
+a **podman secret** (confirmed in review — env vars leak into `podman
+inspect`, and a bind-mounted file needs its own permission handling). Compared
+with `hmac.compare_digest` (constant time).
+
+**Rotation** (after a suspected compromise, or routinely): the token lives in
+exactly one place, so rotation is three commands and a restart —
+
+```sh
+podman secret rm adb-token
+printf %s "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  | podman secret create adb-token -
+systemctl --user restart adb-backend adb-frontend
+```
+
+Both containers read the secret at start, so the restart is the cutover; any
+connection still holding the old token is dropped when the backend restarts.
+The secret is never written to a volume, a log, or the config file.
+
+**Abuse response.** A mismatched token is dropped without a reply (above) but
+counted per peer. The backend logs each rejection, and on a burst from one
+peer it (1) rate-limits that peer — a short accept backoff that grows with the
+failure count — and (2) past a hard threshold, closes the listener entirely
+and exits non-zero, so systemd surfaces a failed unit rather than leaving a
+box quietly under attack. Thresholds are config, defaulting conservative
+(rate-limit at a handful, shut down at dozens) because the only legitimate
+peer holds the token and never trips this.
 
 ## Containers
 
@@ -119,13 +143,48 @@ one internal network, only the frontend port published.
   (bind-mounted from `/sys/bus/usb/devices` — writes work because the udev
   RUN rule chgrps the attrs on the host), and volumes for config + state
   (`~/.config/asteroid-docking-bay`, `~/.local/share/asteroid-docking-bay`,
-  tasks dir). Runs its own adb/fastboot servers inside the container so no
-  host adb socket is exposed. **[Q3]** in-container adb vs talking to a host
-  adb server — in-container is more isolated but means a second adb
-  authorization keyring; preference?
-- systemd integration via **quadlet** units, mirroring today's user units.
-  **[Q4]** quadlet vs compose file — quadlet fits the existing
-  systemd-user-unit workflow; compose is more portable to docker users.
+  tasks dir). It **talks to the host adb/fastboot server** over the host's
+  usb devices (confirmed in review — a second in-container adb would mean a
+  duplicate authorization keyring for no isolation gain, since the device
+  nodes are shared regardless).
+- systemd integration via **quadlet** units (confirmed in review), mirroring
+  today's user units and fitting the existing systemd-user workflow.
+
+## Nightly image download and verification
+
+Raised in review: which container fetches and verifies the nightly images?
+Reasoning to a decision, because the tension is real — the backend is the
+privileged container, and giving it outbound internet widens the surface that
+matters most.
+
+The deciding constraint is that **verification must happen in the trust domain
+that flashes.** Whoever downloads, the backend must SHA512-check the image
+against the pinned `SHA512SUMS` before writing it to a watch — it can never
+trust bytes handed to it. So verification is backend regardless; the only
+question is who fetches.
+
+If the frontend fetched, it would need either a writable volume (breaking its
+no-mounts, no-privileges cleanliness) or to stream a ~300 MB image over the
+RPC channel (absurd) — and it would still be touching the internet. Both trade
+the frontend's most valuable property, its pristine isolation, for nothing.
+
+So **the backend downloads, verifies, and flashes** — one coherent operation
+(`flash.start`) in one trust domain, reusing the existing `_download_nightly`
++ `_flash_watch` flow unchanged. The backend's new outbound need is bounded and
+auditable: HTTPS to exactly the release host, which the quadlet restricts at
+the network level. That bounded egress is a smaller, clearer risk than an
+untrusted frontend writing files the backend flashes, and the SHA512-against-
+pinned-sums check is the integrity boundary either way.
+
+## Frontend, longer term
+
+For 0.5 the frontend stays Python + bottle serving the existing template —
+it is the smallest change that achieves the isolation, and bottle in a
+no-privilege, no-mount, read-only container is a contained risk. Longer term
+(noted in review) a JavaScript frontend talking to the RPC backend directly
+is the more maintainable end state; the container boundary and the RPC
+contract are exactly what make that a later swap of one container rather than
+a rewrite.
 
 ## Migration plan — one reviewable commit each
 
