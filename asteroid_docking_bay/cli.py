@@ -19,6 +19,7 @@ from .config import (CONFIG_FILE, ChargeConfig, charge_config, flash_config,
 from .usb import (port_foreign_device, test_port_power_switching,
                   uhubctl_get_power, uhubctl_list, uhubctl_set_power)
 from .events import event_log
+from .fastboot import _fastboot_devices
 from .ops import _flash_one_watch, charge_to_target
 from .watchctl import wait_for_adb
 
@@ -425,11 +426,13 @@ def cmd_map(args, cfg: dict):
     # Baseline of foreign devices: any port with an enumerated non-watch
     # device (keyboard, mouse, dock peripheral, an unswitchable sub-hub) is
     # off-limits — map must never cut power to something it can't identify
-    # as a watch.
+    # as a watch. adb/fastboot-visible serials count as watches even under
+    # non-standard vendor IDs (hacked or vendor-specific USB identities).
+    watch_serials = set(adb_devices().keys()) | set(_fastboot_devices().keys())
     foreign: dict[tuple, str] = {}
     for hub in hubs:
         for port in hub["ports"]:
-            desc = port_foreign_device(hub["location"], port)
+            desc = port_foreign_device(hub["location"], port, watch_serials)
             if desc:
                 foreign[(hub["location"], port)] = desc
     if foreign:

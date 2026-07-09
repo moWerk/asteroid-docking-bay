@@ -46,3 +46,21 @@ def test_hub_port_path():
     # Direct host ports have no hub in the path.
     assert _parse_hub_port_path("1-3") is None
     assert _parse_hub_port_path("1-6.x") is None
+
+
+def test_foreign_guard_accepts_known_serial(monkeypatch, tmp_path):
+    """A watch with a non-Google USB identity (hacked/vendor VID) must not be
+    classified foreign when its serial is adb/fastboot-visible — found on a
+    Ticwatch E that map refused to map while protecting it."""
+    from asteroid_docking_bay import usb
+    child = tmp_path / "9-9.1"
+    child.mkdir()
+    (child / "idVendor").write_text("c027\n")       # Mobvoi-style, not 18d1
+    (child / "idProduct").write_text("0001\n")
+    (child / "product").write_text("Ticwatch E\n")
+    (child / "serial").write_text("M6600TB1Z300\n")
+    monkeypatch.setattr(usb, "_SYSFS_USB", tmp_path)
+
+    assert usb.port_foreign_device("9-9", 1) == "Ticwatch E"
+    assert usb.port_foreign_device("9-9", 1, {"M6600TB1Z300"}) is None
+    assert usb.port_foreign_device("9-9", 1, {"other"}) == "Ticwatch E"

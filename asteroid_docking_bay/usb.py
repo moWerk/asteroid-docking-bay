@@ -333,12 +333,18 @@ def _port_device_present(location: str, port: int) -> bool:
 _WATCH_VENDOR = "18d1"
 
 
-def port_foreign_device(location: str, port: int) -> "str | None":
+def port_foreign_device(location: str, port: int,
+                        known_serials: "set[str] | None" = None) -> "str | None":
     """A human-readable description of a non-watch device enumerated on this
     port, or None if the port is empty or holds a watch. Smart hubs are not
     watch docks by definition — keyboards with built-in hubs, mice, dock
     peripherals — and map must never cut power to something it can't
-    identify as a watch."""
+    identify as a watch.
+
+    A watch is recognised by the Google gadget vendor ID, or by its serial
+    appearing in known_serials (adb/fastboot-visible devices): watches with
+    hacked or vendor-specific USB identities enumerate under other VIDs, and
+    an adb-answering device is a watch by definition."""
     child = f"{location}.{port}" if "-" in location else f"{location}-{port}"
     base = _SYSFS_USB / child
     if not base.is_dir():
@@ -350,6 +356,8 @@ def port_foreign_device(location: str, port: int) -> "str | None":
             return ""
     vid = read("idVendor").lower()
     if vid == _WATCH_VENDOR:
+        return None
+    if known_serials and read("serial") in known_serials:
         return None
     if read("bDeviceClass") == "09":
         return f"hub ({read('product') or vid})"
