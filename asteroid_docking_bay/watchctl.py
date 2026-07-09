@@ -11,10 +11,11 @@ from pathlib import Path
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, adb_shell, get_watch_codename
-from .config import find_serial_for_codename, save_config
+from .config import ChargeConfig, find_serial_for_codename, save_config
 
 
-def wait_for_adb(codename: str, cfg: dict, charge_cfg: dict) -> str | None:
+def wait_for_adb(codename: str, cfg: dict,
+                 charge_cfg: ChargeConfig) -> str | None:
     """
     Poll ADB until the watch with the given codename appears as 'device'.
     Returns the serial string, or None on timeout.
@@ -22,8 +23,8 @@ def wait_for_adb(codename: str, cfg: dict, charge_cfg: dict) -> str | None:
     If the watch needs a physical power button press after USB power-on,
     this function will time out and log an actionable warning.
     """
-    wait_secs = charge_cfg.get("adb_wait_seconds", 15)
-    retries = charge_cfg.get("adb_wait_retries", 8)
+    wait_secs = charge_cfg.adb_wait_seconds
+    retries = charge_cfg.adb_wait_retries
     known_serial = find_serial_for_codename(cfg, codename)
 
     for attempt in range(1, retries + 1):

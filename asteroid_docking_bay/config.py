@@ -1,10 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 Timo Könnecke (moWerk) <mo@mowerk.net>
 # SPDX-FileCopyrightText: 2023 Ed Beroset <beroset@ieee.org>
-"""Config file I/O, defaults, and codename/serial/port lookups."""
+"""Config file I/O, typed settings, and codename/serial/port lookups.
+
+Two layers (beroset's design): ConfigManager owns the file — load, defaults
+merge, save, and the lock serializing read-modify-write cycles. The typed
+contents are dataclasses: ChargeConfig / FlashConfig carry the settings with
+their defaults in one place, so consumers write `charge.low_threshold`
+instead of scattering `.get("low_threshold", 40)` fallbacks.
+
+The hubs/serials mappings stay as plain dicts inside the raw config: their
+shape is the config *file's* shape (ports, sockets, excludes, per-port
+serials), edited in place by map/remap/soft-remap."""
 
 import json
 import threading
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from .adb import adb_devices
@@ -13,64 +24,96 @@ from .adb import adb_devices
 CONFIG_DIR = Path.home() / ".config" / "asteroid-docking-bay"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-DEFAULT_CONFIG = {
-    "hubs": [],
-    "serials": {},
-    "charge": {
-        "low_threshold": 40,
-        "high_threshold": 80,
-        "charge_duration_minutes": 30,
-        # check_interval_hours is informational — actual scheduling is done by
-        # the systemd timer (asteroid-docking-bay-charge.timer).
-        "check_interval_hours": 12,
-        "adb_wait_seconds": 15,
-        "adb_wait_retries": 8,
-        # Adaptive cadence: skip waking a watch during check-charge until its
-        # observed standby drain projects it near low_threshold. Watches with
-        # no drain history are always checked.
-        "adaptive_cadence": True,
-        "adaptive_margin_pct": 10,        # wake when projected to reach low+this
-        "adaptive_max_interval_days": 14, # never skip a watch longer than this
-        # Ideal rest state is 40-80% AND powered off. After a charge or drain
-        # test, shut the watch down over ADB before cutting the port so it
-        # doesn't sit silently draining.
-        "graceful_poweroff": True,
-    },
-    "flash": {
-        "nightly_url": "https://release.asteroidos.org/nightlies",
-        "download_dir": str(Path.home() / ".local" / "share" / "asteroid-docking-bay" / "nightlies"),
-    },
-}
+
+@dataclass
+class ChargeConfig:
+    low_threshold: int = 40
+    high_threshold: int = 80
+    charge_duration_minutes: int = 30    # blind-charge fallback duration
+    charge_max_minutes: int = 240        # hard cap for charge-to-target
+    # Informational — actual scheduling is done by the systemd timer.
+    check_interval_hours: int = 12
+    adb_wait_seconds: int = 15
+    adb_wait_retries: int = 8
+    onboard_wait_seconds: int = 30       # boot window per onboarding attempt
+    # Adaptive cadence: skip waking a watch during check-charge until its
+    # observed standby drain projects it near low_threshold. Watches with
+    # no drain history are always checked.
+    adaptive_cadence: bool = True
+    adaptive_margin_pct: int = 10        # wake when projected at low+this
+    adaptive_max_interval_days: int = 14 # never skip longer than this
+    # Ideal rest state is in-band AND powered off: after a charge or drain
+    # test, shut the watch down over ADB before cutting the port.
+    graceful_poweroff: bool = True
+
+    @classmethod
+    def from_dict(cls, d: "dict | None") -> "ChargeConfig":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
 
-# Serialises all config read-modify-save cycles so concurrent web requests
-# (flash, charge, remap) don't corrupt config.json.
-_config_lock = threading.Lock()
+@dataclass
+class FlashConfig:
+    nightly_url: str = "https://release.asteroidos.org/nightlies"
+    download_dir: str = str(Path.home() / ".local" / "share"
+                            / "asteroid-docking-bay" / "nightlies")
+
+    @classmethod
+    def from_dict(cls, d: "dict | None") -> "FlashConfig":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
 
-# ── Config ────────────────────────────────────────────────────────────────────
+def charge_config(cfg: dict) -> ChargeConfig:
+    """The typed charge settings from a raw config dict."""
+    return ChargeConfig.from_dict(cfg.get("charge"))
+
+
+def flash_config(cfg: dict) -> FlashConfig:
+    """The typed flash settings from a raw config dict."""
+    return FlashConfig.from_dict(cfg.get("flash"))
+
+
+class ConfigManager:
+    """Owns the config file: load with defaults merged in, atomic-enough
+    save, and the lock serializing read-modify-write cycles so concurrent
+    web requests (flash, charge, remap) don't corrupt config.json."""
+
+    def __init__(self, path: Path = CONFIG_FILE):
+        self.path = Path(path)
+        self.lock = threading.Lock()
+
+    def load(self) -> dict:
+        if not self.path.exists():
+            return {"hubs": [], "serials": {},
+                    "charge": {}, "flash": {}}
+        with self.path.open() as f:
+            cfg = json.load(f)
+        for key, default in (("hubs", []), ("serials", {}),
+                             ("charge", {}), ("flash", {})):
+            cfg.setdefault(key, default)
+        return cfg
+
+    def save(self, cfg: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+
+
+config_manager = ConfigManager()
+
+# Module-level shims: the raw-dict load/save API used throughout. The lock is
+# the manager's, shared with every read-modify-write cycle.
+_config_lock = config_manager.lock
+
 
 def load_config() -> dict:
-    if not CONFIG_FILE.exists():
-        return {k: v for k, v in DEFAULT_CONFIG.items()}
-    with CONFIG_FILE.open() as f:
-        cfg = json.load(f)
-    # Fill in any missing top-level and charge sub-keys with defaults.
-    for k, v in DEFAULT_CONFIG.items():
-        cfg.setdefault(k, v)
-    for k, v in DEFAULT_CONFIG["charge"].items():
-        cfg["charge"].setdefault(k, v)
-    cfg.setdefault("flash", {})
-    for k, v in DEFAULT_CONFIG["flash"].items():
-        cfg["flash"].setdefault(k, v)
-    return cfg
+    return config_manager.load()
 
 
-def save_config(cfg: dict):
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with CONFIG_FILE.open("w") as f:
-        json.dump(cfg, f, indent=2)
-        f.write("\n")
+def save_config(cfg: dict) -> None:
+    config_manager.save(cfg)
 
 
 # ── Config lookups ────────────────────────────────────────────────────────────

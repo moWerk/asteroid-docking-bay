@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .util import log
+from .config import charge_config
 
 
 _DRAIN_FLOOR_PCT   = 15   # stop test when battery reaches this level
@@ -114,10 +115,10 @@ class EventLog:
                     cfg: dict) -> "float | None":
         """When this watch should next be woken for a charge check, as an
         epoch ts. None means 'no usable history — check now'."""
-        charge_cfg = cfg.get("charge", cfg)
-        low     = charge_cfg.get("low_threshold", 40)
-        margin  = charge_cfg.get("adaptive_margin_pct", 10)
-        max_days = charge_cfg.get("adaptive_max_interval_days", 14)
+        charge_cfg = charge_config(cfg)
+        low      = charge_cfg.low_threshold
+        margin   = charge_cfg.adaptive_margin_pct
+        max_days = charge_cfg.adaptive_max_interval_days
         evs = self.read(serial, codename)
         last = next((e for e in reversed(evs)
                      if e.get("event") in ("check_reading", "drain_reading")

@@ -137,18 +137,25 @@ def _flash_watch(boot_file: Path, img_file: Path, fb_serial: str | None, dry_run
     """
     Flash a watch already in fastboot mode.
     Permanent install: flash userdata + boot, then fastboot continue.
-    The bootloader is assumed already unlocked (running AsteroidOS).
     """
     sflag = f"-s {fb_serial}" if fb_serial else ""
 
-    def fb(subcmd: str):
+    def fb(subcmd: str, fatal: bool = True):
         cmd = f"fastboot {sflag} {subcmd}".strip()
         if dry_run:
             print(f"    [dry-run] {cmd}")
-        else:
-            _run(cmd)
+            return
+        rc, _, err = _run(cmd, check=False)
+        if rc != 0:
+            if fatal:
+                raise RuntimeError(f"{cmd}: {err.strip() or f'rc={rc}'}")
+            log.info("%s: non-fatal (%s)", cmd, err.strip() or f"rc={rc}")
 
-    fb("oem unlock")                        # no-op if already unlocked
+    # Some bootloaders error on `oem unlock` when already unlocked (e.g.
+    # sturgeon) — aborting there would strand the watch in fastboot. Treat
+    # it as best-effort: if the bootloader is truly locked, the flash below
+    # fails loudly on its own.
+    fb("oem unlock", fatal=False)
     fb(f"flash userdata '{img_file}'")
     fb(f"flash boot '{boot_file}'")
     fb("continue")

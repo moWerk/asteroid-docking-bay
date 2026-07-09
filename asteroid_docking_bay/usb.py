@@ -328,6 +328,34 @@ def _port_device_present(location: str, port: int) -> bool:
     return Path(f"/sys/bus/usb/devices/{child}").exists()
 
 
+# Watches enumerate with Google's vendor ID in every mode we drive them in:
+# the AsteroidOS gadget (adb/ssh), Wear OS adb, and fastboot.
+_WATCH_VENDOR = "18d1"
+
+
+def port_foreign_device(location: str, port: int) -> "str | None":
+    """A human-readable description of a non-watch device enumerated on this
+    port, or None if the port is empty or holds a watch. Smart hubs are not
+    watch docks by definition — keyboards with built-in hubs, mice, dock
+    peripherals — and map must never cut power to something it can't
+    identify as a watch."""
+    child = f"{location}.{port}" if "-" in location else f"{location}-{port}"
+    base = _SYSFS_USB / child
+    if not base.is_dir():
+        return None
+    def read(name):
+        try:
+            return (base / name).read_text().strip()
+        except OSError:
+            return ""
+    vid = read("idVendor").lower()
+    if vid == _WATCH_VENDOR:
+        return None
+    if read("bDeviceClass") == "09":
+        return f"hub ({read('product') or vid})"
+    return read("product") or f"usb {vid}:{read('idProduct')}"
+
+
 def _wait_port_device(location: str, port: int, present: bool, timeout: float) -> bool:
     """Poll sysfs until the port's device is present/absent. True if reached."""
     deadline = time.time() + timeout

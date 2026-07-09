@@ -9,9 +9,9 @@ from pathlib import Path
 
 from .util import _run, log
 from .adb import adb_devices_checked, get_battery_level, wait_serial_online
-from .config import (find_codename_for_loc_port, find_port_for_codename,
-                     find_serial_for_loc_port, is_port_smart, is_slot_smart,
-                     load_config)
+from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for_loc_port,
+                     find_port_for_codename, find_serial_for_loc_port,
+                     is_port_smart, is_slot_smart, load_config)
 from .usb import uhubctl_cycle, uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _wait_for_fastboot)
@@ -74,7 +74,7 @@ def _ensure_port_powered(codename: str, loc: "str | None",
             log.warning("%s: re-power failed: %s", codename, e)
 
 
-def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: dict,
+def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfig,
               reason: str = "") -> None:
     """End a powered-on operation: shut the watch down over ADB, then cut
     VBUS immediately — the exact proven sequence of the manual Power-off
@@ -85,7 +85,7 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: dict,
     Never powers a port on or blocks when ADB is unhealthy: doing so during a
     bus wedge just keeps watches powered and feeds the churn. If ADB is down,
     it just cuts VBUS."""
-    graceful = charge_cfg.get("graceful_poweroff", True) and bool(serial)
+    graceful = charge_cfg.graceful_poweroff and bool(serial)
     if graceful and adb_devices_checked() is None:
         log.warning("%s: ADB unavailable — cutting power without graceful "
                     "shutdown (%s)", serial, reason or "op end")
@@ -109,7 +109,7 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: dict,
             pass
 
 
-def charge_to_target(codename: str, serial: "str | None", charge_cfg: dict,
+def charge_to_target(codename: str, serial: "str | None", charge_cfg: ChargeConfig,
                      loc: "str | None" = None,
                      port: "int | None" = None) -> "int | None":
     """
@@ -122,11 +122,11 @@ def charge_to_target(codename: str, serial: "str | None", charge_cfg: dict,
     and the periodic timer; the web UI has its own loop with stop-event and
     live task state.
     """
-    target  = charge_cfg.get("high_threshold", 80)
-    max_sec = charge_cfg.get("charge_max_minutes", 240) * 60
+    target  = charge_cfg.high_threshold
+    max_sec = charge_cfg.charge_max_minutes * 60
     level = get_battery_level(serial) if serial else None
     if level is None:
-        duration = charge_cfg.get("charge_duration_minutes", 30)
+        duration = charge_cfg.charge_duration_minutes
         log.info("%s: battery unreadable — charging blind for %d min",
                  codename, duration)
         time.sleep(duration * 60)
@@ -232,10 +232,10 @@ class ChargeOp(Operation):
     def run(self) -> None:
         slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
         task, stop_event = self.task, self.stop_event
-        charge_cfg = cfg.get("charge", cfg)
-        duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
-        target       = charge_cfg.get("high_threshold", 80)
-        max_sec      = charge_cfg.get("charge_max_minutes", 240) * 60
+        charge_cfg = charge_config(cfg)
+        duration_sec = charge_cfg.charge_duration_minutes * 60
+        target       = charge_cfg.high_threshold
+        max_sec      = charge_cfg.charge_max_minutes * 60
         codename = find_codename_for_loc_port(cfg, loc, port) or slot
 
         log.info("%s: waiting for ADB bus…", codename)
@@ -247,8 +247,8 @@ class ChargeOp(Operation):
                     # Charging works without enumeration (VBUS is on either way),
                     # so a timeout here is logged by the helper and charge proceeds.
                     wait_serial_online(serial,
-                                       charge_cfg.get("adb_wait_seconds", 15),
-                                       charge_cfg.get("adb_wait_retries", 8),
+                                       charge_cfg.adb_wait_seconds,
+                                       charge_cfg.adb_wait_retries,
                                        stop_event, recover_loc_port=(loc, port))
                 if stop_event.is_set():
                     log.info("%s: charge cancelled while waiting for ADB", codename)
@@ -326,7 +326,8 @@ class ChargeOp(Operation):
 
 
 def _adb_read_battery(loc: str, port: int, serial: str | None,
-                      charge_cfg: dict, stop_event: threading.Event) -> int | None:
+                      charge_cfg: ChargeConfig,
+                      stop_event: threading.Event) -> int | None:
     """Power on port, wait for ADB, read battery %, power off. Returns None on failure.
 
     Intentionally does NOT hold _adb_lock: each drain test is pinned to one
@@ -339,8 +340,8 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
     try:
         uhubctl_set_power(loc, port, True)
         if wait_serial_online(serial,
-                              charge_cfg.get("adb_wait_seconds", 15),
-                              charge_cfg.get("adb_wait_retries", 8),
+                              charge_cfg.adb_wait_seconds,
+                              charge_cfg.adb_wait_retries,
                               stop_event, recover_loc_port=(loc, port)):
             return get_battery_level(serial)
         if not stop_event.is_set():
@@ -382,9 +383,9 @@ class WorkbenchOp(Operation):
     def run(self) -> None:
         slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
         task, stop_event = self.task, self.stop_event
-        charge_cfg = cfg.get("charge", cfg)
-        low   = charge_cfg.get("low_threshold", 40)
-        high  = charge_cfg.get("high_threshold", 80)
+        charge_cfg = charge_config(cfg)
+        low   = charge_cfg.low_threshold
+        high  = charge_cfg.high_threshold
         rest_sec  = cfg.get("workbench_poll_minutes", 30) * 60
         blind_sec = cfg.get("workbench_blind_charge_minutes", 15) * 60
         codename   = find_codename_for_loc_port(cfg, loc, port) or slot
@@ -398,7 +399,7 @@ class WorkbenchOp(Operation):
             uhubctl_set_power(loc, port, True)
             if serial:
                 wait_serial_online(serial,
-                                   charge_cfg.get("adb_wait_seconds", 15), 4,
+                                   charge_cfg.adb_wait_seconds, 4,
                                    stop_event, recover_loc_port=(loc, port))
 
         try:
@@ -408,8 +409,8 @@ class WorkbenchOp(Operation):
             uhubctl_set_power(loc, port, True)
             if serial:
                 wait_serial_online(serial,
-                                   charge_cfg.get("adb_wait_seconds", 15),
-                                   charge_cfg.get("adb_wait_retries", 8),
+                                   charge_cfg.adb_wait_seconds,
+                                   charge_cfg.adb_wait_retries,
                                    stop_event, recover_loc_port=(loc, port))
             while not stop_event.is_set():
                 lvl = get_battery_level(serial) if serial else None
@@ -464,7 +465,7 @@ class DrainOp(Operation):
     def run(self) -> None:
         slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
         task, stop_event = self.task, self.stop_event
-        charge_cfg = cfg.get("charge", cfg)
+        charge_cfg = charge_config(cfg)
         codename   = find_codename_for_loc_port(cfg, loc, port) or slot
         resuming   = bool(task.get("readings"))
 
@@ -578,7 +579,7 @@ def _resume_persisted_tasks() -> None:
 def _flash_one_watch(
     codename: str,
     cfg: dict,
-    flash_cfg: dict,
+    flash_cfg: "FlashConfig",
     dry_run: bool = False,
     local_dir: "Path | None" = None,
     force_dl: bool = False,
@@ -595,8 +596,8 @@ def _flash_one_watch(
         log.error("%s: port not power-switchable — skipping", codename)
         return "non-smart port"
 
-    dl_dir = Path(flash_cfg["download_dir"])
-    nightly_url = flash_cfg["nightly_url"]
+    dl_dir = Path(flash_cfg.download_dir)
+    nightly_url = flash_cfg.nightly_url
 
     if local_dir:
         boot_file = local_dir / f"zImage-dtb-{codename}.fastboot"
@@ -619,7 +620,7 @@ def _flash_one_watch(
 
     serial = None
     if not dry_run:
-        serial = wait_for_adb(codename, cfg, cfg["charge"])
+        serial = wait_for_adb(codename, cfg, charge_config(cfg))
         if serial is None:
             if _detect_rndis():
                 log.warning(
@@ -627,7 +628,7 @@ def _flash_one_watch(
                     "switch to ADB mode: Settings → USB on the watch",
                     codename,
                 )
-                serial = wait_for_adb(codename, cfg, cfg["charge"])
+                serial = wait_for_adb(codename, cfg, charge_config(cfg))
             if serial is None:
                 log.error("%s: ADB not available — skipping", codename)
                 uhubctl_set_power(loc, port, False)

@@ -4,6 +4,7 @@
 """argparse commands and the CLI entry point."""
 
 import argparse
+import dataclasses
 import sys
 import time
 from pathlib import Path
@@ -11,11 +12,12 @@ from pathlib import Path
 from .util import log, setup_logging
 from .adb import (_adb_state, _wait_for_new_adb_device, adb_devices,
                   get_battery_level, get_watch_codename)
-from .config import (CONFIG_FILE, _resolve_targets, find_port_for_codename,
+from .config import (CONFIG_FILE, ChargeConfig, charge_config, flash_config,
+                     _resolve_targets, find_port_for_codename,
                      find_serial_for_codename, find_serial_for_loc_port,
                      is_port_smart, load_config, save_config)
-from .usb import (test_port_power_switching, uhubctl_get_power, uhubctl_list,
-                  uhubctl_set_power)
+from .usb import (port_foreign_device, test_port_power_switching,
+                  uhubctl_get_power, uhubctl_list, uhubctl_set_power)
 from .events import event_log
 from .ops import _flash_one_watch, charge_to_target
 from .watchctl import wait_for_adb
@@ -159,7 +161,7 @@ def cmd_cycle(args, cfg: dict):
 def cmd_charge(args, cfg: dict):
     """Manual one-time charge cycle, bypassing the low_threshold check.
     Charges to high_threshold unless --duration forces a timed charge."""
-    charge_cfg = cfg["charge"]
+    charge_cfg = charge_config(cfg)
     for codename in _resolve_targets(args.codename, cfg):
         _charge_one(codename, cfg, charge_cfg,
                     duration_minutes=args.duration, force=True)
@@ -168,7 +170,7 @@ def cmd_charge(args, cfg: dict):
 def _charge_one(
     codename: str,
     cfg: dict,
-    charge_cfg: dict,
+    charge_cfg: ChargeConfig,
     duration_minutes: int | None = None,
     force: bool = False,
 ) -> bool:
@@ -189,7 +191,7 @@ def _charge_one(
     smart = is_port_smart(cfg, codename)
     can_switch = smart is not False
 
-    high = charge_cfg["high_threshold"]
+    high = charge_cfg.high_threshold
 
     if not can_switch:
         log.warning(
@@ -247,9 +249,9 @@ def cmd_check_charge(args, cfg: dict):
     Watches that are already powered on have their battery checked in-place;
     if they are above high_threshold they are powered down.
     """
-    charge_cfg = cfg["charge"]
-    low = charge_cfg["low_threshold"]
-    high = charge_cfg["high_threshold"]
+    charge_cfg = charge_config(cfg)
+    low = charge_cfg.low_threshold
+    high = charge_cfg.high_threshold
 
     log.info("Periodic charge check starting")
 
@@ -274,7 +276,7 @@ def cmd_check_charge(args, cfg: dict):
 
             # Adaptive cadence: if the watch is off and its observed standby
             # drain projects it is not yet near low_threshold, skip waking it.
-            if charge_cfg.get("adaptive_cadence", True) and not power_was_on:
+            if charge_cfg.adaptive_cadence and not power_was_on:
                 known_serial = find_serial_for_loc_port(cfg, loc, port)
                 due = event_log.next_due_ts(known_serial, codename, cfg)
                 if due is not None and time.time() < due:
@@ -344,9 +346,9 @@ def cmd_flash_all(args, cfg: dict):
 
     dry_run   = args.dry_run
     local_dir = Path(args.local) if args.local else None
-    flash_cfg = cfg["flash"]
+    flash_cfg = flash_config(cfg)
     if args.download_dir:
-        flash_cfg = dict(flash_cfg, download_dir=args.download_dir)
+        flash_cfg = dataclasses.replace(flash_cfg, download_dir=args.download_dir)
 
     print()
     print("   ✨  ⋆  ˚  ✦   asteroid-docking-bay   ✦  ˚  ⋆  ✨")
@@ -420,11 +422,26 @@ def cmd_map(args, cfg: dict):
             parent_loc, _, parent_port_str = loc.rpartition(".")
             cascade_ports.setdefault(parent_loc, set()).add(int(parent_port_str))
 
+    # Baseline of foreign devices: any port with an enumerated non-watch
+    # device (keyboard, mouse, dock peripheral, an unswitchable sub-hub) is
+    # off-limits — map must never cut power to something it can't identify
+    # as a watch.
+    foreign: dict[tuple, str] = {}
+    for hub in hubs:
+        for port in hub["ports"]:
+            desc = port_foreign_device(hub["location"], port)
+            if desc:
+                foreign[(hub["location"], port)] = desc
+    if foreign:
+        print("Leaving non-watch devices untouched:")
+        for (loc, port), desc in sorted(foreign.items()):
+            print(f"  {loc}:p{port}  {desc}")
+
     print("\nPowering off all ports…")
     for hub in hubs:
         skip = cascade_ports.get(hub["location"], set())
         for port in hub["ports"]:
-            if port in skip:
+            if port in skip or (hub["location"], port) in foreign:
                 continue
             try:
                 uhubctl_set_power(hub["location"], port, False)
@@ -454,6 +471,9 @@ def cmd_map(args, cfg: dict):
         for port in hub["ports"]:
             if port in skip:
                 print(f"  Port {port}: (cascade → sub-hub {loc}.{port})")
+                continue
+            if (loc, port) in foreign:
+                print(f"  Port {port}: (skipped — {foreign[(loc, port)]})")
                 continue
 
             print(f"  Port {port}: ", end="", flush=True)

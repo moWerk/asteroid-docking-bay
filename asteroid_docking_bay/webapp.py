@@ -15,7 +15,8 @@ from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
-from .config import (_config_lock, find_codename_for_loc_port,
+from .config import (_config_lock, charge_config, find_codename_for_loc_port,
+                     flash_config,
                      find_serial_for_loc_port, load_config, save_config)
 from . import usb, fastboot
 from .usb import (_sysfs_path_to_serial_map, _sysfs_switch_mode,
@@ -86,7 +87,7 @@ def _sse_flash_gen(codename: str, slot: str, cfg: dict):
     captured by a _QueueHandler and forwarded as SSE data events.
     """
     q: "queue.Queue[str | None]" = queue.Queue()
-    flash_cfg = cfg["flash"]
+    flash_cfg = flash_config(cfg)
     cfg_copy = copy.deepcopy(cfg)
 
     def _run_flash():
@@ -168,8 +169,7 @@ def _sse_remap_gen(loc: str, port: int):
                 # hiccup), only appearing after a power cycle. So wait a boot
                 # window, and if nothing shows, cycle the port once and wait
                 # again — this is what made the manual "Refresh twice" work.
-                wait_each = load_config().get("charge", {}).get(
-                    "onboard_wait_seconds", 30)
+                wait_each = charge_config(load_config()).onboard_wait_seconds
 
                 def _wait_for_watch(secs: int) -> "str | None":
                     st = time.monotonic()
@@ -329,12 +329,12 @@ def serve(args, cfg: dict):
             now = time.monotonic()
             if now - status_cache["ts"] > 2.0:
                 c_cfg = load_config()
-                charge_cfg = c_cfg.get("charge", c_cfg)
+                charge_cfg = charge_config(c_cfg)
                 status_cache["body"] = json.dumps({
                     "hubs": _web_status_data(c_cfg),
                     "thresholds": {
-                        "low":  charge_cfg.get("low_threshold",  40),
-                        "high": charge_cfg.get("high_threshold", 80),
+                        "low":  charge_cfg.low_threshold,
+                        "high": charge_cfg.high_threshold,
                     },
                     "drain_floor": _DRAIN_FLOOR_PCT,
                     "wearable_min_hours": c_cfg.get("wearable_min_hours", 24),
@@ -533,10 +533,9 @@ def serve(args, cfg: dict):
         err = ChargeOp.start(loc, port, c_cfg)
         if err:
             return json.dumps({"ok": False, "error": err})
-        charge_cfg = c_cfg.get("charge", c_cfg)
         _bust_status_cache()
         return json.dumps({"ok": True, "duration_seconds":
-                           charge_cfg.get("charge_duration_minutes", 30) * 60})
+                           charge_config(c_cfg).charge_duration_minutes * 60})
 
     @app.post("/api/charge/stop/<loc>/<port:int>")
     def api_charge_stop(loc, port):
