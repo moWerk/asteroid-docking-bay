@@ -650,11 +650,25 @@ def serve(args, cfg: dict):
     host, port = args.host, args.port
     log.info("Web UI starting on http://%s:%d/", host, port)
     print(f"asteroid-docking-bay web UI → http://{host}:{port}/")
-    httpd = make_server(
-        host, port, app,
-        server_class=_ThreadingWSGIServer,
-        handler_class=WSGIRequestHandler,
-    )
+    try:
+        httpd = make_server(
+            host, port, app,
+            server_class=_ThreadingWSGIServer,
+            handler_class=WSGIRequestHandler,
+        )
+    except OSError as e:
+        if e.errno == 98:   # EADDRINUSE: common on 8080; guide, don't traceback
+            log.error(
+                "port %d is already in use by another program.\n"
+                "  Pick a different port:  asteroid-docking-bay serve --port 8090\n"
+                "  For the systemd unit:   systemctl --user edit "
+                "asteroid-docking-bay-web.service\n"
+                "    [Service]\n"
+                "    ExecStart=\n"
+                "    ExecStart=%%h/.local/bin/asteroid-docking-bay serve "
+                "--host 0.0.0.0 --port 8090", port)
+            sys.exit(1)
+        raise
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
