@@ -10,15 +10,16 @@ from pathlib import Path
 from .util import _run, log
 from .adb import adb_devices_checked, get_battery_level, wait_serial_online
 from .config import (find_codename_for_loc_port, find_port_for_codename,
-                     find_serial_for_loc_port, is_port_smart, load_config)
+                     find_serial_for_loc_port, is_port_smart, is_slot_smart,
+                     load_config)
 from .usb import uhubctl_cycle, uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _wait_for_fastboot)
 from .events import (_DRAIN_FLOOR_PCT, _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
 from .tasks import (_adb_lock, _charge_stop, _charge_tasks, _drain_stop,
-                    _drain_tasks, task_store, _workbench_stop,
-                    _workbench_tasks)
+                    _drain_tasks, _flash_tasks, task_store,
+                    _workbench_stop, _workbench_tasks)
 from .watchctl import wait_for_adb
 
 
@@ -153,105 +154,175 @@ def charge_to_target(codename: str, serial: "str | None", charge_cfg: dict,
     return level
 
 
-def _run_charge_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
-    """Run a manual charge cycle for the web UI; updates _charge_tasks[slot].
+class Operation:
+    """Shared lifecycle for the long-running per-slot operations (charge,
+    drain test, workbench). A subclass binds its kind name, its registries
+    (the shared dicts in tasks.py, which the status builder also reads), any
+    kind-specific conflict rule, and the worker body in run().
 
-    Charge-to-target: when the battery is readable over ADB, charge until
-    high_threshold is reached (capped by charge_max_minutes) instead of
-    blindly for a fixed duration.  The blind fixed-duration countdown remains
-    the fallback for watches that never enumerate or expose no battery.
-    """
-    charge_cfg = cfg.get("charge", cfg)
-    duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
-    target       = charge_cfg.get("high_threshold", 80)
-    max_sec      = charge_cfg.get("charge_max_minutes", 240) * 60
-    codename = find_codename_for_loc_port(cfg, loc, port) or slot
-    stop_event = _charge_stop[slot]
-    task = _charge_tasks[slot]
+    start() is the single entry point: it refuses duplicates and conflicts,
+    seeds the registry, persists the task (so a restart resumes it), and
+    spawns the worker thread. stop() sets the slot's cancellation event.
+    Workers own their task's `done` flag and clean up in their finally."""
 
-    log.info("%s: waiting for ADB bus…", codename)
-    with _adb_lock:
-        try:
-            uhubctl_set_power(loc, port, True)
-            serial = find_serial_for_loc_port(cfg, loc, port)
-            if serial:
-                # Charging works without enumeration (VBUS is on either way),
-                # so a timeout here is logged by the helper and charge proceeds.
-                wait_serial_online(serial,
-                                   charge_cfg.get("adb_wait_seconds", 15),
-                                   charge_cfg.get("adb_wait_retries", 8),
-                                   stop_event, recover_loc_port=(loc, port))
-            if stop_event.is_set():
-                log.info("%s: charge cancelled while waiting for ADB", codename)
-                return
+    kind: str
+    tasks: dict
+    stops: dict
 
-            level = get_battery_level(serial) if serial else None
-            if level is not None and level >= target:
-                task["pct"], task["target"] = level, target
-                log.info("%s: already at %d%% (≥%d%%) — nothing to do",
-                         codename, level, target)
-            elif level is not None:
-                task["pct"], task["target"] = level, target
-                task_store.persist("charge", slot, loc, port, task)
-                event_log.log(serial, codename, "charge_start", pct=level, target=target)
-                log.info("%s: charging %d%% → %d%%", codename, level, target)
-                deadline = time.time() + max_sec
-                detector = ChargeDropDetector(level)
-                while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
-                    if time.time() >= deadline:
-                        log.warning("%s: target %d%% not reached within "
-                                    "charge_max_minutes — stopping at %s%%",
-                                    codename, target, task.get("pct"))
-                        break
-                    _ensure_port_powered(codename, loc, port)
-                    lvl = get_battery_level(serial)
-                    if lvl is None:
-                        continue  # transient read failure — keep charging
-                    task["pct"] = lvl
-                    prev = detector.prev
-                    verdict = detector.feed(lvl)
-                    if verdict == "alarm":
-                        task["losing_power"] = True
-                        log.warning("%s: battery DROPPING while charging "
-                                    "(%d%% → %d%%) — losing power despite charge; "
-                                    "check contacts/cable/port",
-                                    codename, prev, lvl)
-                        event_log.log(serial, codename, "charge_power_loss",
-                                      pct=lvl, from_pct=prev)
-                    elif verdict == "recovered":
-                        task.pop("losing_power", None)
-                        log.info("%s: charge recovered — gaining again (%d%%)",
-                                 codename, lvl)
+    def __init__(self, slot: str, loc: str, port: int, cfg: dict):
+        self.slot, self.loc, self.port, self.cfg = slot, loc, port, cfg
+        self.task = self.tasks[slot]
+        self.stop_event = self.stops[slot]
+
+    @classmethod
+    def is_active(cls, slot: str) -> bool:
+        return slot in cls.tasks and not cls.tasks[slot].get("done", True)
+
+    @classmethod
+    def conflict(cls, slot: str) -> "str | None":
+        """Kind-specific reason this op must not start now, or None."""
+        return None
+
+    @classmethod
+    def start(cls, loc: str, port: int, cfg: dict) -> "str | None":
+        """Begin the operation. Returns an error string, or None on success."""
+        slot = f"{loc}:{port}"
+        if cls.is_active(slot):
+            return f"{cls.kind} already running"
+        err = cls.conflict(slot)
+        if err:
+            return err
+        if is_slot_smart(cfg, loc, port) is False:
+            return "non-smart port — power cannot be switched"
+        cls.tasks[slot] = {"done": False}
+        cls.stops[slot] = threading.Event()
+        task_store.persist(cls.kind, slot, loc, port, cls.tasks[slot])
+        threading.Thread(target=cls(slot, loc, port, cfg).run,
+                         daemon=True).start()
+        return None
+
+    @classmethod
+    def stop(cls, loc: str, port: int) -> bool:
+        """Request cancellation. False if nothing was running."""
+        ev = cls.stops.get(f"{loc}:{port}")
+        if ev:
+            ev.set()
+        return ev is not None
+
+    def run(self) -> None:
+        raise NotImplementedError
+
+
+class ChargeOp(Operation):
+    """Charge-to-target for the web UI: when the battery is readable over
+    ADB, charge until high_threshold (capped by charge_max_minutes); the
+    blind fixed-duration countdown is the fallback for watches that never
+    enumerate or expose no battery."""
+
+    kind = "charge"
+    tasks = _charge_tasks
+    stops = _charge_stop
+
+    @classmethod
+    def conflict(cls, slot):
+        if WorkbenchOp.is_active(slot):
+            return "watch is checked out (workbench)"
+        return None
+
+    def run(self) -> None:
+        slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
+        task, stop_event = self.task, self.stop_event
+        charge_cfg = cfg.get("charge", cfg)
+        duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
+        target       = charge_cfg.get("high_threshold", 80)
+        max_sec      = charge_cfg.get("charge_max_minutes", 240) * 60
+        codename = find_codename_for_loc_port(cfg, loc, port) or slot
+
+        log.info("%s: waiting for ADB bus…", codename)
+        with _adb_lock:
+            try:
+                uhubctl_set_power(loc, port, True)
+                serial = find_serial_for_loc_port(cfg, loc, port)
+                if serial:
+                    # Charging works without enumeration (VBUS is on either way),
+                    # so a timeout here is logged by the helper and charge proceeds.
+                    wait_serial_online(serial,
+                                       charge_cfg.get("adb_wait_seconds", 15),
+                                       charge_cfg.get("adb_wait_retries", 8),
+                                       stop_event, recover_loc_port=(loc, port))
+                if stop_event.is_set():
+                    log.info("%s: charge cancelled while waiting for ADB", codename)
+                    return
+
+                level = get_battery_level(serial) if serial else None
+                if level is not None and level >= target:
+                    task["pct"], task["target"] = level, target
+                    log.info("%s: already at %d%% (≥%d%%) — nothing to do",
+                             codename, level, target)
+                elif level is not None:
+                    task["pct"], task["target"] = level, target
                     task_store.persist("charge", slot, loc, port, task)
-                    if lvl >= target:
-                        log.info("%s: reached %d%% (target %d%%)",
-                                 codename, lvl, target)
-                        break
-                event_log.log(serial, codename, "charge_end", pct=task.get("pct"))
-            else:
-                end_ts = time.time() + duration_sec
-                task["charge_end_ts"] = end_ts
-                task_store.persist("charge", slot, loc, port, task)
-                log.info("%s: battery unreadable — charging blind for %d min",
-                         codename, duration_sec // 60)
-                # Sleep in 5-second chunks so a stop is noticed promptly.
-                ticks = 0
-                while not stop_event.wait(timeout=5):
-                    if time.time() >= end_ts:
-                        break
-                    ticks += 1
-                    if ticks % 12 == 0:  # every ~60 s
+                    event_log.log(serial, codename, "charge_start", pct=level, target=target)
+                    log.info("%s: charging %d%% → %d%%", codename, level, target)
+                    deadline = time.time() + max_sec
+                    detector = ChargeDropDetector(level)
+                    while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
+                        if time.time() >= deadline:
+                            log.warning("%s: target %d%% not reached within "
+                                        "charge_max_minutes — stopping at %s%%",
+                                        codename, target, task.get("pct"))
+                            break
                         _ensure_port_powered(codename, loc, port)
-            if stop_event.is_set():
-                log.info("%s: charge stopped by user", codename)
-        except Exception as exc:
-            log.warning("%s: charge failed: %s", codename, exc)
-        finally:
-            _end_port(loc, port, serial, charge_cfg, "charge ended")
-            task["done"] = True
-            task.pop("charge_end_ts", None)
-            _charge_stop.pop(slot, None)
-            task_store.unpersist("charge", slot)
+                        lvl = get_battery_level(serial)
+                        if lvl is None:
+                            continue  # transient read failure — keep charging
+                        task["pct"] = lvl
+                        prev = detector.prev
+                        verdict = detector.feed(lvl)
+                        if verdict == "alarm":
+                            task["losing_power"] = True
+                            log.warning("%s: battery DROPPING while charging "
+                                        "(%d%% → %d%%) — losing power despite charge; "
+                                        "check contacts/cable/port",
+                                        codename, prev, lvl)
+                            event_log.log(serial, codename, "charge_power_loss",
+                                          pct=lvl, from_pct=prev)
+                        elif verdict == "recovered":
+                            task.pop("losing_power", None)
+                            log.info("%s: charge recovered — gaining again (%d%%)",
+                                     codename, lvl)
+                        task_store.persist("charge", slot, loc, port, task)
+                        if lvl >= target:
+                            log.info("%s: reached %d%% (target %d%%)",
+                                     codename, lvl, target)
+                            break
+                    event_log.log(serial, codename, "charge_end", pct=task.get("pct"))
+                else:
+                    end_ts = time.time() + duration_sec
+                    task["charge_end_ts"] = end_ts
+                    task_store.persist("charge", slot, loc, port, task)
+                    log.info("%s: battery unreadable — charging blind for %d min",
+                             codename, duration_sec // 60)
+                    # Sleep in 5-second chunks so a stop is noticed promptly.
+                    ticks = 0
+                    while not stop_event.wait(timeout=5):
+                        if time.time() >= end_ts:
+                            break
+                        ticks += 1
+                        if ticks % 12 == 0:  # every ~60 s
+                            _ensure_port_powered(codename, loc, port)
+                if stop_event.is_set():
+                    log.info("%s: charge stopped by user", codename)
+            except Exception as exc:
+                log.warning("%s: charge failed: %s", codename, exc)
+            finally:
+                _end_port(loc, port, serial, charge_cfg, "charge ended")
+                task["done"] = True
+                task.pop("charge_end_ts", None)
+                _charge_stop.pop(slot, None)
+                task_store.unpersist("charge", slot)
+
+
 
 
 def _adb_read_battery(loc: str, port: int, serial: str | None,
@@ -282,167 +353,194 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
             pass
 
 
-def _run_workbench_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
-    """
-    Workbench mode: the watch is checked out for hands-on work (over
+class WorkbenchOp(Operation):
+    """Workbench mode: the watch is checked out for hands-on work (over
     WiFi/SSH), and the rig babysits its battery in the low–high band instead
     of letting a powered dock peg it at 100%.
 
     Hysteresis loop: charge (port on, battery polls) until high_threshold,
     then rest (port off, watch on battery) and re-check every
-    workbench_poll_minutes; charge again once at/below low_threshold.  If
-    the battery can't be read (e.g. USB switched to RNDIS/SSH mode), fall
-    back to a blind duty cycle: workbench_blind_charge_minutes of power per
-    rest period.  Note the port is unpowered during rest phases — hands-on
-    work is expected to happen over WiFi, not the USB link.
-    """
-    charge_cfg = cfg.get("charge", cfg)
-    low   = charge_cfg.get("low_threshold", 40)
-    high  = charge_cfg.get("high_threshold", 80)
-    rest_sec  = cfg.get("workbench_poll_minutes", 30) * 60
-    blind_sec = cfg.get("workbench_blind_charge_minutes", 15) * 60
-    codename   = find_codename_for_loc_port(cfg, loc, port) or slot
-    stop_event = _workbench_stop[slot]
-    task       = _workbench_tasks[slot]
+    workbench_poll_minutes; charge again at/below low_threshold. If the
+    battery can't be read (e.g. USB switched to RNDIS/SSH mode), fall back
+    to a blind duty cycle: workbench_blind_charge_minutes of power per rest
+    period. The port is unpowered during rest phases — hands-on work is
+    expected to happen over WiFi, not the USB link."""
 
-    def _rest_and_recheck(serial: "str | None") -> None:
-        task["phase"] = "resting"
-        uhubctl_set_power(loc, port, False)
-        if stop_event.wait(timeout=rest_sec):
-            return
-        task["phase"] = "checking"
-        uhubctl_set_power(loc, port, True)
-        if serial:
-            wait_serial_online(serial,
-                               charge_cfg.get("adb_wait_seconds", 15), 4,
-                               stop_event, recover_loc_port=(loc, port))
+    kind = "workbench"
+    tasks = _workbench_tasks
+    stops = _workbench_stop
 
-    try:
-        log.info("%s: workbench mode — holding %d–%d%%", codename, low, high)
-        serial = find_serial_for_loc_port(cfg, loc, port)
-        task["phase"] = "boot"
-        uhubctl_set_power(loc, port, True)
-        if serial:
-            wait_serial_online(serial,
-                               charge_cfg.get("adb_wait_seconds", 15),
-                               charge_cfg.get("adb_wait_retries", 8),
-                               stop_event, recover_loc_port=(loc, port))
-        while not stop_event.is_set():
-            lvl = get_battery_level(serial) if serial else None
-            if lvl is not None:
-                task["pct"], task["blind"] = lvl, False
-                task_store.persist("workbench", slot, loc, port, task)
-                if lvl >= high or (task.get("phase") == "checking" and lvl > low):
-                    _rest_and_recheck(serial)
-                    continue
-                task["phase"] = "charging"
-                if stop_event.wait(timeout=_CHARGE_POLL_SEC):
-                    break
-                _ensure_port_powered(codename, loc, port)
-            else:
-                # Battery unreadable — blind duty cycle.
-                task["blind"] = True
-                task["phase"] = "charging (blind)"
-                task_store.persist("workbench", slot, loc, port, task)
-                if stop_event.wait(timeout=blind_sec):
-                    break
-                _rest_and_recheck(serial)
-    except Exception as exc:
-        log.warning("%s: workbench failed: %s", codename, exc)
-    finally:
-        try:
+    @classmethod
+    def conflict(cls, slot):
+        for other, what in ((ChargeOp, "charge"), (DrainOp, "drain test")):
+            if other.is_active(slot):
+                return f"{what} in progress"
+        if slot in _flash_tasks and not _flash_tasks[slot].get("done", True):
+            return "flash in progress"
+        return None
+
+    def run(self) -> None:
+        slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
+        task, stop_event = self.task, self.stop_event
+        charge_cfg = cfg.get("charge", cfg)
+        low   = charge_cfg.get("low_threshold", 40)
+        high  = charge_cfg.get("high_threshold", 80)
+        rest_sec  = cfg.get("workbench_poll_minutes", 30) * 60
+        blind_sec = cfg.get("workbench_blind_charge_minutes", 15) * 60
+        codename   = find_codename_for_loc_port(cfg, loc, port) or slot
+
+        def _rest_and_recheck(serial: "str | None") -> None:
+            task["phase"] = "resting"
             uhubctl_set_power(loc, port, False)
-        except Exception:
-            pass
-        task["done"] = True
-        _workbench_stop.pop(slot, None)
-        task_store.unpersist("workbench", slot)
-        log.info("%s: workbench ended — returned to fleet (port off)", codename)
-
-
-def _run_drain_for_web(slot: str, loc: str, port: int, cfg: dict) -> None:
-    """
-    Standby drain test: power off the watch, poll battery every 30 min,
-    compute drain rate, stop at floor or on user request.
-    Results saved to DRAIN_RESULTS_DIR as JSON.
-    """
-    charge_cfg = cfg.get("charge", cfg)
-    codename   = find_codename_for_loc_port(cfg, loc, port) or slot
-    stop_event = _drain_stop[slot]
-    task       = _drain_tasks[slot]
-    resuming   = bool(task.get("readings"))
-
-    try:
-        if resuming:
-            # Restored after a restart — keep the existing readings/start_ts and
-            # just continue polling. Rate math is timestamp-based so the gap is
-            # harmless.
-            log.info("%s: drain test resumed at %s%% (%d readings so far)",
-                     codename, task.get("last_pct"), len(task["readings"]))
-        else:
-            log.info("%s: drain test — reading initial battery", codename)
-            serial = find_serial_for_loc_port(cfg, loc, port)
-            task["serial"] = serial
-            start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
-            if start_pct is None:
-                log.warning("%s: drain test: could not read initial battery — aborting", codename)
-                # Remove task so the UI doesn't show a stale done/null state.
-                _drain_tasks.pop(slot, None)
-                task_store.unpersist("drain", slot)
+            if stop_event.wait(timeout=rest_sec):
                 return
+            task["phase"] = "checking"
+            uhubctl_set_power(loc, port, True)
+            if serial:
+                wait_serial_online(serial,
+                                   charge_cfg.get("adb_wait_seconds", 15), 4,
+                                   stop_event, recover_loc_port=(loc, port))
 
-            now = time.time()
-            task.update({
-                "start_ts":   now,
-                "start_pct":  start_pct,
-                "last_ts":    now,
-                "last_pct":   start_pct,
-                "drain_rate": None,
-                "readings":   [{"ts": now, "pct": start_pct}],
-            })
-            task_store.persist("drain", slot, loc, port, task)
-            event_log.log(serial, codename, "drain_reading", pct=start_pct)
-            log.info("%s: drain test started at %d%%", codename, start_pct)
+        try:
+            log.info("%s: workbench mode — holding %d–%d%%", codename, low, high)
+            serial = find_serial_for_loc_port(cfg, loc, port)
+            task["phase"] = "boot"
+            uhubctl_set_power(loc, port, True)
+            if serial:
+                wait_serial_online(serial,
+                                   charge_cfg.get("adb_wait_seconds", 15),
+                                   charge_cfg.get("adb_wait_retries", 8),
+                                   stop_event, recover_loc_port=(loc, port))
+            while not stop_event.is_set():
+                lvl = get_battery_level(serial) if serial else None
+                if lvl is not None:
+                    task["pct"], task["blind"] = lvl, False
+                    task_store.persist("workbench", slot, loc, port, task)
+                    if lvl >= high or (task.get("phase") == "checking" and lvl > low):
+                        _rest_and_recheck(serial)
+                        continue
+                    task["phase"] = "charging"
+                    if stop_event.wait(timeout=_CHARGE_POLL_SEC):
+                        break
+                    _ensure_port_powered(codename, loc, port)
+                else:
+                    # Battery unreadable — blind duty cycle.
+                    task["blind"] = True
+                    task["phase"] = "charging (blind)"
+                    task_store.persist("workbench", slot, loc, port, task)
+                    if stop_event.wait(timeout=blind_sec):
+                        break
+                    _rest_and_recheck(serial)
+        except Exception as exc:
+            log.warning("%s: workbench failed: %s", codename, exc)
+        finally:
+            try:
+                uhubctl_set_power(loc, port, False)
+            except Exception:
+                pass
+            task["done"] = True
+            _workbench_stop.pop(slot, None)
+            task_store.unpersist("workbench", slot)
+            log.info("%s: workbench ended — returned to fleet (port off)", codename)
 
-        while not stop_event.wait(timeout=_DRAIN_POLL_SEC):
-            # Reload config in case serial mapping changed.
-            serial  = find_serial_for_loc_port(load_config(), loc, port)
-            new_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
-            if stop_event.is_set():
-                break
-            if new_pct is None:
-                log.warning("%s: drain test: poll failed — skipping", codename)
-                continue
 
-            now = time.time()
-            task["readings"].append({"ts": now, "pct": new_pct})
-            task["last_ts"]  = now
-            task["last_pct"] = new_pct
 
-            elapsed_h = (now - task["start_ts"]) / 3600
-            if elapsed_h > 0:
-                task["drain_rate"] = (task["start_pct"] - new_pct) / elapsed_h
-            task_store.persist("drain", slot, loc, port, task)
-            event_log.log(task.get("serial"), codename, "drain_reading",
-                       pct=new_pct, rate=task.get("drain_rate"))
-            log.info("%s: drain test: %d%% (%.2f%%/h)", codename,
-                     new_pct, task["drain_rate"] or 0)
 
-            if new_pct <= _DRAIN_FLOOR_PCT:
-                log.info("%s: drain test: reached floor (%d%%) — done", codename, _DRAIN_FLOOR_PCT)
-                break
+class DrainOp(Operation):
+    """Standby drain test: power off the watch, poll the battery every 30
+    minutes, compute the drain rate, stop at the floor or on request.
+    Results are saved as JSON for the history/wearability views."""
 
-    except Exception as exc:
-        log.warning("%s: drain test failed: %s", codename, exc)
-    finally:
-        task["done"]    = True
-        task["stopped"] = stop_event.is_set()
-        _drain_stop.pop(slot, None)
-        task_store.unpersist("drain", slot)
-        # Return the watch to rest: shut it down instead of leaving it
-        # draining at the floor.
-        _end_port(loc, port, task.get("serial"), charge_cfg, "drain ended")
-        _save_drain_results(task, slot, codename)
+    kind = "drain"
+    tasks = _drain_tasks
+    stops = _drain_stop
+
+    @classmethod
+    def conflict(cls, slot):
+        if WorkbenchOp.is_active(slot):
+            return "watch is checked out (workbench)"
+        return None
+
+    def run(self) -> None:
+        slot, loc, port, cfg = self.slot, self.loc, self.port, self.cfg
+        task, stop_event = self.task, self.stop_event
+        charge_cfg = cfg.get("charge", cfg)
+        codename   = find_codename_for_loc_port(cfg, loc, port) or slot
+        resuming   = bool(task.get("readings"))
+
+        try:
+            if resuming:
+                # Restored after a restart — keep the existing readings/start_ts and
+                # just continue polling. Rate math is timestamp-based so the gap is
+                # harmless.
+                log.info("%s: drain test resumed at %s%% (%d readings so far)",
+                         codename, task.get("last_pct"), len(task["readings"]))
+            else:
+                log.info("%s: drain test — reading initial battery", codename)
+                serial = find_serial_for_loc_port(cfg, loc, port)
+                task["serial"] = serial
+                start_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
+                if start_pct is None:
+                    log.warning("%s: drain test: could not read initial battery — aborting", codename)
+                    # Remove task so the UI doesn't show a stale done/null state.
+                    _drain_tasks.pop(slot, None)
+                    task_store.unpersist("drain", slot)
+                    return
+
+                now = time.time()
+                task.update({
+                    "start_ts":   now,
+                    "start_pct":  start_pct,
+                    "last_ts":    now,
+                    "last_pct":   start_pct,
+                    "drain_rate": None,
+                    "readings":   [{"ts": now, "pct": start_pct}],
+                })
+                task_store.persist("drain", slot, loc, port, task)
+                event_log.log(serial, codename, "drain_reading", pct=start_pct)
+                log.info("%s: drain test started at %d%%", codename, start_pct)
+
+            while not stop_event.wait(timeout=_DRAIN_POLL_SEC):
+                # Reload config in case serial mapping changed.
+                serial  = find_serial_for_loc_port(load_config(), loc, port)
+                new_pct = _adb_read_battery(loc, port, serial, charge_cfg, stop_event)
+                if stop_event.is_set():
+                    break
+                if new_pct is None:
+                    log.warning("%s: drain test: poll failed — skipping", codename)
+                    continue
+
+                now = time.time()
+                task["readings"].append({"ts": now, "pct": new_pct})
+                task["last_ts"]  = now
+                task["last_pct"] = new_pct
+
+                elapsed_h = (now - task["start_ts"]) / 3600
+                if elapsed_h > 0:
+                    task["drain_rate"] = (task["start_pct"] - new_pct) / elapsed_h
+                task_store.persist("drain", slot, loc, port, task)
+                event_log.log(task.get("serial"), codename, "drain_reading",
+                           pct=new_pct, rate=task.get("drain_rate"))
+                log.info("%s: drain test: %d%% (%.2f%%/h)", codename,
+                         new_pct, task["drain_rate"] or 0)
+
+                if new_pct <= _DRAIN_FLOOR_PCT:
+                    log.info("%s: drain test: reached floor (%d%%) — done", codename, _DRAIN_FLOOR_PCT)
+                    break
+
+        except Exception as exc:
+            log.warning("%s: drain test failed: %s", codename, exc)
+        finally:
+            task["done"]    = True
+            task["stopped"] = stop_event.is_set()
+            _drain_stop.pop(slot, None)
+            task_store.unpersist("drain", slot)
+            # Return the watch to rest: shut it down instead of leaving it
+            # draining at the floor.
+            _end_port(loc, port, task.get("serial"), charge_cfg, "drain ended")
+            _save_drain_results(task, slot, codename)
+
+
 
 
 def _resume_persisted_tasks() -> None:
@@ -450,14 +548,12 @@ def _resume_persisted_tasks() -> None:
     service last stopped, so charge/drain/workbench survive restarts."""
     cfg = load_config()
     hub_locs = {h["location"] for h in cfg.get("hubs", [])}
-    runners = {"charge": (_charge_tasks, _charge_stop, _run_charge_for_web),
-               "drain":  (_drain_tasks,  _drain_stop,  _run_drain_for_web),
-               "workbench": (_workbench_tasks, _workbench_stop, _run_workbench_for_web)}
+    kinds = {op.kind: op for op in (ChargeOp, DrainOp, WorkbenchOp)}
     resumed = 0
     for p in task_store.load_all():
         kind = p.get("kind"); slot = p.get("slot")
         loc = p.get("loc"); port = p.get("port"); task = p.get("task") or {}
-        if kind not in runners or not slot:
+        if kind not in kinds or not slot:
             task_store.unpersist(kind or "?", slot or "?")
             continue
         if task.get("done") or loc not in hub_locs:
@@ -467,11 +563,11 @@ def _resume_persisted_tasks() -> None:
                             loc, kind, slot)
             task_store.unpersist(kind, slot)
             continue
-        tasks, stops, runner = runners[kind]
+        op_cls = kinds[kind]
         task["done"] = False
-        tasks[slot] = task
-        stops[slot] = threading.Event()
-        threading.Thread(target=runner, args=(slot, loc, port, cfg),
+        op_cls.tasks[slot] = task
+        op_cls.stops[slot] = threading.Event()
+        threading.Thread(target=op_cls(slot, loc, port, cfg).run,
                          daemon=True).start()
         resumed += 1
         log.info("resumed %s op on %s:%s", kind, loc, port)

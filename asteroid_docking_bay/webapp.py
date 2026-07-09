@@ -16,18 +16,16 @@ from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
 from .config import (_config_lock, find_codename_for_loc_port,
-                     find_serial_for_loc_port, is_slot_smart, load_config,
-                     save_config)
+                     find_serial_for_loc_port, load_config, save_config)
 from . import usb, fastboot
 from .usb import (_sysfs_path_to_serial_map, _sysfs_switch_mode,
                   test_port_power_switching, uhubctl_cycle, uhubctl_set_power)
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
-from .tasks import (_adb_lock, _charge_stop, _charge_tasks, _drain_stop,
-                    _drain_tasks, _flash_tasks, _remap_tasks, task_store,
-                    _workbench_stop, _workbench_tasks)
+from .tasks import (_adb_lock, _charge_tasks, _drain_tasks, _flash_tasks,
+                    _remap_tasks, _workbench_tasks)
 from .watchctl import Watch
-from .ops import (_end_port, _flash_one_watch, _resume_persisted_tasks,
-                  _run_charge_for_web, _run_drain_for_web, _run_workbench_for_web)
+from .ops import (ChargeOp, DrainOp, WorkbenchOp, _end_port,
+                  _flash_one_watch, _resume_persisted_tasks)
 from .webstatus import _web_status_data
 from .webtemplate import _WEB_TEMPLATE
 
@@ -527,35 +525,23 @@ def serve(args, cfg: dict):
     def api_charge(loc, port):
         resp.content_type = "application/json"
         slot = f"{loc}:{port}"
-        if slot in _charge_tasks and not _charge_tasks[slot].get("done", True):
-            existing_ts = _charge_tasks[slot].get("charge_end_ts", 0)
+        if ChargeOp.is_active(slot):
             return json.dumps({"ok": False, "error": "charge already running",
-                                "charge_end_ts": existing_ts})
-        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
-            return json.dumps({"ok": False, "error": "watch is checked out (workbench)"})
+                               "charge_end_ts":
+                                   _charge_tasks[slot].get("charge_end_ts", 0)})
         c_cfg = load_config()
-        if is_slot_smart(c_cfg, loc, port) is False:
-            return json.dumps({"ok": False,
-                               "error": "non-smart port — power cannot be switched"})
+        err = ChargeOp.start(loc, port, c_cfg)
+        if err:
+            return json.dumps({"ok": False, "error": err})
         charge_cfg = c_cfg.get("charge", c_cfg)
-        duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
-        _charge_tasks[slot] = {"done": False}
-        _charge_stop[slot] = threading.Event()
-        task_store.persist("charge", slot, loc, port, _charge_tasks[slot])
-        t = threading.Thread(
-            target=_run_charge_for_web, args=(slot, loc, port, c_cfg), daemon=True
-        )
-        t.start()
         _bust_status_cache()
-        return json.dumps({"ok": True, "duration_seconds": duration_sec})
+        return json.dumps({"ok": True, "duration_seconds":
+                           charge_cfg.get("charge_duration_minutes", 30) * 60})
 
     @app.post("/api/charge/stop/<loc>/<port:int>")
     def api_charge_stop(loc, port):
         resp.content_type = "application/json"
-        slot = f"{loc}:{port}"
-        ev = _charge_stop.get(slot)
-        if ev:
-            ev.set()
+        if ChargeOp.stop(loc, port):
             _bust_status_cache()
             return json.dumps({"ok": True})
         return json.dumps({"ok": False, "error": "no charge running"})
@@ -563,33 +549,16 @@ def serve(args, cfg: dict):
     @app.post("/api/workbench/<loc>/<port:int>")
     def api_workbench(loc, port):
         resp.content_type = "application/json"
-        slot = f"{loc}:{port}"
-        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
-            return json.dumps({"ok": False, "error": "workbench already active"})
-        for tasks, what in ((_charge_tasks, "charge"), (_drain_tasks, "drain test"),
-                            (_flash_tasks, "flash")):
-            if slot in tasks and not tasks[slot].get("done", True):
-                return json.dumps({"ok": False, "error": f"{what} in progress"})
-        c_cfg = load_config()
-        if is_slot_smart(c_cfg, loc, port) is False:
-            return json.dumps({"ok": False,
-                               "error": "non-smart port — power cannot be switched"})
-        _workbench_tasks[slot] = {"done": False}
-        _workbench_stop[slot]  = threading.Event()
-        task_store.persist("workbench", slot, loc, port, _workbench_tasks[slot])
-        t = threading.Thread(
-            target=_run_workbench_for_web, args=(slot, loc, port, c_cfg), daemon=True
-        )
-        t.start()
+        err = WorkbenchOp.start(loc, port, load_config())
+        if err:
+            return json.dumps({"ok": False, "error": err})
         _bust_status_cache()
         return json.dumps({"ok": True})
 
     @app.post("/api/workbench/stop/<loc>/<port:int>")
     def api_workbench_stop(loc, port):
         resp.content_type = "application/json"
-        ev = _workbench_stop.get(f"{loc}:{port}")
-        if ev:
-            ev.set()
+        if WorkbenchOp.stop(loc, port):
             _bust_status_cache()
             return json.dumps({"ok": True})
         return json.dumps({"ok": False, "error": "no workbench active"})
@@ -625,32 +594,16 @@ def serve(args, cfg: dict):
     @app.post("/api/drain/<loc>/<port:int>")
     def api_drain(loc, port):
         resp.content_type = "application/json"
-        slot = f"{loc}:{port}"
-        if slot in _drain_tasks and not _drain_tasks[slot].get("done", True):
-            return json.dumps({"ok": False, "error": "drain test already running"})
-        if slot in _workbench_tasks and not _workbench_tasks[slot].get("done", True):
-            return json.dumps({"ok": False, "error": "watch is checked out (workbench)"})
-        c_cfg = load_config()
-        if is_slot_smart(c_cfg, loc, port) is False:
-            return json.dumps({"ok": False,
-                               "error": "non-smart port — power cannot be switched"})
-        _drain_tasks[slot] = {"done": False}
-        _drain_stop[slot]  = threading.Event()
-        task_store.persist("drain", slot, loc, port, _drain_tasks[slot])
-        t = threading.Thread(
-            target=_run_drain_for_web, args=(slot, loc, port, c_cfg), daemon=True
-        )
-        t.start()
+        err = DrainOp.start(loc, port, load_config())
+        if err:
+            return json.dumps({"ok": False, "error": err})
         _bust_status_cache()
         return json.dumps({"ok": True})
 
     @app.post("/api/drain/stop/<loc>/<port:int>")
     def api_drain_stop(loc, port):
         resp.content_type = "application/json"
-        slot = f"{loc}:{port}"
-        ev = _drain_stop.get(slot)
-        if ev:
-            ev.set()
+        if DrainOp.stop(loc, port):
             _bust_status_cache()
             return json.dumps({"ok": True})
         return json.dumps({"ok": False, "error": "no drain test running"})

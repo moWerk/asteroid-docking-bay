@@ -61,22 +61,29 @@ Two deliberate seams keep that acyclic:
 Classes were introduced where there is real per-instance state or identity:
 
 - **`Watch(serial)`** (watchctl) — every action bound to one watch.
+- **`Operation`** (ops) — the shared lifecycle of the long-running per-slot
+  operations: duplicate/conflict refusal, registry seeding, durable
+  persistence, worker spawn, stop, resume-after-restart. `ChargeOp`,
+  `DrainOp` and `WorkbenchOp` subclass it with their kind, registries,
+  conflict rule and worker body; the web routes reduce to
+  `ChargeOp.start(loc, port, cfg)` / `.stop(loc, port)`.
 - **`EventLog(dir)`** (events) — the JSONL timeline; directory injectable,
   which is also what makes it testable.
 - **`TaskStore(dir)`** (tasks) — durable operation state.
 - **`PowerCache(ttl)`** (usb) — TTL'd port-power cache.
 - **`ChargeDropDetector`** (ops) — the losing-power alarm state machine.
 
+The operation registries themselves stay as plain dicts in `tasks.py` —
+the Operation subclasses bind to them, and the status builder reads them
+directly, so one source of truth serves both.
+
 Port power switching stays as module functions (`usb.set_power(loc, port,
 on)` etc.). Wrapping every call site in a `UsbPort` object would have churned
 ~40 hardware-critical lines for no behavioral gain; if a port abstraction
 earns its keep later (issue #2's mapping rework is the likely trigger), the
-functions give it a single place to grow from.
-
-The operation workers (charge/drain/workbench) remain functions around a
-shared task-dict/stop-event pattern. They are candidates for an `Operation`
-base class, but converting them without hardware-verifying every path is how
-regressions happen; they moved verbatim.
+functions give it a single place to grow from. The flash/remap SSE streams
+also keep their own lifecycle: they are browser-connection-driven, not
+resumable background ops.
 
 ## Testing
 
