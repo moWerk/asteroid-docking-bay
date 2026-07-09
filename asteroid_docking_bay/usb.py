@@ -213,7 +213,12 @@ def uhubctl_list() -> list[dict]:
                 "See udev/70-asteroid-docking-bay.rules in this repo."
             )
         return []
+    return parse_uhubctl_status(out)
 
+
+def parse_uhubctl_status(out: str) -> list[dict]:
+    """Parse `uhubctl` status output into the uhubctl_list() hub dicts.
+    Pure — see tests."""
     hubs: list[dict] = []
     current: dict | None = None
     for line in out.splitlines():

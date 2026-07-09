@@ -8,6 +8,36 @@ import time
 from .util import _run, log
 
 
+def parse_adb_devices(out: str) -> dict[str, dict]:
+    """Parse `adb devices -l` output into {serial: {"status": …, key: value}}.
+    The -l extras (usb:, product:, model:, device:, transport_id:) become
+    dict keys; bare tokens collect under "_tokens". Device lines follow the
+    "List of devices attached" header; anything before it (daemon-restart
+    notices) and `*`-prefixed lines are noise, not devices. Pure — see tests."""
+    result: dict[str, dict] = {}
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("List of devices"):
+            lines = lines[i + 1:]
+            break
+    else:
+        lines = lines[1:]
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2 or parts[0].startswith("*"):
+            continue
+        serial, status = parts[0], parts[1]
+        parsed: dict[str, str | list[str]] = {}
+        for token in parts[2:]:
+            if ":" in token:
+                k, v = token.split(":", 1)
+                parsed[k] = v
+            else:
+                parsed.setdefault("_tokens", []).append(token)
+        result[serial] = {"status": status, **parsed}
+    return result
+
+
 def adb_devices_checked() -> dict[str, str | list[str]] | None:
     """Like adb_devices, but None when the adb call itself failed (server
     crash / not installed) — distinct from a genuinely empty device list."""
@@ -15,26 +45,7 @@ def adb_devices_checked() -> dict[str, str | list[str]] | None:
     if rc != 0:
         log.warning("adb devices failed (rc=%s): %s", rc, err.strip() or "no stderr")
         return None
-    result: dict[str, dict[str, str | list[str]]] = {}
-    lines = out.splitlines()[1:]
-    for line in lines:
-        parts = line.split()
-        serial = parts[0]
-        status = parts[1]
-
-        extras = parts[2:]
-
-        parsed: dict[str, str | list[str]] = {}
-
-        for token in extras:
-            if ":" in token:
-                k, v = token.split(":", 1)
-                parsed[k] = v
-            else:
-                parsed.setdefault("_tokens", []).append(token)
-
-        result[serial] = {"status": status, **parsed}
-    return result
+    return parse_adb_devices(out)
 
 
 def adb_devices() -> dict[str, str | list[str]]:
