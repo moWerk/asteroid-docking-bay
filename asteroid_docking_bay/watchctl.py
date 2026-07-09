@@ -89,6 +89,7 @@ def detect_watch_os(serial: str) -> str:
 def _watch_os_for(serial: str) -> str:
     if serial not in _watch_os:
         _watch_os[serial] = detect_watch_os(serial)
+    return _watch_os[serial]
 
 
 # ── Control Center: per-watch stats + hardware toggles over ADB ───────────────
@@ -132,47 +133,12 @@ echo "btmac=$(hcitool con 2>/dev/null | grep -o "[0-9A-F:]\{17\}" | head -1)"
 echo "--connman--"
 connmanctl technologies 2>/dev/null'''
 
-
-def _control_center_data(serial: str) -> dict:
-    """Read a watch's About-style stats + connman toggle states in one adb
-    batch. Returns {} if unreachable."""
-    rc, out, _ = _run(f"adb -s {serial} shell {shlex.quote(_CC_SCRIPT)}",
-                      check=False, timeout=12)
-    if rc != 0 or not out.strip():
-        return {}
-    info: dict = {}
-    in_conn = False
-    ctype = None
-    tech: dict = {}
-    for line in out.splitlines():
-        if line.strip() == "--connman--":
-            in_conn = True
-            continue
-        if not in_conn:
-            if "=" in line:
-                k, v = line.split("=", 1)
-                info[k.strip()] = v.strip()
-        else:
-            s = line.strip()
-            if s.startswith("Type ="):
-                ctype = s.split("=", 1)[1].strip()
-            elif s.startswith("Powered =") and ctype:
-                tech[ctype] = (s.split("=", 1)[1].strip().lower() == "true")
-    info["serial"] = serial
-    info["wifi"] = tech.get("wifi")
-    info["bluetooth"] = tech.get("bluetooth")
-    return info
-
-
-def _control_toggle(serial: str, tech: str, on: bool) -> bool:
-    """Enable/disable a connman technology (wifi|bluetooth) on the watch."""
-    action = "enable" if on else "disable"
-    rc, _, err = _run(f"adb -s {serial} shell connmanctl {action} {tech}",
-                      check=False, timeout=12)
-    if rc != 0:
-        log.warning("toggle %s %s on %s failed: %s", action, tech, serial,
-                    err.strip() or f"rc={rc}")
-    return rc == 0
+# UI-session tools (screenshots, notifications) talk to the Wayland compositor
+# and the user's D-Bus session, which live under the `ceres` account — adb shell
+# is root and can't reach them, so Watch.user_cmd runs them via `su ceres` with
+# the session env.
+_CERES_ENV = ("XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 "
+              "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus")
 
 
 def _host_timezone() -> "str | None":
@@ -184,56 +150,108 @@ def _host_timezone() -> "str | None":
     return tz.split("zoneinfo/", 1)[1] if "zoneinfo/" in tz else None
 
 
-def _control_set_time(serial: str) -> "str | None":
-    """Sync the watch's clock + timezone from the host (the priority action).
-    `date -s @<host UTC epoch>` then `timedatectl set-timezone`. Returns the tz
-    applied, or None."""
-    epoch = int(time.time())
-    _run(f"adb -s {serial} shell date -s @{epoch}", check=False, timeout=10)
-    tz = _host_timezone()
-    if tz:
-        _run(f"adb -s {serial} shell timedatectl set-timezone {shlex.quote(tz)}",
-             check=False, timeout=10)
-    log.info("%s: synced time from host (epoch=%d tz=%s)", serial, epoch, tz)
-    return tz
+class Watch:
+    """Everything done *to* one specific watch over ADB, bound to its serial:
+    the Control Center data batch, hardware toggles, clock sync, and the
+    ceres-session actions (screenshot, notification) that must not run as
+    root because they talk to the user's Wayland compositor / session D-Bus."""
 
+    def __init__(self, serial: str):
+        self.serial = serial
 
-# UI-session tools (screenshots, notifications) talk to the Wayland compositor
-# and the user's D-Bus session, which live under the `ceres` account — adb shell
-# is root and can't reach them, so these run via `su ceres` with the session env.
-_CERES_ENV = ("XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 "
-              "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus")
+    def cc_data(self) -> dict:
+        """Read About-style stats + connman toggle states in one adb batch.
+        Returns {} if unreachable."""
+        rc, out, _ = _run(f"adb -s {self.serial} shell {shlex.quote(_CC_SCRIPT)}",
+                          check=False, timeout=12)
+        if rc != 0 or not out.strip():
+            return {}
+        info: dict = {}
+        in_conn = False
+        ctype = None
+        tech: dict = {}
+        for line in out.splitlines():
+            if line.strip() == "--connman--":
+                in_conn = True
+                continue
+            if not in_conn:
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    info[k.strip()] = v.strip()
+            else:
+                s = line.strip()
+                if s.startswith("Type ="):
+                    ctype = s.split("=", 1)[1].strip()
+                elif s.startswith("Powered =") and ctype:
+                    tech[ctype] = (s.split("=", 1)[1].strip().lower() == "true")
+        info["serial"] = self.serial
+        info["wifi"] = tech.get("wifi")
+        info["bluetooth"] = tech.get("bluetooth")
+        return info
 
+    def toggle(self, tech: str, on: bool) -> bool:
+        """Enable/disable a connman technology (wifi|bluetooth)."""
+        action = "enable" if on else "disable"
+        rc, _, err = _run(f"adb -s {self.serial} shell connmanctl {action} {tech}",
+                          check=False, timeout=12)
+        if rc != 0:
+            log.warning("toggle %s %s on %s failed: %s", action, tech,
+                        self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
 
-def _watch_user_cmd(serial: str, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
-    """Run a command in the watch's ceres user session (not as root)."""
-    inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
-    return _run(f"adb -s {serial} shell {shlex.quote(inner)}",
-                check=False, timeout=timeout)
+    def set_time_from_host(self) -> "str | None":
+        """Sync the watch's clock + timezone from the host: `date -s @epoch`
+        then `timedatectl set-timezone`. Returns the tz applied, or None."""
+        epoch = int(time.time())
+        _run(f"adb -s {self.serial} shell date -s @{epoch}", check=False,
+             timeout=10)
+        tz = _host_timezone()
+        if tz:
+            _run(f"adb -s {self.serial} shell timedatectl set-timezone "
+                 f"{shlex.quote(tz)}", check=False, timeout=10)
+        log.info("%s: synced time from host (epoch=%d tz=%s)",
+                 self.serial, epoch, tz)
+        return tz
 
+    def user_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
+        """Run a command in the watch's ceres user session (not as root)."""
+        inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
+        return _run(f"adb -s {self.serial} shell {shlex.quote(inner)}",
+                    check=False, timeout=timeout)
 
-def _watch_notify(serial: str) -> bool:
-    """Send a test notification to the watch."""
-    cmd = ('notificationtool -o add --application=docking-bay --urgency=2 '
-           '--icon=ios-happy '
-           '--hint="x-nemo-preview-summary asteroid-docking-bay" '
-           '--hint="x-nemo-preview-body test notification from the host" '
-           '"docking-bay" "ping"')
-    rc, _, err = _watch_user_cmd(serial, cmd, timeout=12)
-    if rc != 0:
-        log.warning("notify %s failed: %s", serial, err.strip())
-    return rc == 0
+    def notify(self) -> bool:
+        """Send a test notification."""
+        cmd = ('notificationtool -o add --application=docking-bay --urgency=2 '
+               '--icon=ios-happy '
+               '--hint="x-nemo-preview-summary asteroid-docking-bay" '
+               '--hint="x-nemo-preview-body test notification from the host" '
+               '"docking-bay" "ping"')
+        rc, _, err = self.user_cmd(cmd, timeout=12)
+        if rc != 0:
+            log.warning("notify %s failed: %s", self.serial, err.strip())
+        return rc == 0
 
+    def screenshot(self) -> "Path | None":
+        """Capture the screen and pull it locally. Returns the Path or None.
+        screenshottool exits 10 even on success, so judge by the pulled file."""
+        remote = "/home/ceres/.dockingbay_ss.jpg"
+        self.user_cmd(f"screenshottool {remote} 0", timeout=15)
+        local = Path(tempfile.gettempdir()) / f"dockingbay_ss_{self.serial}.jpg"
+        rc, _, _ = _run(f"adb -s {self.serial} pull {remote} "
+                        f"{shlex.quote(str(local))}", check=False, timeout=15)
+        _run(f"adb -s {self.serial} shell rm -f {remote}", check=False, timeout=8)
+        return local if (rc == 0 and local.exists()
+                         and local.stat().st_size > 0) else None
 
-def _watch_screenshot(serial: str) -> "Path | None":
-    """Capture the watch screen and pull it locally. Returns the Path or None.
-    screenshottool exits 10 even on success, so we judge by the pulled file."""
-    remote = "/home/ceres/.dockingbay_ss.jpg"
-    _watch_user_cmd(serial, f"screenshottool {remote} 0", timeout=15)
-    local = Path(tempfile.gettempdir()) / f"dockingbay_ss_{serial}.jpg"
-    rc, _, _ = _run(f"adb -s {serial} pull {remote} {shlex.quote(str(local))}",
-                    check=False, timeout=15)
-    _run(f"adb -s {serial} shell rm -f {remote}", check=False, timeout=8)
-    return local if (rc == 0 and local.exists() and local.stat().st_size > 0) else None
+    def buzz(self, ms: int = 300) -> bool:
+        """Vibrate briefly — locate/identify the watch in a full dock."""
+        rc, _, _ = _run(f'adb -s {self.serial} shell "echo {ms} > '
+                        f'/sys/class/timed_output/vibrator/enable"',
+                        check=False, timeout=8)
+        return rc == 0
 
-
+    def screen(self, on: bool) -> bool:
+        """Force the screen on (mce demo mode) or release it."""
+        rc, _, _ = _run(f"adb -s {self.serial} shell mcetool -D "
+                        f"{'on' if on else 'off'}", check=False, timeout=10)
+        return rc == 0

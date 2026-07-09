@@ -68,26 +68,32 @@ def _require_uhubctl():
 # uhubctl. uhubctl stays for mapping/discovery only.
 _SYSFS_USB = Path("/sys/bus/usb/devices")
 
-# Short-lived power-state cache, keyed (location, port) → (value, expiry). Lets
-# the status page skip the ~200ms/port disable read on empty cascade ports.
-# TTL'd (not authoritative-forever) so it self-heals: an external change, or a
-# write handled by a *different* serve process with its own cache, becomes
-# visible within one TTL. Correctness-sensitive callers (re-power checks, set
-# read-backs, the smart test) always read fresh via _sysfs_get_power, not this.
-_power_cache: dict = {}
-# Long TTL: empty-port power only changes when we change it (we update the cache
-# on every write), so the warmer can warm once and stay quiet for minutes. Fewer
-# background disable reads = fewer kernel hub-lock collisions with status reads.
-_POWER_TTL = 300.0
+class PowerCache:
+    """TTL'd port-power cache, keyed (location, port). Lets the status page
+    skip the ~200ms/port `disable` read on empty cascade ports. TTL'd rather
+    than authoritative-forever so it self-heals: an external change, or a
+    write handled by a different serve process with its own cache, becomes
+    visible within one TTL. Correctness-sensitive callers (re-power checks,
+    set read-backs, the smart test) always read fresh via _sysfs_get_power.
+
+    The long default TTL is deliberate: empty-port power only changes when we
+    change it (every write updates the cache), so the background warmer can
+    warm once and stay quiet — fewer `disable` reads means fewer kernel
+    hub-lock collisions with status reads."""
+
+    def __init__(self, ttl: float = 300.0):
+        self.ttl = ttl
+        self._data: dict = {}
+
+    def get(self, key):
+        e = self._data.get(key)
+        return e[0] if e and e[1] > time.time() else None
+
+    def put(self, key, val):
+        self._data[key] = (val, time.time() + self.ttl)
 
 
-def _pcache_get(key):
-    e = _power_cache.get(key)
-    return e[0] if e and e[1] > time.time() else None
-
-
-def _pcache_put(key, val):
-    _power_cache[key] = (val, time.time() + _POWER_TTL)
+power_cache = PowerCache()
 
 
 def _sysfs_disable_path(location: str, port: int) -> "Path | None":
@@ -118,7 +124,7 @@ def _sysfs_set_power(location: str, port: int, on: bool) -> bool:
         return False
     try:
         p.write_text("0" if on else "1")
-        _pcache_put((location, port), on)
+        power_cache.put((location, port), on)
         return True
     except OSError as e:
         log.debug("sysfs set_power %s:%d failed (%s) — falling back to uhubctl",
@@ -153,12 +159,12 @@ def _sysfs_hub_scan(cfg: dict) -> list[dict]:
                 connect[n] = present
                 if present:                       # a device proves it's powered
                     power[n] = True
-                    _pcache_put((loc, n), True)
+                    power_cache.put((loc, n), True)
                 else:
                     # Never read `disable` on the status path — it's a slow,
                     # variable USB query (some empty-off ports hang for seconds).
                     # Serve the cached value; _power_cache_warmer keeps it fresh.
-                    power[n] = _pcache_get((loc, n))
+                    power[n] = power_cache.get((loc, n))
         desc = ""
         if want:
             try:
@@ -276,7 +282,7 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
     if _sysfs_set_power(location, port, on):
         actual = _sysfs_get_power(location, port)       # fresh read-back
         if actual is not None:
-            _pcache_put((location, port), actual)
+            power_cache.put((location, port), actual)
         confirmed = actual == on
         if not confirmed:
             log.warning("sysfs set %s port %d %s: read-back did not confirm",
@@ -290,7 +296,7 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
                 f"uhubctl failed setting hub {location} port {port} {action}: {err}"
             )
         confirmed = uhubctl_get_power(location, port) == on
-    _pcache_put((location, port), on)
+    power_cache.put((location, port), on)
     if not confirmed:
         log.warning(
             "uhubctl set %s port %d %s: command succeeded but port state did not change"

@@ -23,11 +23,9 @@ from .usb import (_sysfs_path_to_serial_map, _sysfs_switch_mode,
                   test_port_power_switching, uhubctl_cycle, uhubctl_set_power)
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
 from .tasks import (_adb_lock, _charge_stop, _charge_tasks, _drain_stop,
-                    _persist_task,
-                    _drain_tasks, _flash_tasks, _remap_tasks,
+                    _drain_tasks, _flash_tasks, _remap_tasks, task_store,
                     _workbench_stop, _workbench_tasks)
-from .watchctl import (_control_center_data, _control_set_time, _control_toggle,
-                       _watch_notify, _watch_screenshot)
+from .watchctl import Watch
 from .ops import (_end_port, _flash_one_watch, _resume_persisted_tasks,
                   _run_charge_for_web, _run_drain_for_web, _run_workbench_for_web)
 from .webstatus import _web_status_data
@@ -56,11 +54,11 @@ def _background_warmer() -> None:
                             continue
                         if (usb._SYSFS_USB / f"{loc}.{n}").exists():
                             continue            # occupied → known powered
-                        if usb._pcache_get((loc, n)) is not None:
+                        if usb.power_cache.get((loc, n)) is not None:
                             continue            # still fresh, skip the slow read
                         v = usb._sysfs_get_power(loc, n)
                         if v is not None:
-                            usb._pcache_put((loc, n), v)
+                            usb.power_cache.put((loc, n), v)
                         time.sleep(0.25)        # gentle on the bus
         except Exception as e:
             log.debug("cache warmer: %s", e)
@@ -351,14 +349,14 @@ def serve(args, cfg: dict):
     def api_watch(serial):
         """Stats + toggle states for the Control Center overlay."""
         resp.content_type = "application/json"
-        return json.dumps(_control_center_data(serial))
+        return json.dumps(Watch(serial).cc_data())
 
     @app.post("/api/watch/<serial>/toggle/<tech>/<state>")
     def api_watch_toggle(serial, tech, state):
         resp.content_type = "application/json"
         if tech not in ("wifi", "bluetooth"):
             return json.dumps({"ok": False, "error": f"unknown toggle {tech}"})
-        ok = _control_toggle(serial, tech, state == "on")
+        ok = Watch(serial).toggle(tech, state == "on")
         _bust_status_cache()
         return json.dumps({"ok": ok})
 
@@ -366,19 +364,19 @@ def serve(args, cfg: dict):
     def api_watch_settime(serial):
         """Sync the watch clock + timezone from the host."""
         resp.content_type = "application/json"
-        tz = _control_set_time(serial)
+        tz = Watch(serial).set_time_from_host()
         return json.dumps({"ok": True, "timezone": tz})
 
     @app.post("/api/watch/<serial>/notify")
     def api_watch_notify(serial):
         """Send a test notification to the watch."""
         resp.content_type = "application/json"
-        return json.dumps({"ok": _watch_notify(serial)})
+        return json.dumps({"ok": Watch(serial).notify()})
 
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         """Capture and return the watch screen as a JPEG."""
-        local = _watch_screenshot(serial)
+        local = Watch(serial).screenshot()
         if not local:
             resp.status = 502
             resp.content_type = "text/plain"
@@ -390,17 +388,13 @@ def serve(args, cfg: dict):
     def api_watch_buzz(serial):
         """Vibrate the watch briefly — locate/identify it in a full dock."""
         resp.content_type = "application/json"
-        rc, _, _ = _run(f'adb -s {serial} shell "echo 300 > /sys/class/timed_output/vibrator/enable"',
-                        check=False, timeout=8)
-        return json.dumps({"ok": rc == 0})
+        return json.dumps({"ok": Watch(serial).buzz()})
 
     @app.post("/api/watch/<serial>/screen/<state>")
     def api_watch_screen(serial, state):
         """Force the screen on (demo mode) or release it."""
         resp.content_type = "application/json"
-        rc, _, _ = _run(f"adb -s {serial} shell mcetool -D {'on' if state == 'on' else 'off'}",
-                        check=False, timeout=10)
-        return json.dumps({"ok": rc == 0})
+        return json.dumps({"ok": Watch(serial).screen(state == "on")})
 
     @app.post("/api/on/<loc>/<port:int>")
     def api_on(loc, port):
@@ -547,7 +541,7 @@ def serve(args, cfg: dict):
         duration_sec = charge_cfg.get("charge_duration_minutes", 30) * 60
         _charge_tasks[slot] = {"done": False}
         _charge_stop[slot] = threading.Event()
-        _persist_task("charge", slot, loc, port, _charge_tasks[slot])
+        task_store.persist("charge", slot, loc, port, _charge_tasks[slot])
         t = threading.Thread(
             target=_run_charge_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )
@@ -582,7 +576,7 @@ def serve(args, cfg: dict):
                                "error": "non-smart port — power cannot be switched"})
         _workbench_tasks[slot] = {"done": False}
         _workbench_stop[slot]  = threading.Event()
-        _persist_task("workbench", slot, loc, port, _workbench_tasks[slot])
+        task_store.persist("workbench", slot, loc, port, _workbench_tasks[slot])
         t = threading.Thread(
             target=_run_workbench_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )
@@ -642,7 +636,7 @@ def serve(args, cfg: dict):
                                "error": "non-smart port — power cannot be switched"})
         _drain_tasks[slot] = {"done": False}
         _drain_stop[slot]  = threading.Event()
-        _persist_task("drain", slot, loc, port, _drain_tasks[slot])
+        task_store.persist("drain", slot, loc, port, _drain_tasks[slot])
         t = threading.Thread(
             target=_run_drain_for_web, args=(slot, loc, port, c_cfg), daemon=True
         )

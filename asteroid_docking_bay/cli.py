@@ -16,7 +16,7 @@ from .config import (CONFIG_FILE, _resolve_targets, find_port_for_codename,
                      is_port_smart, load_config, save_config)
 from .usb import (test_port_power_switching, uhubctl_get_power, uhubctl_list,
                   uhubctl_set_power)
-from .events import _log_event, _next_due_ts, _standby_loss_rate
+from .events import event_log
 from .ops import _flash_one_watch, charge_to_target
 from .watchctl import wait_for_adb
 
@@ -276,9 +276,9 @@ def cmd_check_charge(args, cfg: dict):
             # drain projects it is not yet near low_threshold, skip waking it.
             if charge_cfg.get("adaptive_cadence", True) and not power_was_on:
                 known_serial = find_serial_for_loc_port(cfg, loc, port)
-                due = _next_due_ts(known_serial, codename, cfg)
+                due = event_log.next_due_ts(known_serial, codename, cfg)
                 if due is not None and time.time() < due:
-                    rate = _standby_loss_rate(known_serial, codename) or 0
+                    rate = event_log.standby_loss_rate(known_serial, codename) or 0
                     log.info("%s: not due — skipping (next in ~%.0f h, "
                              "standby %.2f%%/h)", codename,
                              (due - time.time()) / 3600, rate)
@@ -305,7 +305,7 @@ def cmd_check_charge(args, cfg: dict):
                 continue
 
             log.info("%s: battery at %d%%", codename, level)
-            _log_event(serial, codename, "check_reading", pct=level)
+            event_log.log(serial, codename, "check_reading", pct=level)
 
             if level >= high and power_was_on:
                 log.info("%s: at %d%% (≥%d%%), powering off", codename, level, high)

@@ -37,52 +37,58 @@ _remap_tasks: dict[str, dict] = {}
 _adb_lock = threading.Lock()
 
 
-# ── Durable operation state ───────────────────────────────────────────────────
-# Charge, drain and workbench run in daemon threads whose state lives in the
-# dicts above — in-memory, so a web-service restart/crash silently kills them.
-# We mirror each running op to disk here; on startup the web service reloads
-# and resumes any unfinished one, so ops survive restarts/reboots.
-_TASKS_DIR = Path.home() / ".local/state/asteroid-docking-bay/tasks"
+class TaskStore:
+    """Durable operation state. Charge, drain and workbench run in daemon
+    threads whose live state sits in the registries above — in-memory, so a
+    web-service restart/crash would silently kill them. Each running op is
+    mirrored to one JSON file here (written atomically via tmp+rename); on
+    startup the web service reloads and resumes any unfinished one.
 
+    The directory is a constructor argument so tests can use a tmpdir;
+    runtime code uses the `task_store` module singleton."""
 
-def _task_file(kind: str, slot: str) -> Path:
-    safe = slot.replace(":", "-").replace(".", "_").replace("/", "_")
-    return _TASKS_DIR / f"{kind}__{safe}.json"
+    def __init__(self, directory: Path):
+        self.dir = Path(directory)
 
+    def _file(self, kind: str, slot: str) -> Path:
+        safe = slot.replace(":", "-").replace(".", "_").replace("/", "_")
+        return self.dir / f"{kind}__{safe}.json"
 
-def _persist_task(kind: str, slot: str, loc: str, port: int, task: dict) -> None:
-    """Atomically write a running op's resumable state to disk."""
-    try:
-        _TASKS_DIR.mkdir(parents=True, exist_ok=True)
-        payload = {"kind": kind, "slot": slot, "loc": loc, "port": port,
-                   "task": task}
-        f = _task_file(kind, slot)
-        tmp = f.with_suffix(".tmp")
-        with tmp.open("w") as fh:
-            json.dump(payload, fh)
-        tmp.replace(f)
-    except Exception as exc:
-        log.debug("persist %s %s failed: %s", kind, slot, exc)
-
-
-def _unpersist_task(kind: str, slot: str) -> None:
-    try:
-        _task_file(kind, slot).unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
-def _load_persisted_tasks() -> "list[dict]":
-    """Return the persisted payloads for all ops that were running at shutdown."""
-    out: list[dict] = []
-    if not _TASKS_DIR.is_dir():
-        return out
-    for f in _TASKS_DIR.glob("*.json"):
+    def persist(self, kind: str, slot: str, loc: str, port: int,
+                task: dict) -> None:
+        """Atomically write a running op's resumable state to disk."""
         try:
-            with f.open() as fh:
-                out.append(json.load(fh))
+            self.dir.mkdir(parents=True, exist_ok=True)
+            payload = {"kind": kind, "slot": slot, "loc": loc, "port": port,
+                       "task": task}
+            f = self._file(kind, slot)
+            tmp = f.with_suffix(".tmp")
+            with tmp.open("w") as fh:
+                json.dump(payload, fh)
+            tmp.replace(f)
         except Exception as exc:
-            log.warning("could not read persisted task %s: %s", f.name, exc)
-    return out
+            log.debug("persist %s %s failed: %s", kind, slot, exc)
+
+    def unpersist(self, kind: str, slot: str) -> None:
+        try:
+            self._file(kind, slot).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def load_all(self) -> "list[dict]":
+        """The persisted payloads for all ops running at last shutdown."""
+        out: list[dict] = []
+        if not self.dir.is_dir():
+            return out
+        for f in self.dir.glob("*.json"):
+            try:
+                with f.open() as fh:
+                    out.append(json.load(fh))
+            except Exception as exc:
+                log.warning("could not read persisted task %s: %s", f.name, exc)
+        return out
+
+
+task_store = TaskStore(Path.home() / ".local/state/asteroid-docking-bay/tasks")
 
 
