@@ -18,7 +18,6 @@ from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 
 from .util import log
-from .config import load_config
 from .usb import _sysfs_switch_mode
 from .ops import _background_warmer, _resume_persisted_tasks
 from .webtemplate import _WEB_TEMPLATE
