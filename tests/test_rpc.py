@@ -178,3 +178,87 @@ def test_bad_token_gets_no_reply(server):
     c = RpcClient("127.0.0.1", port, "WRONG", timeout=2)
     with pytest.raises(RpcError):     # times out into "no response / unreachable"
         c.call("echo", {"x": 1})
+
+
+# ── edge cases (the ones a good tester imagines) ─────────────────────────────
+
+def test_empty_token_is_refused():
+    # compare_digest("", "") is True — an empty configured token would mean
+    # no gate at all. The constructor must refuse it.
+    with pytest.raises(ValueError):
+        TokenGate("")
+
+
+def test_frame_split_across_tcp_chunks():
+    # A JSON line arriving in arbitrary TCP fragments must reassemble.
+    a, b = socket.socketpair()
+    payload = b'{"id": 1, "op": "x", "args": {"blob": "' + b"A" * 200000 + b'"}}\n'
+    half = len(payload) // 2
+    a.sendall(payload[:half])
+    got = []
+    t = threading.Thread(target=lambda: got.extend(read_frames(b)))
+    t.start()
+    time.sleep(0.05)
+    a.sendall(payload[half:])
+    a.close()
+    t.join(timeout=5)
+    assert len(got) == 1 and len(got[0]["args"]["blob"]) == 200000
+
+
+def test_unicode_token_roundtrip():
+    g = TokenGate("s3crét-⚙")
+    assert g.verify("s3crét-⚙", "p") == "ok"
+    assert g.verify("s3cret-x", "p") == "reject"
+
+
+def test_detector_threshold_one():
+    from asteroid_docking_bay.ops import ChargeDropDetector
+    d = ChargeDropDetector(50, threshold=1)
+    assert d.feed(49) == "alarm"          # a single drop alarms immediately
+    assert d.feed(50) == "recovered"
+
+
+def test_parse_adb_duplicate_serial_last_wins():
+    from asteroid_docking_bay.adb import parse_adb_devices
+    out = ("List of devices attached\n"
+           "S1 offline usb:1-1\n"
+           "S1 device usb:1-2\n")
+    devices = parse_adb_devices(out)
+    assert devices["S1"]["status"] == "device"
+    assert devices["S1"]["usb"] == "1-2"
+
+
+def test_parse_adb_token_with_extra_colons():
+    from asteroid_docking_bay.adb import parse_adb_devices
+    out = "List of devices attached\nS1 device weird:a:b:c\n"
+    assert parse_adb_devices(out)["S1"]["weird"] == "a:b:c"
+
+
+def test_configmanager_corrupt_file_raises(tmp_path):
+    # Pinned CURRENT behavior: a corrupt config crashes loudly rather than
+    # silently starting with defaults (which would wipe the mapping on the
+    # next save). If this ever changes, it must be a conscious decision —
+    # see the 0.6 queue.
+    import json as _json
+    from asteroid_docking_bay.config import ConfigManager
+    f = tmp_path / "config.json"
+    f.write_text('{"hubs": [BROKEN')
+    with pytest.raises(_json.JSONDecodeError):
+        ConfigManager(f).load()
+
+
+def test_next_due_boundary_headroom_zero(tmp_path):
+    # A watch sitting exactly at low+margin is due NOW (not in the future).
+    import json as _json
+    import time as _time
+    from asteroid_docking_bay.events import EventLog
+    el = EventLog(tmp_path / "ev")
+    now = _time.time()
+    evs = [{"event": "check_reading", "ts": now - 7200, "pct": 51},
+           {"event": "check_reading", "ts": now - 3600, "pct": 50}]
+    (tmp_path / "ev").mkdir()
+    (tmp_path / "ev" / "S.jsonl").write_text(
+        "".join(_json.dumps(e) + "\n" for e in evs))
+    cfg = {"charge": {"low_threshold": 40, "adaptive_margin_pct": 10}}
+    due = el.next_due_ts("S", None, cfg)
+    assert due == evs[-1]["ts"]           # due at the last reading, i.e. now

@@ -78,6 +78,10 @@ class TokenGate:
 
     def __init__(self, token: str, rate_limit_after: int = 5,
                  shutdown_after: int = 40):
+        if not token:
+            # An empty token would make compare_digest("", "") succeed —
+            # i.e. no gate at all. Refuse loudly instead.
+            raise ValueError("TokenGate requires a non-empty token")
         self._token = token.encode() if isinstance(token, str) else bytes(token)
         self.rate_limit_after = rate_limit_after
         self.shutdown_after = shutdown_after
