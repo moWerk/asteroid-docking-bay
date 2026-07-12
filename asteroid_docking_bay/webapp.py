@@ -1,28 +1,26 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: 2026 Timo Könnecke (moWerk) <mo@mowerk.net>
 # SPDX-FileCopyrightText: 2023 Ed Beroset <beroset@ieee.org>
-"""Bottle app factory, SSE streams, status cache, background warmer."""
+"""Bottle app factory, SSE bridge, status cache, background warmer.
+
+The web server is a thin frontend: routes parse HTTP and dispatch through a
+caller (in-process LocalCaller, or an RpcClient in --backend split mode) to
+the op table in rpcops. The only host-touching code left here is the cache
+warmer, which runs where the ops run (monolith, or backend container)."""
 
 import base64
-import copy
 import json
-import logging
-import queue
 import sys
 import threading
 import time
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 
-from .util import _run, log
-from .adb import _adb_state, adb_devices, get_watch_codename
-from .config import (_config_lock, charge_config, find_codename_for_loc_port,
-                     flash_config, load_config, save_config)
+from .util import log
+from .config import load_config
 from . import usb, fastboot
-from .usb import (_sysfs_path_to_serial_map, _sysfs_switch_mode,
-                  test_port_power_switching, uhubctl_cycle, uhubctl_set_power)
-from .tasks import _adb_lock, _flash_tasks, _remap_tasks
-from .ops import _flash_one_watch, _resume_persisted_tasks
+from .usb import _sysfs_switch_mode
+from .ops import _resume_persisted_tasks
 from .webtemplate import _WEB_TEMPLATE
 
 
@@ -57,245 +55,6 @@ def _background_warmer() -> None:
         except Exception as e:
             log.debug("cache warmer: %s", e)
         time.sleep(5)
-
-
-class _QueueHandler(logging.Handler):
-    """Routes log records from one specific thread into a Queue for SSE streaming."""
-
-    def __init__(self, q: "queue.Queue[str | None]", thread_id: int):
-        super().__init__()
-        self.q = q
-        self.thread_id = thread_id
-
-    def emit(self, record: logging.LogRecord):
-        if record.thread == self.thread_id:
-            try:
-                self.q.put_nowait(self.format(record))
-            except Exception:
-                self.handleError(record)
-
-
-def _sse_flash_gen(codename: str, slot: str, cfg: dict):
-    """
-    Generator yielding SSE-formatted strings for a flash operation.
-    Runs the flash in a daemon thread; log records from that thread are
-    captured by a _QueueHandler and forwarded as SSE data events.
-    """
-    q: "queue.Queue[str | None]" = queue.Queue()
-    flash_cfg = flash_config(cfg)
-    cfg_copy = copy.deepcopy(cfg)
-
-    def _run_flash():
-        tid = threading.get_ident()
-        h = _QueueHandler(q, tid)
-        h.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-        logging.root.addHandler(h)
-        try:
-            q.put("INFO: waiting for ADB bus (another operation in progress)…")
-            with _adb_lock:
-                _flash_one_watch(codename, cfg_copy, flash_cfg)
-        except Exception as exc:
-            try:
-                q.put(f"ERROR: {exc}")
-            except Exception:
-                pass
-        finally:
-            logging.root.removeHandler(h)
-            # The worker owns the done flag: setting it from the generator
-            # would mark a still-running flash as finished the moment the
-            # browser disconnects from the event stream.
-            _flash_tasks[slot]["done"] = True
-            q.put(None)
-
-    _flash_tasks[slot] = {"done": False}
-    t = threading.Thread(target=_run_flash, daemon=True)
-    t.start()
-    _flash_tasks[slot]["thread"] = t
-
-    while True:
-        try:
-            msg = q.get(timeout=25)
-        except queue.Empty:
-            yield ": heartbeat\n\n"
-            continue
-        if msg is None:
-            break
-        for line in (msg.splitlines() or [""]):
-            yield f"data: {line}\n"
-        yield "\n"
-    yield "event: done\ndata: complete\n\n"
-
-
-def _sse_remap_gen(loc: str, port: int):
-    """
-    SSE generator for per-port remap triggered from the web UI.
-
-    Steps:
-      1. Power the port on.
-      2. Wait up to 10 s for an ADB device to appear at this port's sysfs path.
-      3. Identify codename (config lookup → ADB shell → serial fallback).
-      4. Update config under _config_lock:
-           • record serial → codename in cfg["serials"]
-           • remove old mapping for this codename from every other port
-           • set this port's mapping
-      5. Run PPPS test and save result.
-      If no device appears: remove any stale mapping for this port, power off.
-    """
-    slot = f"{loc}:{port}"
-    sysfs_path = f"{loc}.{port}"
-    q: "queue.Queue[str | None]" = queue.Queue()
-
-    def _emit(msg: str) -> None:
-        q.put(msg)
-
-    def _run() -> None:
-        _emit("Waiting for ADB bus…")
-        with _adb_lock:
-            try:
-                _emit(f"Powering on {loc} p{port}…")
-                try:
-                    uhubctl_set_power(loc, port, True)
-                except RuntimeError as e:
-                    _emit(f"WARNING: {e}")
-
-                # A watch attached powered-off has to cold-boot before it
-                # exposes ADB. And on this hardware a watch often fails to
-                # enumerate on its first boot (stale-node / enumeration
-                # hiccup), only appearing after a power cycle. So wait a boot
-                # window, and if nothing shows, cycle the port once and wait
-                # again — this is what made the manual "Refresh twice" work.
-                wait_each = charge_config(load_config()).onboard_wait_seconds
-
-                def _wait_for_watch(secs: int) -> "str | None":
-                    st = time.monotonic()
-                    nxt = 15
-                    while time.monotonic() - st < secs:
-                        cur = adb_devices()
-                        path_map = _sysfs_path_to_serial_map(set(cur.keys()))
-                        s = path_map.get(sysfs_path)
-                        if s and _adb_state(cur, s) == "device":
-                            return s
-                        el = time.monotonic() - st
-                        if el >= nxt:
-                            _emit(f"…waiting ({int(el)} / {secs} s)")
-                            nxt += 15
-                        time.sleep(1.0)
-                    return None
-
-                _emit(f"Waiting for the watch to boot and expose ADB "
-                      f"(up to {wait_each} s)…")
-                found_serial: str | None = _wait_for_watch(wait_each)
-                if not found_serial:
-                    _emit("No ADB yet — power-cycling the port to retry "
-                          "enumeration…")
-                    uhubctl_cycle(loc, port)
-                    _emit(f"Waiting again after the cycle (up to {wait_each} s)…")
-                    found_serial = _wait_for_watch(wait_each)
-
-                if found_serial:
-                    _emit(f"ADB: {found_serial}")
-                    with _config_lock:
-                        cfg = load_config()
-                        codename = cfg.get("serials", {}).get(found_serial)
-
-                    if not codename:
-                        _emit("Reading codename from watch…")
-                        codename = get_watch_codename(found_serial) or found_serial
-                    _emit(f"Watch: {codename}")
-
-                    with _config_lock:
-                        cfg = load_config()
-                        cfg.setdefault("serials", {})[found_serial] = codename
-                        # Remove old mapping for this watch from every other
-                        # port: exact serial binding first, codename fallback.
-                        for hub in cfg.get("hubs", []):
-                            hub_ports   = hub.get("ports", {})
-                            hub_serials = hub.get("port_serials", {})
-                            stale = [k for k, s in hub_serials.items()
-                                     if s == found_serial
-                                     and not (hub["location"] == loc and k == str(port))]
-                            stale += [k for k, v in hub_ports.items()
-                                      if v == codename and k not in hub_serials
-                                      and not (hub["location"] == loc and k == str(port))]
-                            for k in stale:
-                                hub_ports.pop(k, None)
-                                hub_serials.pop(k, None)
-                                _emit(f"Removed stale mapping: {hub['location']}:p{k} → {codename}")
-                        # Add/update this port.
-                        hub_entry = next((h for h in cfg.get("hubs", [])
-                                          if h["location"] == loc), None)
-                        if hub_entry is not None:
-                            hub_entry.setdefault("ports", {})[str(port)] = codename
-                            hub_entry.setdefault("port_serials", {})[str(port)] = found_serial
-                        save_config(cfg)
-
-                    _emit(f"Mapped {loc}:p{port} → {codename}")
-
-                    _emit("Testing port switching (PPPS, up to ~30 s)…")
-                    try:
-                        smart, msg = test_port_power_switching(loc, port, found_serial)
-                        with _config_lock:
-                            cfg = load_config()
-                            for hub in cfg.get("hubs", []):
-                                if hub["location"] == loc:
-                                    hub.setdefault("port_smart", {})[str(port)] = smart
-                                    break
-                            save_config(cfg)
-                        verdict = ("SMART ✓" if smart
-                                   else "NOT SMART" if smart is False else "UNVERIFIED")
-                        _emit(f"Port: {verdict} — {msg}")
-                    except RuntimeError as e:
-                        _emit(f"PPPS test error: {e}")
-
-                else:
-                    _emit("No watch detected.")
-                    with _config_lock:
-                        cfg = load_config()
-                        was_mapped = False
-                        for hub in cfg.get("hubs", []):
-                            if hub["location"] == loc:
-                                if str(port) in hub.get("ports", {}):
-                                    was_mapped = True
-                                    del hub["ports"][str(port)]
-                                hub.get("port_serials", {}).pop(str(port), None)
-                        if was_mapped:
-                            save_config(cfg)
-                            _emit("Cleared stale port mapping.")
-                    # A watch with a deeply discharged cell cannot boot within
-                    # any reasonable window — it needs VBUS to trickle past its
-                    # pre-charge threshold first. Leave the port powered and
-                    # say so; cutting power here strands exactly the watches
-                    # that need charge the most. (A bootlooping watch charges
-                    # best parked in fastboot — it draws less than booting.)
-                    _emit("Port left POWERED: if a watch with a flat battery "
-                          "is docked here, let it pre-charge 30-60 min and "
-                          "onboard again. Bootlooping watch? Hold it in "
-                          "fastboot to charge. Empty port? Toggle it off.")
-
-            except Exception as exc:
-                _emit(f"ERROR: {exc}")
-            finally:
-                _remap_tasks[slot]["done"] = True
-                q.put(None)
-
-    _remap_tasks[slot] = {"done": False}
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-
-    # The worker thread's finally owns the done flag — setting it here too
-    # would mark a still-running remap as finished on client disconnect.
-    while True:
-        try:
-            msg = q.get(timeout=15)
-        except queue.Empty:
-            yield ": heartbeat\n\n"
-            continue
-        if msg is None:
-            break
-        for line in (msg.splitlines() or [""]):
-            yield f"data: {line}\n"
-        yield "\n"
-    yield "event: done\ndata: complete\n\n"
 
 
 def serve(args, cfg: dict):
@@ -344,6 +103,22 @@ def serve(args, cfg: dict):
             return caller.call(op, args or {})
         except RpcError as e:
             return {"ok": False, "error": str(e)}
+
+    def _sse(op, args):
+        """Bridge a backend stream op onto the browser's SSE channel: a raw
+        message becomes data event line(s), an empty string a keep-alive
+        heartbeat. Works identically for the in-process and remote callers."""
+        try:
+            for msg in caller.stream(op, args):
+                if msg == "":
+                    yield ": heartbeat\n\n"
+                else:
+                    for line in (msg.splitlines() or [""]):
+                        yield f"data: {line}\n"
+                    yield "\n"
+        except RpcError as e:
+            yield f"data: ERROR: {e}\n\n"
+        yield "event: done\ndata: complete\n\n"
 
     @app.get("/api/status")
     def api_status():
@@ -496,35 +271,20 @@ def serve(args, cfg: dict):
         _bust_status_cache()
         return json.dumps(d)
 
-    @app.get("/api/flash/<loc>/<port:int>")
-    def api_flash(loc, port):
+    def _event_stream_headers():
         resp.content_type = "text/event-stream"
         resp.headers["Cache-Control"] = "no-cache"
         resp.headers["X-Accel-Buffering"] = "no"
-        slot = f"{loc}:{port}"
-        if slot in _flash_tasks and not _flash_tasks[slot].get("done", True):
-            def _busy():
-                yield "data: flash already in progress\n\nevent: done\ndata: \n\n"
-            return _busy()
-        c_cfg = load_config()
-        codename = find_codename_for_loc_port(c_cfg, loc, port)
-        if not codename:
-            def _no_codename():
-                yield "data: ERROR: port not mapped to any codename\n\nevent: done\ndata: \n\n"
-            return _no_codename()
-        return _sse_flash_gen(codename, slot, c_cfg)
+
+    @app.get("/api/flash/<loc>/<port:int>")
+    def api_flash(loc, port):
+        _event_stream_headers()
+        return _sse("flash.start", {"loc": loc, "port": port})
 
     @app.get("/api/remap/<loc>/<port:int>")
     def api_remap(loc, port):
-        resp.content_type = "text/event-stream"
-        resp.headers["Cache-Control"] = "no-cache"
-        resp.headers["X-Accel-Buffering"] = "no"
-        slot = f"{loc}:{port}"
-        if slot in _remap_tasks and not _remap_tasks[slot].get("done", True):
-            def _busy():
-                yield "data: remap already in progress\n\nevent: done\ndata: \n\n"
-            return _busy()
-        return _sse_remap_gen(loc, port)
+        _event_stream_headers()
+        return _sse("onboard.start", {"loc": loc, "port": port})
 
     class _ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
         daemon_threads = True

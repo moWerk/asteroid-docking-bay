@@ -9,25 +9,33 @@ to it in-process via LocalCaller, and the split backend serves the same table
 over RPC. Adding a capability means registering a named op in a reviewable
 diff — there is deliberately no generic "run a command" op.
 
-Op names mirror the former /api/* routes. Handlers take one args dict and
-return a JSON-able value (the app-level response, distinct from the RPC
-envelope's ok/error). Streaming ops (flash, onboard) are added in the
-streaming-bridge step.
+Op names mirror the former /api/* routes. Data handlers take one args dict
+and return a JSON-able value (the app-level response, distinct from the RPC
+envelope's ok/error). Streaming handlers (flash, onboard) yield raw message
+strings — an empty string is a keep-alive heartbeat — which the frontend
+turns into SSE frames.
 """
 
 import base64
+import copy
 import json
+import logging
+import queue
+import threading
 import time
 
 from .util import _run, log
-from .config import (_config_lock, charge_config, find_serial_for_loc_port,
-                     load_config, save_config)
-from .usb import uhubctl_set_power
+from .adb import _adb_state, adb_devices, get_watch_codename
+from .config import (_config_lock, charge_config, find_codename_for_loc_port,
+                     find_serial_for_loc_port, flash_config, load_config,
+                     save_config)
+from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
+                  uhubctl_cycle, uhubctl_set_power)
 from .watchctl import Watch
-from .ops import ChargeOp, DrainOp, WorkbenchOp
+from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
 from .webstatus import _web_status_data
-from .tasks import _charge_tasks
+from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
 from .rpc import Dispatcher
 
 DISPATCH = Dispatcher()
@@ -278,3 +286,249 @@ def _drain_history(args):
     tests.sort(key=lambda t: t.get("start_ts") or 0, reverse=True)
     return {"tests": tests,
             "wearable_min_hours": load_config().get("wearable_min_hours", 24)}
+
+
+# ── streaming ops ────────────────────────────────────────────────────────────
+# Stream handlers yield raw message strings; an empty string is a keep-alive
+# heartbeat sentinel. The frontend turns each into an SSE frame — the backend
+# knows nothing about SSE. Task state (_flash_tasks/_remap_tasks) lives here,
+# with the backend, which the status builder reads.
+
+class _QueueHandler(logging.Handler):
+    """Routes log records from one specific thread into a Queue, so a worker
+    thread's log output can be streamed to the client."""
+
+    def __init__(self, q: "queue.Queue[str | None]", thread_id: int):
+        super().__init__()
+        self.q = q
+        self.thread_id = thread_id
+
+    def emit(self, record: logging.LogRecord):
+        if record.thread == self.thread_id:
+            try:
+                self.q.put_nowait(self.format(record))
+            except Exception:
+                self.handleError(record)
+
+
+def _flash_stream(codename: str, slot: str, cfg: dict):
+    """Run a flash in a daemon thread and yield its log lines as they happen.
+    Empty string = heartbeat."""
+    q: "queue.Queue[str | None]" = queue.Queue()
+    flash_cfg = flash_config(cfg)
+    cfg_copy = copy.deepcopy(cfg)
+
+    def _run_flash():
+        tid = threading.get_ident()
+        h = _QueueHandler(q, tid)
+        h.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        logging.root.addHandler(h)
+        try:
+            q.put("INFO: waiting for ADB bus (another operation in progress)…")
+            with _adb_lock:
+                _flash_one_watch(codename, cfg_copy, flash_cfg)
+        except Exception as exc:
+            try:
+                q.put(f"ERROR: {exc}")
+            except Exception:
+                pass
+        finally:
+            logging.root.removeHandler(h)
+            # The worker owns the done flag: setting it from the generator
+            # would mark a still-running flash finished the moment the client
+            # disconnects from the stream.
+            _flash_tasks[slot]["done"] = True
+            q.put(None)
+
+    _flash_tasks[slot] = {"done": False}
+    t = threading.Thread(target=_run_flash, daemon=True)
+    t.start()
+    _flash_tasks[slot]["thread"] = t
+
+    while True:
+        try:
+            msg = q.get(timeout=25)
+        except queue.Empty:
+            yield ""                       # heartbeat
+            continue
+        if msg is None:
+            return
+        yield msg
+
+
+@DISPATCH.stream_op("flash.start")
+def _flash_start(args):
+    loc, port = args["loc"], args["port"]
+    slot = f"{loc}:{port}"
+    if slot in _flash_tasks and not _flash_tasks[slot].get("done", True):
+        yield "flash already in progress"
+        return
+    cfg = load_config()
+    codename = find_codename_for_loc_port(cfg, loc, port)
+    if not codename:
+        yield "ERROR: port not mapped to any codename"
+        return
+    yield from _flash_stream(codename, slot, cfg)
+
+
+def _onboard_stream(loc: str, port: int):
+    """Per-port onboarding (remap): power on, wait for a watch to enumerate on
+    this port, identify it, update the mapping, PPPS-test. Yields progress
+    lines; empty string = heartbeat."""
+    slot = f"{loc}:{port}"
+    sysfs_path = f"{loc}.{port}"
+    q: "queue.Queue[str | None]" = queue.Queue()
+
+    def _emit(msg: str) -> None:
+        q.put(msg)
+
+    def _run() -> None:
+        _emit("Waiting for ADB bus…")
+        with _adb_lock:
+            try:
+                _emit(f"Powering on {loc} p{port}…")
+                try:
+                    uhubctl_set_power(loc, port, True)
+                except RuntimeError as e:
+                    _emit(f"WARNING: {e}")
+
+                # A watch attached powered-off has to cold-boot before it
+                # exposes ADB. And on this hardware a watch often fails to
+                # enumerate on its first boot (stale-node / enumeration
+                # hiccup), only appearing after a power cycle. So wait a boot
+                # window, and if nothing shows, cycle the port once and wait
+                # again — this is what made the manual "Refresh twice" work.
+                wait_each = charge_config(load_config()).onboard_wait_seconds
+
+                def _wait_for_watch(secs: int) -> "str | None":
+                    st = time.monotonic()
+                    nxt = 15
+                    while time.monotonic() - st < secs:
+                        cur = adb_devices()
+                        path_map = _sysfs_path_to_serial_map(set(cur.keys()))
+                        s = path_map.get(sysfs_path)
+                        if s and _adb_state(cur, s) == "device":
+                            return s
+                        el = time.monotonic() - st
+                        if el >= nxt:
+                            _emit(f"…waiting ({int(el)} / {secs} s)")
+                            nxt += 15
+                        time.sleep(1.0)
+                    return None
+
+                _emit(f"Waiting for the watch to boot and expose ADB "
+                      f"(up to {wait_each} s)…")
+                found_serial: "str | None" = _wait_for_watch(wait_each)
+                if not found_serial:
+                    _emit("No ADB yet — power-cycling the port to retry "
+                          "enumeration…")
+                    uhubctl_cycle(loc, port)
+                    _emit(f"Waiting again after the cycle (up to {wait_each} s)…")
+                    found_serial = _wait_for_watch(wait_each)
+
+                if found_serial:
+                    _emit(f"ADB: {found_serial}")
+                    with _config_lock:
+                        cfg = load_config()
+                        codename = cfg.get("serials", {}).get(found_serial)
+
+                    if not codename:
+                        _emit("Reading codename from watch…")
+                        codename = get_watch_codename(found_serial) or found_serial
+                    _emit(f"Watch: {codename}")
+
+                    with _config_lock:
+                        cfg = load_config()
+                        cfg.setdefault("serials", {})[found_serial] = codename
+                        # Remove old mapping for this watch from every other
+                        # port: exact serial binding first, codename fallback.
+                        for hub in cfg.get("hubs", []):
+                            hub_ports   = hub.get("ports", {})
+                            hub_serials = hub.get("port_serials", {})
+                            stale = [k for k, s in hub_serials.items()
+                                     if s == found_serial
+                                     and not (hub["location"] == loc and k == str(port))]
+                            stale += [k for k, v in hub_ports.items()
+                                      if v == codename and k not in hub_serials
+                                      and not (hub["location"] == loc and k == str(port))]
+                            for k in stale:
+                                hub_ports.pop(k, None)
+                                hub_serials.pop(k, None)
+                                _emit(f"Removed stale mapping: {hub['location']}:p{k} → {codename}")
+                        # Add/update this port.
+                        hub_entry = next((h for h in cfg.get("hubs", [])
+                                          if h["location"] == loc), None)
+                        if hub_entry is not None:
+                            hub_entry.setdefault("ports", {})[str(port)] = codename
+                            hub_entry.setdefault("port_serials", {})[str(port)] = found_serial
+                        save_config(cfg)
+
+                    _emit(f"Mapped {loc}:p{port} → {codename}")
+
+                    _emit("Testing port switching (PPPS, up to ~30 s)…")
+                    try:
+                        smart, msg = test_port_power_switching(loc, port, found_serial)
+                        with _config_lock:
+                            cfg = load_config()
+                            for hub in cfg.get("hubs", []):
+                                if hub["location"] == loc:
+                                    hub.setdefault("port_smart", {})[str(port)] = smart
+                                    break
+                            save_config(cfg)
+                        verdict = ("SMART ✓" if smart
+                                   else "NOT SMART" if smart is False else "UNVERIFIED")
+                        _emit(f"Port: {verdict} — {msg}")
+                    except RuntimeError as e:
+                        _emit(f"PPPS test error: {e}")
+
+                else:
+                    _emit("No watch detected.")
+                    with _config_lock:
+                        cfg = load_config()
+                        was_mapped = False
+                        for hub in cfg.get("hubs", []):
+                            if hub["location"] == loc:
+                                if str(port) in hub.get("ports", {}):
+                                    was_mapped = True
+                                    del hub["ports"][str(port)]
+                                hub.get("port_serials", {}).pop(str(port), None)
+                        if was_mapped:
+                            save_config(cfg)
+                            _emit("Cleared stale port mapping.")
+                    # A deeply discharged watch can't boot inside any window —
+                    # it needs VBUS to pre-charge first. Leave the port powered
+                    # and say so; cutting power here strands exactly the watches
+                    # that need charge the most.
+                    _emit("Port left POWERED: if a watch with a flat battery "
+                          "is docked here, let it pre-charge 30-60 min and "
+                          "onboard again. Bootlooping watch? Hold it in "
+                          "fastboot to charge. Empty port? Toggle it off.")
+
+            except Exception as exc:
+                _emit(f"ERROR: {exc}")
+            finally:
+                _remap_tasks[slot]["done"] = True
+                q.put(None)
+
+    _remap_tasks[slot] = {"done": False}
+    threading.Thread(target=_run, daemon=True).start()
+
+    while True:
+        try:
+            msg = q.get(timeout=15)
+        except queue.Empty:
+            yield ""                       # heartbeat
+            continue
+        if msg is None:
+            return
+        yield msg
+
+
+@DISPATCH.stream_op("onboard.start")
+def _onboard_start(args):
+    loc, port = args["loc"], args["port"]
+    slot = f"{loc}:{port}"
+    if slot in _remap_tasks and not _remap_tasks[slot].get("done", True):
+        yield "onboard already in progress"
+        return
+    yield from _onboard_stream(loc, port)
