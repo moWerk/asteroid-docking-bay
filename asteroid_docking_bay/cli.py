@@ -30,6 +30,38 @@ def cmd_serve(args, cfg: dict):
     serve(args, cfg)
 
 
+def cmd_serve_backend(args, cfg: dict):
+    """Start the RPC backend: the host-touching half of the container split.
+    Owns the operations (resume + cache warmer) and serves the op table over
+    a token-gated socket. No bottle dependency."""
+    import os
+    import threading
+    from .rpc import RpcServer
+    from . import rpcops
+    from .usb import _sysfs_switch_mode
+    from .webapp import _background_warmer
+    from .ops import _resume_persisted_tasks
+
+    token = ""
+    if args.token_file:
+        token = Path(args.token_file).read_text().strip()
+    else:
+        token = os.environ.get("ADB_RPC_TOKEN", "").strip()
+    if not token:
+        log.error("serve-backend requires a token: pass --token-file PATH "
+                  "or set ADB_RPC_TOKEN")
+        sys.exit(1)
+
+    _resume_persisted_tasks()
+    threading.Thread(target=_background_warmer, daemon=True).start()
+    log.info("Port switching: %s", _sysfs_switch_mode(cfg))
+    log.info("RPC backend starting on %s:%d", args.host, args.port)
+    try:
+        RpcServer(args.host, args.port, token, rpcops.DISPATCH).serve_forever()
+    except KeyboardInterrupt:
+        log.info("RPC backend stopped.")
+
+
 def cmd_status(args, cfg: dict):
     devices = adb_devices()
     rows: list[tuple] = []
@@ -703,6 +735,18 @@ def main():
         help="port to listen on (default: 8080)",
     )
 
+    p_sb = sub.add_parser(
+        "serve-backend",
+        help="start the RPC backend (host-touching half of the container split)",
+    )
+    p_sb.add_argument("--host", default="127.0.0.1", metavar="HOST",
+                      help="bind address (default: 127.0.0.1)")
+    p_sb.add_argument("--port", type=int, default=8099, metavar="PORT",
+                      help="RPC port to listen on (default: 8099)")
+    p_sb.add_argument("--token-file", metavar="PATH",
+                      help="file holding the shared secret token "
+                           "(else read from the ADB_RPC_TOKEN env var)")
+
     p_fa = sub.add_parser(
         "flash",
         help="flash AsteroidOS nightlies to all (or a specified) configured watches",
@@ -744,6 +788,7 @@ def main():
         "discover": cmd_discover,
         "flash": cmd_flash_all,
         "serve": cmd_serve,
+        "serve-backend": cmd_serve_backend,
     }
 
     try:

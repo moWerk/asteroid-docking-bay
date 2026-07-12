@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2023 Ed Beroset <beroset@ieee.org>
 """Bottle app factory, SSE streams, status cache, background warmer."""
 
+import base64
 import copy
 import json
 import logging
@@ -16,18 +17,12 @@ from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
 from .config import (_config_lock, charge_config, find_codename_for_loc_port,
-                     flash_config,
-                     find_serial_for_loc_port, load_config, save_config)
+                     flash_config, load_config, save_config)
 from . import usb, fastboot
 from .usb import (_sysfs_path_to_serial_map, _sysfs_switch_mode,
                   test_port_power_switching, uhubctl_cycle, uhubctl_set_power)
-from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
-from .tasks import (_adb_lock, _charge_tasks, _drain_tasks, _flash_tasks,
-                    _remap_tasks, _workbench_tasks)
-from .watchctl import Watch
-from .ops import (ChargeOp, DrainOp, WorkbenchOp, _end_port,
-                  _flash_one_watch, _resume_persisted_tasks)
-from .webstatus import _web_status_data
+from .tasks import _adb_lock, _flash_tasks, _remap_tasks
+from .ops import _flash_one_watch, _resume_persisted_tasks
 from .webtemplate import _WEB_TEMPLATE
 
 
@@ -325,290 +320,166 @@ def serve(args, cfg: dict):
         for up to the cache TTL, showing rows that never matched reality."""
         status_cache["ts"] = 0.0
 
+    from .rpc import LocalCaller, RpcError
+    from . import rpcops
+    caller = LocalCaller(rpcops.DISPATCH)
+
+    def _call(op, args=None):
+        try:
+            return caller.call(op, args or {})
+        except RpcError as e:
+            return {"ok": False, "error": str(e)}
+
     @app.get("/api/status")
     def api_status():
         resp.content_type = "application/json"
         with status_lock:
             now = time.monotonic()
             if now - status_cache["ts"] > 2.0:
-                c_cfg = load_config()
-                charge_cfg = charge_config(c_cfg)
-                status_cache["body"] = json.dumps({
-                    "hubs": _web_status_data(c_cfg),
-                    "thresholds": {
-                        "low":  charge_cfg.low_threshold,
-                        "high": charge_cfg.high_threshold,
-                    },
-                    "drain_floor": _DRAIN_FLOOR_PCT,
-                    "wearable_min_hours": c_cfg.get("wearable_min_hours", 24),
-                })
+                status_cache["body"] = json.dumps(_call("status.get"))
                 status_cache["ts"] = now
             return status_cache["body"]
 
-    # ── Control Center: per-watch stats + hardware toggles ────────────────────
     @app.get("/api/watch/<serial>")
     def api_watch(serial):
-        """Stats + toggle states for the Control Center overlay."""
         resp.content_type = "application/json"
-        return json.dumps(Watch(serial).cc_data())
+        return json.dumps(_call("watch.cc", {"serial": serial}))
 
     @app.post("/api/watch/<serial>/toggle/<tech>/<state>")
     def api_watch_toggle(serial, tech, state):
         resp.content_type = "application/json"
-        if tech not in ("wifi", "bluetooth"):
-            return json.dumps({"ok": False, "error": f"unknown toggle {tech}"})
-        ok = Watch(serial).toggle(tech, state == "on")
+        d = _call("watch.toggle", {"serial": serial, "tech": tech, "on": state == "on"})
         _bust_status_cache()
-        return json.dumps({"ok": ok})
+        return json.dumps(d)
 
     @app.post("/api/watch/<serial>/settime")
     def api_watch_settime(serial):
-        """Sync the watch clock + timezone from the host."""
         resp.content_type = "application/json"
-        tz = Watch(serial).set_time_from_host()
-        return json.dumps({"ok": True, "timezone": tz})
+        return json.dumps(_call("watch.settime", {"serial": serial}))
 
     @app.post("/api/watch/<serial>/notify")
     def api_watch_notify(serial):
-        """Send a test notification to the watch."""
         resp.content_type = "application/json"
-        return json.dumps({"ok": Watch(serial).notify()})
+        return json.dumps(_call("watch.notify", {"serial": serial}))
 
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
-        """Capture and return the watch screen as a JPEG."""
-        local = Watch(serial).screenshot()
-        if not local:
+        d = _call("watch.screenshot", {"serial": serial})
+        if not d.get("ok"):
             resp.status = 502
             resp.content_type = "text/plain"
-            return "screenshot failed"
+            return d.get("error", "screenshot failed")
         resp.content_type = "image/jpeg"
-        return local.read_bytes()
+        return base64.b64decode(d["jpeg_b64"])
 
     @app.post("/api/watch/<serial>/buzz")
     def api_watch_buzz(serial):
-        """Vibrate the watch briefly — locate/identify it in a full dock."""
         resp.content_type = "application/json"
-        return json.dumps({"ok": Watch(serial).buzz()})
+        return json.dumps(_call("watch.buzz", {"serial": serial}))
 
     @app.post("/api/watch/<serial>/screen/<state>")
     def api_watch_screen(serial, state):
-        """Force the screen on (demo mode) or release it."""
         resp.content_type = "application/json"
-        return json.dumps({"ok": Watch(serial).screen(state == "on")})
+        return json.dumps(_call("watch.screen", {"serial": serial, "on": state == "on"}))
 
     @app.post("/api/on/<loc>/<port:int>")
     def api_on(loc, port):
         resp.content_type = "application/json"
-        try:
-            confirmed = uhubctl_set_power(loc, port, True)
-        except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+        d = _call("port.set", {"loc": loc, "port": port, "on": True})
         _bust_status_cache()
-        return json.dumps({"ok": True, "confirmed": confirmed})
+        return json.dumps(d)
 
     @app.post("/api/off/<loc>/<port:int>")
     def api_off(loc, port):
         resp.content_type = "application/json"
-        try:
-            confirmed = uhubctl_set_power(loc, port, False)
-        except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+        d = _call("port.set", {"loc": loc, "port": port, "on": False})
         _bust_status_cache()
-        return json.dumps({"ok": True, "confirmed": confirmed})
+        return json.dumps(d)
 
     @app.post("/api/poweroff/<loc>/<port:int>")
     def api_poweroff(loc, port):
-        """Graceful OS shutdown: adb shell poweroff, then cut USB power.
-
-        The port is cut immediately after the shutdown command returns —
-        adb shell is synchronous, so the command is already delivered, and
-        the watch finishes shutting down on battery.  Any delay here races
-        the halt: if the watch reaches its power-off state while VBUS is
-        still live, watches without offmode charging boot right back up.
-        """
         resp.content_type = "application/json"
-        c_cfg = load_config()
-        serial = find_serial_for_loc_port(c_cfg, loc, port)
-        adb_ok = False
-        if serial:
-            rc, _, err = _run(f"adb -s {serial} shell poweroff",
-                              check=False, timeout=10)
-            adb_ok = (rc == 0)
-            if not adb_ok:
-                log.warning("poweroff %s:%s (%s): adb shutdown failed: %s",
-                            loc, port, serial, err.strip() or f"rc={rc}")
-        else:
-            log.warning("poweroff %s:%s: no serial known for port — cutting "
-                        "power only", loc, port)
-        confirmed = False
-        try:
-            confirmed = uhubctl_set_power(loc, port, False)
-        except RuntimeError as e:
-            return json.dumps({"ok": False, "error": str(e),
-                               "adb_shutdown": adb_ok})
+        d = _call("port.poweroff", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True, "adb_shutdown": adb_ok,
-                           "confirmed": confirmed})
+        return json.dumps(d)
 
     @app.post("/api/reboot/<loc>/<port:int>")
     def api_reboot(loc, port):
         resp.content_type = "application/json"
-        c_cfg = load_config()
-        serial = find_serial_for_loc_port(c_cfg, loc, port)
-        if not serial:
-            return json.dumps({"error": "no serial found for port"})
-        rc, _, err = _run(f"adb -s {serial} reboot", check=False)
-        if rc != 0:
-            return json.dumps({"error": err or "adb reboot failed"})
-        return json.dumps({"ok": True})
+        return json.dumps(_call("port.reboot", {"loc": loc, "port": port}))
 
     @app.post("/api/bootloader/<loc>/<port:int>")
     def api_bootloader(loc, port):
         resp.content_type = "application/json"
-        c_cfg = load_config()
-        serial = find_serial_for_loc_port(c_cfg, loc, port)
-        if not serial:
-            return json.dumps({"error": "no serial found for port"})
-        rc, _, err = _run(f"adb -s {serial} reboot bootloader", check=False)
-        if rc != 0:
-            return json.dumps({"error": err or "adb reboot bootloader failed"})
-        return json.dumps({"ok": True})
+        return json.dumps(_call("port.bootloader", {"loc": loc, "port": port}))
 
     @app.post("/api/cycle/<loc>/<port:int>")
     def api_cycle(loc, port):
         resp.content_type = "application/json"
-        try:
-            uhubctl_set_power(loc, port, False)
-            time.sleep(5)
-            uhubctl_set_power(loc, port, True)
-        except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+        d = _call("port.cycle", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True})
+        return json.dumps(d)
 
     @app.post("/api/hide/<loc>/<port:int>")
     def api_hide(loc, port):
-        """Toggle a port's avoid/hidden flag (user-set). Stored in the hub's
-        'exclude' map, same as auto-detected excludes."""
         resp.content_type = "application/json"
-        with _config_lock:
-            c_cfg = load_config()
-            hub = next((h for h in c_cfg.get("hubs", []) if h["location"] == loc), None)
-            if hub is None:
-                return json.dumps({"ok": False, "error": "hub not found"})
-            excl = hub.setdefault("exclude", {})
-            ps = str(port)
-            if ps in excl:
-                del excl[ps]
-                state = False
-            else:
-                excl[ps] = "hidden by user"
-                state = True
-            save_config(c_cfg)
+        d = _call("port.hide", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True, "hidden": state})
+        return json.dumps(d)
 
     @app.post("/api/hide-hub/<loc>")
     def api_hide_hub(loc):
-        """Toggle a whole hub's hidden flag (for silly/unused sub-hubs)."""
         resp.content_type = "application/json"
-        with _config_lock:
-            c_cfg = load_config()
-            hub = next((h for h in c_cfg.get("hubs", []) if h["location"] == loc), None)
-            if hub is None:
-                return json.dumps({"ok": False, "error": "hub not found"})
-            hub["hidden"] = not hub.get("hidden", False)
-            state = hub["hidden"]
-            save_config(c_cfg)
+        d = _call("hub.hide", {"loc": loc})
         _bust_status_cache()
-        return json.dumps({"ok": True, "hidden": state})
+        return json.dumps(d)
 
     @app.post("/api/charge/<loc>/<port:int>")
     def api_charge(loc, port):
         resp.content_type = "application/json"
-        slot = f"{loc}:{port}"
-        if ChargeOp.is_active(slot):
-            return json.dumps({"ok": False, "error": "charge already running",
-                               "charge_end_ts":
-                                   _charge_tasks[slot].get("charge_end_ts", 0)})
-        c_cfg = load_config()
-        err = ChargeOp.start(loc, port, c_cfg)
-        if err:
-            return json.dumps({"ok": False, "error": err})
+        d = _call("charge.start", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True, "duration_seconds":
-                           charge_config(c_cfg).charge_duration_minutes * 60})
+        return json.dumps(d)
 
     @app.post("/api/charge/stop/<loc>/<port:int>")
     def api_charge_stop(loc, port):
         resp.content_type = "application/json"
-        if ChargeOp.stop(loc, port):
-            _bust_status_cache()
-            return json.dumps({"ok": True})
-        return json.dumps({"ok": False, "error": "no charge running"})
+        d = _call("charge.stop", {"loc": loc, "port": port})
+        _bust_status_cache()
+        return json.dumps(d)
 
     @app.post("/api/workbench/<loc>/<port:int>")
     def api_workbench(loc, port):
         resp.content_type = "application/json"
-        err = WorkbenchOp.start(loc, port, load_config())
-        if err:
-            return json.dumps({"ok": False, "error": err})
+        d = _call("workbench.start", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True})
+        return json.dumps(d)
 
     @app.post("/api/workbench/stop/<loc>/<port:int>")
     def api_workbench_stop(loc, port):
         resp.content_type = "application/json"
-        if WorkbenchOp.stop(loc, port):
-            _bust_status_cache()
-            return json.dumps({"ok": True})
-        return json.dumps({"ok": False, "error": "no workbench active"})
+        d = _call("workbench.stop", {"loc": loc, "port": port})
+        _bust_status_cache()
+        return json.dumps(d)
 
     @app.get("/api/drain/history")
     def api_drain_history():
-        """All recorded drain test results, newest first."""
         resp.content_type = "application/json"
-        tests = []
-        for f in _DRAIN_RESULTS_DIR.glob("*.json"):
-            try:
-                with f.open() as fh:
-                    d = json.load(fh)
-            except Exception:
-                continue
-            readings = d.get("readings") or []
-            tests.append({
-                "codename":  d.get("codename"),
-                "slot":      d.get("slot"),
-                "start_ts":  d.get("start_ts"),
-                "end_ts":    readings[-1].get("ts") if readings else d.get("start_ts"),
-                "start_pct": d.get("start_pct"),
-                "end_pct":   d.get("end_pct"),
-                "rate":      d.get("drain_rate_pct_per_hour"),
-                "stopped":   d.get("stopped_by_user", False),
-                "samples":   len(readings),
-            })
-        tests.sort(key=lambda t: t.get("start_ts") or 0, reverse=True)
-        c_cfg = load_config()
-        return json.dumps({"tests": tests,
-                           "wearable_min_hours": c_cfg.get("wearable_min_hours", 24)})
+        return json.dumps(_call("drain.history"))
 
     @app.post("/api/drain/<loc>/<port:int>")
     def api_drain(loc, port):
         resp.content_type = "application/json"
-        err = DrainOp.start(loc, port, load_config())
-        if err:
-            return json.dumps({"ok": False, "error": err})
+        d = _call("drain.start", {"loc": loc, "port": port})
         _bust_status_cache()
-        return json.dumps({"ok": True})
+        return json.dumps(d)
 
     @app.post("/api/drain/stop/<loc>/<port:int>")
     def api_drain_stop(loc, port):
         resp.content_type = "application/json"
-        if DrainOp.stop(loc, port):
-            _bust_status_cache()
-            return json.dumps({"ok": True})
-        return json.dumps({"ok": False, "error": "no drain test running"})
+        d = _call("drain.stop", {"loc": loc, "port": port})
+        _bust_status_cache()
+        return json.dumps(d)
 
     @app.get("/api/flash/<loc>/<port:int>")
     def api_flash(loc, port):
