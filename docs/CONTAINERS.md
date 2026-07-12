@@ -143,10 +143,14 @@ one internal network, only the frontend port published.
   (bind-mounted from `/sys/bus/usb/devices` — writes work because the udev
   RUN rule chgrps the attrs on the host), and volumes for config + state
   (`~/.config/asteroid-docking-bay`, `~/.local/share/asteroid-docking-bay`,
-  tasks dir). It **talks to the host adb/fastboot server** over the host's
-  usb devices (confirmed in review — a second in-container adb would mean a
-  duplicate authorization keyring for no isolation gain, since the device
-  nodes are shared regardless).
+  tasks dir). It runs **its own adb server** against the passed-through
+  devices. The reviewed preference was the host's adb server, but trial
+  showed it unreachable: adb binds 127.0.0.1, invisible from the container
+  network, and exposing it with `adb -a` would listen on the LAN — against
+  the point of the split. AsteroidOS watches are auth-less so the second
+  keyring costs nothing; a WearOS watch needs one re-authorization. Hosts
+  that already run `adb -a` behind a firewall can flip this back with
+  `Environment=ADB_SERVER_SOCKET=tcp:host.containers.internal:5037`.
 - systemd integration via **quadlet** units (confirmed in review), mirroring
   today's user units and fitting the existing systemd-user workflow.
 

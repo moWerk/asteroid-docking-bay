@@ -22,8 +22,12 @@ Volume=%h/.local/state/asteroid-docking-bay:/root/.local/state/asteroid-docking-
 # Keep the caller's supplementary groups so the udev-granted 'users' write
 # access to the sysfs disable attrs survives into the container.
 PodmanArgs=--group-add keep-groups
-# Use the host's adb server rather than a second in-container keyring.
-Environment=ANDROID_ADB_SERVER_ADDRESS=host.containers.internal
+# adb: the backend runs its OWN adb server against the passed-through USB
+# devices. Reaching the HOST's adb server was the reviewed preference, but
+# it binds 127.0.0.1 and is unreachable from the container network (tested);
+# exposing it with `adb -a` would listen on the LAN — against the point of
+# the split. AsteroidOS watches are auth-less, so a second keyring costs
+# nothing here; WearOS watches would need one re-authorization.
 
 [Service]
 Restart=on-failure
