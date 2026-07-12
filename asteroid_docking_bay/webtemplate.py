@@ -458,13 +458,11 @@ function doOn(c){
   });
 }
 function doOff(c){
-  _haltClear(c);
   fetch('/api/off/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
     if(d.confirmed===false)_pwrFlash(c);else refresh();
   });
 }
 function doPoweroff(c){
-  _haltClear(c);
   fetch('/api/poweroff/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
     // adb_shutdown false = the watch never got the command (it keeps
     // running on battery even though the port is now off) — flag it.
@@ -472,14 +470,10 @@ function doPoweroff(c){
     else setTimeout(refresh,4000);
   });
 }
-const halting={};const haltTimers={};
-function _haltClear(c){delete halting[c];clearTimeout(haltTimers[c]);}
 function doReboot(c){
-  _haltClear(c);
   fetch('/api/reboot/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,3000));
 }
 function doBootloader(c){
-  _haltClear(c);
   fetch('/api/bootloader/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,3000));
 }
 function doCy(c){

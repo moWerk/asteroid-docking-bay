@@ -138,12 +138,6 @@ def find_codename_for_serial(cfg: dict, serial: str) -> str | None:
     return cfg.get("serials", {}).get(serial)
 
 
-def find_port_for_serial(cfg: dict, serial: str) -> tuple[str | None, int | None]:
-    codename = find_codename_for_serial(cfg, serial)
-    if codename is None:
-        return None, None
-    return find_port_for_codename(cfg, codename)
-
 
 def find_codename_for_loc_port(cfg: dict, loc: str, port: int) -> str | None:
     for hub in cfg.get("hubs", []):
