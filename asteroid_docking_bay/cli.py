@@ -22,7 +22,7 @@ from .usb import (port_foreign_device, test_port_power_switching,
                   uhubctl_get_power, uhubctl_list, uhubctl_set_power)
 from .events import event_log
 from .fastboot import _fastboot_devices
-from .ops import _flash_one_watch, charge_to_target
+from .ops import _end_port, _flash_one_watch, charge_to_target
 from .watchctl import wait_for_adb
 
 
@@ -538,6 +538,10 @@ def cmd_map(args, cfg: dict):
                     smart, msg = False, str(e)
                 port_smart[str(port)] = smart
                 print(f"  {'[smart]' if smart else '[NOT SMART]' if smart is False else '[unverified]'}")
+                # Return each mapped watch to rest — map only powered it on to
+                # identify it. Graceful (not a raw VBUS cut) so it doesn't sit
+                # running on battery; the fleet ends the scan default-off.
+                _end_port(loc, port, serial, charge_config(cfg), "map: identified")
             else:
                 print("(no response)")
                 no_response.append(f"{loc}:p{port}")
