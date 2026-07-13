@@ -134,25 +134,33 @@ _WEB_TEMPLATE = """\
        instead of a wide table that scrolls sideways. Column order is fixed, so
        the field labels come from :nth-child; no markup change needed. */
     @media (max-width:720px){
-      body{padding:12px}
+      /* One card per screen is expected, so size up for legibility and touch —
+         desktop's 11-13px is unreadable on a phone. */
+      body{padding:12px;font-size:16px}
+      .topbar,.meta{font-size:13px}
       .tblwrap{overflow-x:visible}
       table,tbody,tr,td{display:block;width:auto}
       thead{display:none}
-      .hub-hdr td{padding:10px 4px 4px}
-      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 8px;padding:2px 10px}
+      .hub-hdr td{padding:14px 4px 4px;font-size:13px}
+      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 12px;padding:4px 14px}
       .wr:hover td{background:transparent}
-      .wr td{border:none;padding:4px 0;display:flex;justify-content:space-between;
-             align-items:center;gap:12px;text-align:right}
+      .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
+             align-items:center;gap:14px;text-align:right;font-size:16px}
       .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(2){font-weight:700;font-size:14px;justify-content:flex-start;
-                          padding-top:6px;border-bottom:1px solid #161b22}
+      .wr td:nth-child(2){font-weight:700;font-size:20px;justify-content:flex-start;
+                          padding:10px 0;border-bottom:1px solid #161b22}
       .wr td:nth-child(3)::before{content:"Port"}
       .wr td:nth-child(4)::before{content:"Power"}
       .wr td:nth-child(5)::before{content:"Smart"}
       .wr td:nth-child(6)::before{content:"Connection"}
       .wr td:nth-child(7)::before{content:"Battery"}
-      .wr td::before{color:#6e7681;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-      .wr td:nth-child(8){display:block;text-align:left;padding-top:8px}  /* actions span the card */
+      .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
+                     letter-spacing:.5px;flex:none;font-weight:400}
+      .wr td:nth-child(8){display:block;text-align:left;padding-top:10px}  /* actions span the card */
+      /* Bigger, tappable controls */
+      .wr .btn,.wr .tgl,.wr .ico{font-size:15px;padding:9px 13px;margin:3px 6px 3px 0}
+      .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
+      .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
     }
   </style>
