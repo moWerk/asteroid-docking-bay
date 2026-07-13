@@ -185,7 +185,7 @@ function mkport(p){
   let s = p.socket!=null
     ? `<b style="color:#c9d1d9">socket ${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
     : `<span class="dim">p${p.port}</span>`;
-  if(p.excluded) s = `<span class="err" title="${esc(p.excluded)}">&#9888; avoid</span> ` + s;
+  if(p.excluded) s = `<span class="err" title="${esc(p.excluded)}">avoid</span> ` + s;
   return s;
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
@@ -196,15 +196,15 @@ function mkadb(adb,fbprod,os){
     return '<span class="on">ADB</span>';
   }
   if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — no ADB functions. Click to switch this watch to ADB (via 192.168.2.15).">SSH</span>`;
-  if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">&#9889; ${l}</span>`;}
+  if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
 }
 function mkadbrow(p){
   if(p.adb===null&&p.not_enumerating)
-    return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">&#9888; not enumerating</span>';
+    return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
-    return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">&#9888; not docked</span>';
+    return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
   return mkadb(p.adb,null,p.os);
 }
 function render(data){
@@ -214,7 +214,7 @@ function render(data){
   // it drains the watch invisibly, so surface it loudly with a release-all.
   const forced=[];hubs.forEach(h=>h.ports.forEach(p=>{if(p.screen_forced)forced.push(p.codename||p.serial)}));
   const al=document.getElementById('alert');
-  al.innerHTML=forced.length?`&#9888; screen forced ON, draining: <b>${forced.map(esc).join(', ')}</b> `+
+  al.innerHTML=forced.length?`screen forced ON, draining: <b>${forced.map(esc).join(', ')}</b> `+
     `<a href="#" onclick="releaseAllScreens();return false">release all</a>`:'';
   const lo=(data&&data.thresholds&&data.thresholds.low)||40;
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
@@ -224,7 +224,7 @@ function render(data){
   const rows=[];
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
-    const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'&#x1F441; show':'&#x1F648; hide'}</a>`;
+    const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
     rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
@@ -242,7 +242,7 @@ function render(data){
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
-        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power the port on, wait for the watch to boot (cycles once if it fails to enumerate), then identify and map it">&#x2795; Onboard</button>`;
+        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power the port on, wait for the watch to boot (cycles once if it fails to enumerate), then identify and map it">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
@@ -277,12 +277,12 @@ function render(data){
         if(wb){
           const w=p.workbench;
           const pct=w.pct!=null?w.pct+'% ':'';
-          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">&#128295; ${pct}${esc(w.phase||'')}</span>`;
+          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">${pct}${esc(w.phase||'')}</span>`;
         }else if(charging){
-          if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">&#9888; ${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
-          else if(p.charge_target!=null){bat=`<span class="warn">&#9889; ${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
-          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">&#9889; ${m}m${String(s).padStart(2,'0')}s</span>`;}
-          else{bat='<span class="warn">&#9889; starting&hellip;</span>';}
+          if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
+          else if(p.charge_target!=null){bat=`<span class="warn">${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
+          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">${m}m${String(s).padStart(2,'0')}s</span>`;}
+          else{bat='<span class="warn">starting&hellip;</span>';}
         }
         else if(draining){
           const dr=p.drain;
@@ -304,7 +304,7 @@ function render(data){
             const tip=ok
               ?`holds ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — wearable`
               :`holds only ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — below ${wearH}h wearable threshold: battery swap candidate / dev watch`;
-            bat+=` <span class="${ok?'dim':'err'}" style="font-size:10px" title="${tip}">${ok?'&#8986;':'&#129707;'}~${fmtDur(p.drain_last.est_h)}</span>`;
+            bat+=` <span class="${ok?'dim':'err'}" style="font-size:10px" title="${tip}">~${fmtDur(p.drain_last.est_h)}</span>`;
           }
         }
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
@@ -316,7 +316,7 @@ function render(data){
           `<td class="tc">${tree}</td>` +
           `<td>`+(p.adb==='device'
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">&#9728;</span>`:'')+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -324,9 +324,9 @@ function render(data){
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
-          (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">&#x23FB; Power &#9662;</button>`:'')+
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">&#128295; Workbench &#9662;</button>`:'')+
-          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">&#128190; Flashing &#9662;</button>` +
+          (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
+          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
+          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -400,10 +400,10 @@ function renderCC(d){
     `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
-      `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">&#128243; Buzz</button>`+
+      `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
-      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">&#128247; Shot</button></div>`+
-    `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">&#x21BB; Sync time from host</button></div>`;
+      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
+    `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">Sync time from host</button></div>`;
   ccPlace();
 }
 function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
@@ -441,34 +441,34 @@ function menuEnter(){if(menuTimer){clearTimeout(menuTimer);menuTimer=null;}}
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
   openMenu(ev,
-    (charging?mi('ch','&#9632; Stop charge',`doStopCharge('${slot}')`):mi('ch','&#9889; Charge',`doCharge('${slot}')`,noSw))+
-    (draining?mi('dr','&#9632; Stop drain test',`doStopDrain('${slot}')`):mi('dr','&#128201; Drain test',`doDrain('${slot}')`,noSw))+
+    (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
+    (draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`,noSw))+
     '<div class="menu-sep"></div>'+
-    (powered?mi('ht','&#x23FB; Power off',`doPoweroff('${slot}')`):'')+
-    mi('ht','&#x21BB; Reboot',`doReboot('${slot}')`)+
-    mi('dng','&#128295; Bootloader',`doBootloader('${slot}')`));
+    (powered?mi('ht','Power off',`doPoweroff('${slot}')`):'')+
+    mi('ht','Reboot',`doReboot('${slot}')`)+
+    mi('dng','Bootloader',`doBootloader('${slot}')`));
 }
 function menuWorkbench(ev,slot,serial,wb,online){
   openMenu(ev,
     '<div class="menu-hd">watch stays on — power off when done</div>'+
-    (wb?mi('wbx','&#8617; End checkout',`doStopWb('${slot}')`):mi('wbx','&#128295; Checkout (hold band)',`doWb('${slot}')`))+
+    (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+
-    mi('','&#x21BB; Set time from host',`doSetTime('${serial}')`,!online)+
-    mi('','&#128247; Screenshot',`doScreenshot('${serial}')`,!online)+
-    mi('','&#128276; Test notification',`doNotify('${serial}')`,!online)+
-    mi('','&#128203; Collect diagnostics',`doDiag('${slot}')`,!online));
+    mi('','Set time from host',`doSetTime('${serial}')`,!online)+
+    mi('','Screenshot',`doScreenshot('${serial}')`,!online)+
+    mi('','Test notification',`doNotify('${serial}')`,!online)+
+    mi('','Collect diagnostics',`doDiag('${slot}')`,!online));
 }
 function menuFlash(ev,slot){
   openMenu(ev,
-    mi('','&#128190; Backup data',`doBackup('${slot}')`)+
-    mi('','&#8617; Restore data',`doRestore('${slot}')`)+
+    mi('','Backup data',`doBackup('${slot}')`)+
+    mi('','Restore data',`doRestore('${slot}')`)+
     '<div class="menu-sep"></div>'+
-    mi('','&#9889; Flash nightly',`doFl('${slot}')`)+
+    mi('','Flash nightly',`doFl('${slot}')`)+
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`)+
     mi('',"Flash 2.0",`doFlV('${slot}','2.0')`)+
     '<div class="menu-sep"></div>'+
-    mi('','&#128189; Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
-    mi('','&#8617; Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
+    mi('','Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
+    mi('','Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element
@@ -496,7 +496,7 @@ function showBackendError(msg){
   // came back as an {ok:false,error} envelope with no hubs. Keep the last table
   // on screen (don't blank it) and say clearly that it's stale.
   const b=document.getElementById('berr');
-  if(b)b.innerHTML='&#9888; backend unreachable &mdash; showing last known state <span class="dim">'+esc(msg||'')+'</span>';
+  if(b)b.innerHTML='backend unreachable &mdash; showing last known state <span class="dim">'+esc(msg||'')+'</span>';
   document.getElementById('ts').textContent='stale (backend down)';
 }
 function clearBackendError(){const b=document.getElementById('berr');if(b&&b.innerHTML)b.innerHTML='';}
@@ -567,7 +567,7 @@ function tickCountdown(){
     if(rem>0){
       any=true;
       const m=Math.floor(rem/60),s=rem%60;
-      cell.innerHTML=`<span class="warn">&#9889; ${m}m${String(s).padStart(2,'0')}s</span>`;
+      cell.innerHTML=`<span class="warn">${m}m${String(s).padStart(2,'0')}s</span>`;
     }else{delete chargeEnd[c];refresh();}
   });
   if(any){setTimeout(tickCountdown,1000);}else{countdownRunning=false;}
@@ -604,8 +604,8 @@ function toggleHistory(){
       const estH=(t.rate!=null&&t.rate>0)?85/t.rate:null;
       const est=estH!=null?'~'+fmtDur(estH):'&mdash;';
       const verdict=estH==null?'<span class="dim">&mdash;</span>'
-        :estH>=wh?'<span class="on">&#8986; wearable</span>'
-        :'<span class="err">&#129707; swap candidate</span>';
+        :estH>=wh?'<span class="on">wearable</span>'
+        :'<span class="err">swap candidate</span>';
       const dt=t.start_ts?new Date(t.start_ts*1000).toLocaleString([],{dateStyle:'medium',timeStyle:'short'}):'&mdash;';
       return `<tr><td><b>${esc(t.codename)}</b></td><td class="dim">${dt}</td>`+
         `<td>${t.start_pct}% &rarr; ${t.end_pct!=null?t.end_pct+'%':'?'}</td>`+
@@ -616,7 +616,7 @@ function toggleHistory(){
     el.innerHTML=
       `<h1 style="font-size:15px;margin:24px 0 4px">drain test history</h1>`+
       `<p class="meta">standby drain per test &mdash; a rising rate across months means battery wear; `+
-      `&#8986; = holds &ge;${wh}h standby (wearable_min_hours)</p>`+
+      `wearable = holds &ge;${wh}h standby (wearable_min_hours)</p>`+
       `<table><thead><tr><th>Watch</th><th>Date</th><th>Charge</th><th>Duration</th>`+
       `<th>Rate</th><th>Est. 100&rarr;15%</th><th>Verdict</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
   });
