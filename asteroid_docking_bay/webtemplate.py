@@ -20,11 +20,6 @@ _WEB_TEMPLATE = """\
     .hdim{color:#30363d;font-weight:400;font-size:16px;letter-spacing:3px}
     .htxt{letter-spacing:3px}
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
-    /* Each toggle reserves the width of its longest label (monospace) and
-       centres its text, so swapping "show all ports" <-> "hide avoided ports"
-       cannot re-flow this centred line and shift its neighbour. */
-    .meta a{display:inline-block;text-align:center}
-    #histlink{min-width:18ch}#hidlink{min-width:18ch}
     /* Fixed top bar: left/right pinned so varying string lengths (the
        update stamp) can never reposition their neighbours. */
     .topbar{display:flex;justify-content:space-between;color:#6e7681;font-size:11px;margin-bottom:2px}
@@ -77,16 +72,14 @@ _WEB_TEMPLATE = """\
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-    /* Fixed layout: column widths come from the colgroup, never from cell
-       content — so the per-second Battery countdown and the varying
-       Connection text can never reposition their neighbours (mo's rule).
-       Narrower viewports scroll horizontally rather than collapsing columns. */
+    /* Fluid: columns follow the page width with a minimal content margin, so
+       the table always fits the viewport (no forced horizontal scroll). Column
+       positions may shift slightly with string length — that's fine. */
     .tblwrap{overflow-x:auto}
-    table{width:100%;min-width:1100px;table-layout:fixed;border-collapse:collapse}
-    td[id^="act-"]{white-space:nowrap}
+    table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
     th:first-child,td.tc{width:22px;padding-right:0}
-    td{padding:7px 12px;border-bottom:1px solid #161b22;vertical-align:middle}
+    td{padding:7px 8px;border-bottom:1px solid #161b22;vertical-align:middle}
     .wr:hover td{background:#161b22}
     .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
     .hub-hdr:first-child td{border-top:none;padding-top:0}
@@ -137,6 +130,31 @@ _WEB_TEMPLATE = """\
     .btn-ref.pulsing{animation:bpulse .85s ease-in-out infinite!important;border-color:#58a6ff!important;color:#58a6ff!important}
     @keyframes pwrwarn{0%,100%{background:transparent}40%{background:rgba(248,81,73,.12)}}
     .wr.pwr-warn td{animation:pwrwarn 1.8s ease-in-out 2}
+    /* Phones: stack each row into a slim card — one labelled line per field —
+       instead of a wide table that scrolls sideways. Column order is fixed, so
+       the field labels come from :nth-child; no markup change needed. */
+    @media (max-width:720px){
+      body{padding:12px}
+      .tblwrap{overflow-x:visible}
+      table,tbody,tr,td{display:block;width:auto}
+      thead{display:none}
+      .hub-hdr td{padding:10px 4px 4px}
+      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 8px;padding:2px 10px}
+      .wr:hover td{background:transparent}
+      .wr td{border:none;padding:4px 0;display:flex;justify-content:space-between;
+             align-items:center;gap:12px;text-align:right}
+      .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
+      .wr td:nth-child(2){font-weight:700;font-size:14px;justify-content:flex-start;
+                          padding-top:6px;border-bottom:1px solid #161b22}
+      .wr td:nth-child(3)::before{content:"Port"}
+      .wr td:nth-child(4)::before{content:"Power"}
+      .wr td:nth-child(5)::before{content:"Smart"}
+      .wr td:nth-child(6)::before{content:"Connection"}
+      .wr td:nth-child(7)::before{content:"Battery"}
+      .wr td::before{color:#6e7681;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+      .wr td:nth-child(8){display:block;text-align:left;padding-top:8px}  /* actions span the card */
+      .lr td{padding:0}
+    }
   </style>
 </head>
 <body>
@@ -149,11 +167,6 @@ _WEB_TEMPLATE = """\
   </div>
   <div class="tblwrap">
   <table>
-    <colgroup>
-      <col style="width:24px"><col style="width:120px"><col style="width:130px">
-      <col style="width:120px"><col style="width:64px"><col style="width:130px">
-      <col><col style="width:360px">
-    </colgroup>
     <thead><tr>
       <th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
       <th>Connection</th><th>Battery</th><th>Actions</th>
