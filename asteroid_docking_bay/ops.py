@@ -17,7 +17,8 @@ from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for
 from . import fastboot, usb
 from .usb import uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
-                       _fastboot_devices, _flash_watch, _wait_for_fastboot)
+                       _fastboot_devices, _flash_watch, _switch_ssh_to_adb,
+                       _wait_for_fastboot)
 from .events import (_DRAIN_FLOOR_PCT, _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
 from .tasks import (_adb_lock, _charge_stop, _charge_tasks, _drain_stop,
@@ -694,11 +695,9 @@ def _flash_one_watch(
         serial = wait_for_adb(codename, cfg, charge_config(cfg), serial=want_serial)
         if serial is None:
             if _detect_rndis():
-                log.warning(
-                    "%s: watch at 192.168.2.15 (SSH/RNDIS mode) — "
-                    "switch to ADB mode: Settings → USB on the watch",
-                    codename,
-                )
+                log.info("%s: came up in SSH/developer mode — switching to ADB",
+                         codename)
+                _switch_ssh_to_adb()
                 serial = wait_for_adb(codename, cfg, charge_config(cfg), serial=want_serial)
             if serial is None:
                 log.error("%s: ADB not available — skipping", codename)

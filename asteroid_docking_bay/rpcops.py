@@ -36,6 +36,7 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
+from .fastboot import _switch_ssh_to_adb
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
 from .webstatus import _web_status_data
 from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
@@ -126,6 +127,13 @@ def _watch_restore(args):
     if not serial:
         return {"ok": False, "error": "no watch mapped to this port"}
     return Watch(serial).restore()
+
+
+@DISPATCH.op("ssh.switch_adb")
+def _ssh_switch_adb(args):
+    """Switch a watch stuck in SSH/developer USB mode (reachable at 192.168.2.15)
+    over to ADB. ok=False means nothing was reachable there to switch."""
+    return {"ok": _switch_ssh_to_adb()}
 
 
 @DISPATCH.op("watch.diagnostics")

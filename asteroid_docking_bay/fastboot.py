@@ -91,6 +91,20 @@ def _detect_rndis() -> bool:
     return rc == 0
 
 
+def _switch_ssh_to_adb() -> bool:
+    """Switch a watch that enumerated in SSH/developer USB mode over to adb_mode.
+    A single such watch is directly reachable at 192.168.2.15. The switch
+    re-enumerates the USB gadget and drops the ssh session, so a non-zero return
+    is expected — success is the watch reappearing on adb, which the caller
+    waits for. Returns False only if no watch is reachable there to switch."""
+    if not _detect_rndis():
+        return False
+    _clear_ssh_known_hosts()   # a fresh flash rotates the host key
+    _run("ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "
+         "root@192.168.2.15 usb_moded_util -s adb_mode", check=False, timeout=15)
+    return True
+
+
 def _download_nightly(codename: str, download_dir: Path, nightly_url: str, force: bool = False) -> tuple[Path, Path]:
     """
     Download nightly images for codename into download_dir, verify SHA512.

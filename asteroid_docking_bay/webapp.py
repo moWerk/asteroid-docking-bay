@@ -55,6 +55,7 @@ _JSON_ROUTES = [
     ("POST", "/api/backup/<loc>/<port:int>",       "watch.backup",    {},             False),
     ("POST", "/api/restore/<loc>/<port:int>",      "watch.restore",   {},             False),
     ("POST", "/api/diagnostics/<loc>/<port:int>",  "watch.diagnostics", {},           False),
+    ("POST", "/api/switch-adb",                    "ssh.switch_adb",  {},             True),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
 ]

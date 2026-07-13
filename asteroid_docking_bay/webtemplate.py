@@ -101,7 +101,8 @@ _WEB_TEMPLATE = """\
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
     .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
-    .cbadge.ssh{border-color:#d29922;color:#d29922}
+    .cbadge.ssh{border-color:#d29922;color:#d29922;cursor:pointer}
+    .cbadge.ssh:hover{background:#2a2113}
     .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
@@ -194,7 +195,7 @@ function mkadb(adb,fbprod,os){
     if(os&&os!=='unknown')return `<span class="on" title="${esc(os)} on ADB">ADB <span class="dim">${esc(os)}</span></span>`;
     return '<span class="on">ADB</span>';
   }
-  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" title="watch is in SSH/developer USB mode — reachable over SSH, no ADB functions">SSH</span>`;
+  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — no ADB functions. Click to switch this watch to ADB (via 192.168.2.15).">SSH</span>`;
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">&#9889; ${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -481,6 +482,7 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
+function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'diagnostics saved on host':'diagnostics partial — see log')).catch(()=>toast('diagnostics failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
