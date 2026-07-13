@@ -111,3 +111,26 @@ def test_workbench_end_powers_down_gracefully(monkeypatch):
 
     assert ended.get("loc") == "8-8" and ended.get("reason") == "workbench ended"
     assert _workbench_tasks.pop(slot)["done"] is True
+
+
+# ── charge_to_target: explicit target (drain-recharge-to-rest) ────────────────
+
+import asteroid_docking_bay.ops as opsmod
+from asteroid_docking_bay.config import ChargeConfig
+
+
+def test_charge_to_target_honours_explicit_target(monkeypatch):
+    # At 60% with an explicit 50% target, there is nothing to do — it must not
+    # keep charging to the default high_threshold (80%).
+    monkeypatch.setattr(opsmod, "get_battery_level", lambda s: 60)
+    cc = ChargeConfig()
+    got = opsmod.charge_to_target("skipjack", "SER", cc, target=50)
+    assert got == 60
+
+
+def test_charge_to_target_defaults_to_high_threshold(monkeypatch):
+    # No target given → the old behaviour: charge toward high_threshold. At 90%
+    # (already above 80) there's nothing to do.
+    monkeypatch.setattr(opsmod, "get_battery_level", lambda s: 90)
+    got = opsmod.charge_to_target("skipjack", "SER", ChargeConfig())
+    assert got == 90

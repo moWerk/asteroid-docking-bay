@@ -114,7 +114,8 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
 
 def charge_to_target(codename: str, serial: "str | None", charge_cfg: ChargeConfig,
                      loc: "str | None" = None,
-                     port: "int | None" = None) -> "int | None":
+                     port: "int | None" = None,
+                     target: "int | None" = None) -> "int | None":
     """
     Charge a watch whose port is already powered until high_threshold,
     polling the battery every _CHARGE_POLL_SEC and hard-capped by
@@ -125,7 +126,7 @@ def charge_to_target(codename: str, serial: "str | None", charge_cfg: ChargeConf
     and the periodic timer; the web UI has its own loop with stop-event and
     live task state.
     """
-    target  = charge_cfg.high_threshold
+    target  = charge_cfg.high_threshold if target is None else target
     max_sec = charge_cfg.charge_max_minutes * 60
     level = get_battery_level(serial) if serial else None
     if level is None:
@@ -578,9 +579,20 @@ class DrainOp(Operation):
             task["stopped"] = stop_event.is_set()
             _drain_stop.pop(slot, None)
             task_store.unpersist("drain", slot)
-            # Return the watch to rest: shut it down instead of leaving it
-            # draining at the floor.
-            _end_port(loc, port, task.get("serial"), charge_cfg, "drain ended")
+            # Optionally charge back into the healthy band before powering off,
+            # so a completed test doesn't leave the watch stored near the floor.
+            # Only when it ran to completion (a user stop leaves it as-is).
+            serial = task.get("serial")
+            if (charge_cfg.drain_rest_recharge and serial
+                    and not stop_event.is_set()):
+                log.info("%s: recharging to rest band (%d%%) after drain",
+                         codename, charge_cfg.low_threshold)
+                _ensure_port_powered(codename, loc, port)
+                if wait_serial_online(serial, 5, 4):
+                    charge_to_target(codename, serial, charge_cfg, loc, port,
+                                     target=charge_cfg.low_threshold)
+            # Return the watch to rest: shut it down instead of leaving it on.
+            _end_port(loc, port, serial, charge_cfg, "drain ended")
             _save_drain_results(task, slot, codename)
 
 

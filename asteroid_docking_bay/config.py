@@ -47,6 +47,11 @@ class ChargeConfig:
     # Ideal rest state is in-band AND powered off: after a charge or drain
     # test, shut the watch down over ADB before cutting the port.
     graceful_poweroff: bool = True
+    # A drain test ends at ~15% (the floor). When true, charge it back up to
+    # low_threshold before powering off, so it stores in the healthy band
+    # rather than sitting drained. Off by default: leaves the test result
+    # watch as-is unless you opt in.
+    drain_rest_recharge: bool = False
 
     @classmethod
     def from_dict(cls, d: "dict | None") -> "ChargeConfig":
