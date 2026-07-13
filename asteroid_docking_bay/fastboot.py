@@ -153,11 +153,11 @@ def _flash_watch(boot_file: Path, img_file: Path, fb_serial: str | None, dry_run
                 raise RuntimeError(f"{cmd}: {err.strip() or f'rc={rc}'}")
             log.info("%s: non-fatal (%s)", cmd, err.strip() or f"rc={rc}")
 
-    # Some bootloaders error on `oem unlock` when already unlocked (e.g.
-    # sturgeon) — aborting there would strand the watch in fastboot. Treat
-    # it as best-effort: if the bootloader is truly locked, the flash below
-    # fails loudly on its own.
-    fb("oem unlock", fatal=False)
+    # No `oem unlock` here: a watch already running AsteroidOS is unlocked by
+    # definition (a locked bootloader wouldn't boot it), so unlocking on every
+    # reflash is a pointless — and warranty-voiding — side effect. Unlocking a
+    # still-locked WearOS watch is a deliberate, warned action of its own; see
+    # the bootloader-unlock toggle in the roadmap (gated on WearOS detection).
     fb(f"flash userdata '{img_file}'")
     fb(f"flash boot '{boot_file}'")
     fb("continue")
