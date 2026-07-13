@@ -474,14 +474,15 @@ class WorkbenchOp(Operation):
         except Exception as exc:
             log.warning("%s: workbench failed: %s", codename, exc)
         finally:
-            try:
-                uhubctl_set_power(loc, port, False)
-            except Exception:
-                pass
+            # Return to true rest: graceful poweroff then cut VBUS, the same as
+            # drain and charge. A raw power cut here left the watch running on
+            # battery, invisibly draining behind an "off" port (audit F8).
+            _end_port(loc, port, find_serial_for_loc_port(cfg, loc, port),
+                      charge_cfg, "workbench ended")
             task["done"] = True
             _workbench_stop.pop(slot, None)
             task_store.unpersist("workbench", slot)
-            log.info("%s: workbench ended — returned to fleet (port off)", codename)
+            log.info("%s: workbench ended — returned to fleet at rest", codename)
 
 
 
