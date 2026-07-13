@@ -42,6 +42,7 @@ def test_registered_ops_are_the_documented_contract():
         "status.get",
         "watch.cc", "watch.toggle", "watch.settime", "watch.notify",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
+        "watch.backup", "watch.restore",
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
         "port.bootloader", "port.hide", "hub.hide",
         "charge.start", "charge.stop",

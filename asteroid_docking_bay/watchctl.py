@@ -144,6 +144,16 @@ connmanctl technologies 2>/dev/null'''
 _CERES_ENV = ("XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 "
               "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus")
 
+# Data backup: user settings (incl. the dconf database) + system WiFi
+# credentials, one non-incremental dir per watch on the host. This is NOT a
+# full-image backup — see the deferred "Dump mmcblk0" feature for a byte-exact
+# eMMC image. (label, remote-path); the local copy keeps the remote basename.
+BACKUP_ROOT = Path.home() / ".local/share/asteroid-docking-bay/backups"
+_BACKUP_PATHS = (
+    ("settings", "/home/ceres/.config"),   # app settings + dconf db (ceres-owned)
+    ("wifi",     "/var/lib/connman"),       # connman WiFi credentials (root-owned)
+)
+
 
 def _host_timezone() -> "str | None":
     """Host IANA timezone (e.g. 'Europe/Berlin') to push to a watch."""
@@ -264,3 +274,80 @@ class Watch:
         rc, _, _ = _run(f"adb -s {self.serial} shell mcetool -D "
                         f"{'on' if on else 'off'}", check=False, timeout=10)
         return rc == 0
+
+    def _backup_dir(self) -> Path:
+        codename = get_watch_codename(self.serial) or self.serial
+        return BACKUP_ROOT / codename
+
+    def backup(self) -> dict:
+        """Pull user data to a per-watch dir on the host: ~ceres/.config,
+        /var/lib/connman (WiFi credentials), and a portable `dconf dump`.
+        Non-incremental (overwrites the watch's prior backup). Reversible via
+        restore(). Not a full image — see the Dump mmcblk0 feature."""
+        dest = self._backup_dir()
+        dest.mkdir(parents=True, exist_ok=True)
+        items: list[dict] = []
+        for label, remote in _BACKUP_PATHS:
+            local = dest / Path(remote).name
+            _run(f"rm -rf {shlex.quote(str(local))}", check=False)
+            rc, _, err = _run(
+                f"adb -s {self.serial} pull {remote} {shlex.quote(str(dest))}",
+                check=False, timeout=120)
+            ok = rc == 0 and local.exists()
+            items.append({"name": label, "ok": ok,
+                          "error": None if ok else (err.strip() or f"rc={rc}")})
+        # Portable dconf export alongside the raw db — survives a gvdb format
+        # change on restore. HOME must be set: `su ceres` doesn't guarantee it,
+        # and dconf keys its database off it.
+        rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
+        dconf_ok = rc == 0 and bool(out.strip())
+        if dconf_ok:
+            (dest / "dconf.dump").write_text(out)
+        items.append({"name": "dconf", "ok": dconf_ok, "error": None})
+        ok = all(i["ok"] for i in items)
+        log.info("%s: backup -> %s (%s)", self.serial, dest,
+                 "ok" if ok else "partial")
+        return {"ok": ok, "path": str(dest), "items": items}
+
+    def restore(self) -> dict:
+        """Push a previous backup() back and reconnect: ~ceres/.config
+        (re-owned to ceres — adb push writes as root), /var/lib/connman, a
+        `dconf load`, then restart connman so a saved WiFi network reconnects.
+        Errors if this watch has no backup."""
+        src = self._backup_dir()
+        if not src.is_dir():
+            return {"ok": False, "error": f"no backup at {src}"}
+        items: list[dict] = []
+        for label, remote in _BACKUP_PATHS:
+            local = src / Path(remote).name
+            if not local.is_dir():
+                items.append({"name": label, "ok": False,
+                              "error": "not in this backup"})
+                continue
+            # Push the dir into the remote *parent*; adb merges into the
+            # existing target rather than nesting a duplicate.
+            parent = str(Path(remote).parent)
+            rc, _, err = _run(
+                f"adb -s {self.serial} push {shlex.quote(str(local))} {parent}",
+                check=False, timeout=120)
+            if rc == 0 and remote.startswith("/home/ceres/"):
+                _run(f"adb -s {self.serial} shell chown -R ceres:ceres {remote}",
+                     check=False, timeout=15)
+            items.append({"name": label, "ok": rc == 0,
+                          "error": None if rc == 0 else (err.strip() or f"rc={rc}")})
+        dump = src / "dconf.dump"
+        if dump.is_file():
+            remote = "/tmp/.dockingbay_dconf.dump"
+            _run(f"adb -s {self.serial} push {shlex.quote(str(dump))} {remote}",
+                 check=False, timeout=15)
+            rc, _, _ = self.user_cmd(
+                f"HOME=/home/ceres dconf load / < {remote}", timeout=15)
+            _run(f"adb -s {self.serial} shell rm -f {remote}", check=False, timeout=8)
+            items.append({"name": "dconf", "ok": rc == 0, "error": None})
+        # Reconnect WiFi from the restored credentials without a reboot.
+        _run(f"adb -s {self.serial} shell systemctl restart connman",
+             check=False, timeout=15)
+        ok = bool(items) and all(i["ok"] for i in items)
+        log.info("%s: restore <- %s (%s)", self.serial, src,
+                 "ok" if ok else "partial")
+        return {"ok": ok, "path": str(src), "items": items}

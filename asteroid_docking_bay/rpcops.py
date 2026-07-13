@@ -109,6 +109,24 @@ def _screen_release_all(args):
     return {"ok": True, "released": released}
 
 
+@DISPATCH.op("watch.backup")
+def _watch_backup(args):
+    """Back up one port's watch data to the host. Slot-based like flash: the
+    serial is resolved from the port so the row menu needn't carry it."""
+    serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    return Watch(serial).backup()
+
+
+@DISPATCH.op("watch.restore")
+def _watch_restore(args):
+    serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    return Watch(serial).restore()
+
+
 @DISPATCH.op("watch.screenshot")
 def _watch_screenshot(args):
     """JPEG as base64 in the response — keeps the protocol single-channel

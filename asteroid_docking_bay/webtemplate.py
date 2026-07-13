@@ -458,8 +458,8 @@ function menuWorkbench(ev,slot,serial,wb,online){
 }
 function menuFlash(ev,slot){
   openMenu(ev,
-    mi('','&#128190; Backup data',`doBackup('${slot}')`,true)+
-    mi('','&#8617; Restore data',`doRestore('${slot}')`,true)+
+    mi('','&#128190; Backup data',`doBackup('${slot}')`)+
+    mi('','&#8617; Restore data',`doRestore('${slot}')`)+
     '<div class="menu-sep"></div>'+
     mi('','&#9889; Flash nightly',`doFl('${slot}')`)+
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`,true)+
@@ -480,7 +480,8 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){toast('Flash '+v+' — not released yet');}
-function doBackup(s){} function doRestore(s){}
+function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
+function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
