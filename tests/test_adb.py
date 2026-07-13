@@ -163,3 +163,13 @@ def test_conn_state_ssh():
 
 def test_conn_state_nothing():
     assert _resolve_conn_state(None, False, lambda: False) is None
+
+
+def test_battery_paths_prefer_fuel_gauge():
+    # The named hardware fuel gauge must be read before the generic `battery`
+    # node — on some watches `battery` is a separate, miscalibrated source.
+    from asteroid_docking_bay.adb import _BATTERY_SYSFS_PATHS
+    paths = list(_BATTERY_SYSFS_PATHS)
+    fg  = next(i for i, p in enumerate(paths) if "nanohub_fuelgauge" in p)
+    bat = next(i for i, p in enumerate(paths) if p.endswith("/battery/capacity"))
+    assert fg < bat

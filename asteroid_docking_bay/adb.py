@@ -122,6 +122,12 @@ def get_watch_codename(serial: str) -> str | None:
 
 
 _BATTERY_SYSFS_PATHS = (
+    # Prefer the named hardware fuel gauge over the generic `battery` node.
+    # On some watches (catfish) `battery` is a separate, miscalibrated source
+    # (read 50% while the pack was full); the nanohub gauge — what the watch UI
+    # itself reads — is accurate. Read order = priority (cat … | head -1), so
+    # the gauge wins where present and everyone else falls through to `battery`.
+    "/sys/class/power_supply/nanohub_fuelgauge-*/capacity",
     "/sys/class/power_supply/battery/capacity",
     "/sys/class/power_supply/Battery/capacity",
     "/sys/class/power_supply/max170xx_battery/capacity",
