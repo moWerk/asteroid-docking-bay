@@ -437,7 +437,7 @@ function openMenu(ev,html){
 function closeMenu(){document.getElementById('menu').style.display='none';}
 function menuLeave(){menuTimer=setTimeout(closeMenu,450);}
 function menuEnter(){if(menuTimer){clearTimeout(menuTimer);menuTimer=null;}}
-function mi(cls,label,fn,dis){return `<button class="menu-item ${cls}"${dis?' disabled title="not available yet"':` onclick="${fn};closeMenu()"`}>${label}</button>`;}
+function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
   openMenu(ev,
     (charging?mi('ch','&#9632; Stop charge',`doStopCharge('${slot}')`):mi('ch','&#9889; Charge',`doCharge('${slot}')`,noSw))+
@@ -465,8 +465,8 @@ function menuFlash(ev,slot){
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`,true)+
     mi('',"Flash 2.0",`doFlV('${slot}','2.0')`,true)+
     '<div class="menu-sep"></div>'+
-    mi('','&#128189; Dump mmcblk0',`doDump('${slot}')`,true)+
-    mi('','&#8617; Restore from dump',`doRestoreDump('${slot}')`,true));
+    mi('','&#128189; Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
+    mi('','&#8617; Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element
