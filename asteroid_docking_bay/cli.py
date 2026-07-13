@@ -15,9 +15,10 @@ from .util import log, setup_logging
 from .adb import (_adb_state, _wait_for_new_adb_device, adb_devices,
                   get_battery_level, get_watch_codename)
 from .config import (CONFIG_FILE, ChargeConfig, charge_config, flash_config,
-                     _resolve_targets, find_port_for_codename,
-                     find_serial_for_codename, find_serial_for_loc_port,
-                     is_port_smart, load_config, save_config)
+                     _resolve_targets, _store_smart_verdict,
+                     find_port_for_codename, find_serial_for_codename,
+                     find_serial_for_loc_port, is_port_smart, load_config,
+                     save_config)
 from .usb import (port_foreign_device, test_port_power_switching,
                   uhubctl_get_power, uhubctl_list, uhubctl_set_power)
 from .events import event_log
@@ -632,7 +633,7 @@ def cmd_test_ports(args, cfg: dict):
 
         for hub in cfg.get("hubs", []):
             if hub["location"] == loc:
-                hub.setdefault("port_smart", {})[str(port)] = smart
+                _store_smart_verdict(hub, port, smart)
                 break
 
     if results:

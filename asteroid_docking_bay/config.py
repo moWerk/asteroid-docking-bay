@@ -209,6 +209,17 @@ def is_slot_smart(cfg: dict, loc: str, port: int) -> bool | None:
     return None
 
 
+def _store_smart_verdict(hub: dict, port: int, smart: "bool | None") -> None:
+    """Record a PPPS test result on a hub entry, keeping a proven verdict
+    sticky: an inconclusive (None) re-test must not erase a previously
+    confirmed smart/not-smart result — that's what made the verdict flicker
+    to '?' after a marginal Refresh. A conclusive True/False always updates
+    (a port genuinely can change)."""
+    existing = hub.get("port_smart", {}).get(str(port))
+    if smart is not None or existing is None:
+        hub.setdefault("port_smart", {})[str(port)] = smart
+
+
 def _resolve_targets(codename_arg: str, cfg: dict) -> list[str]:
     if codename_arg == "all":
         return all_configured_codenames(cfg)

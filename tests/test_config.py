@@ -48,3 +48,26 @@ def test_manager_roundtrip_and_defaults_merge(tmp_path):
     assert cfg["serials"] == {}            # missing keys seeded
     assert charge_config(cfg).low_threshold == 35
     assert charge_config(cfg).high_threshold == 80
+
+
+# ── _store_smart_verdict: a proven verdict is sticky ──────────────────────────
+
+from asteroid_docking_bay.config import _store_smart_verdict
+
+
+def test_smart_verdict_none_does_not_erase_proven_true():
+    hub = {"port_smart": {"1": True}}
+    _store_smart_verdict(hub, 1, None)          # a marginal re-test
+    assert hub["port_smart"]["1"] is True        # kept, not flickered to '?'
+
+
+def test_smart_verdict_conclusive_updates():
+    hub = {"port_smart": {"1": True}}
+    _store_smart_verdict(hub, 1, False)          # a port genuinely changed
+    assert hub["port_smart"]["1"] is False
+
+
+def test_smart_verdict_none_stored_when_nothing_proven():
+    hub = {}
+    _store_smart_verdict(hub, 2, None)
+    assert hub["port_smart"]["2"] is None

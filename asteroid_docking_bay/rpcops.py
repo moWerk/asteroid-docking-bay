@@ -29,9 +29,9 @@ import time
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
-from .config import (_config_lock, charge_config, find_codename_for_loc_port,
-                     find_serial_for_loc_port, flash_config, load_config,
-                     save_config)
+from .config import (_config_lock, _store_smart_verdict, charge_config,
+                     find_codename_for_loc_port, find_serial_for_loc_port,
+                     flash_config, load_config, save_config)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import Watch
@@ -518,7 +518,7 @@ def _onboard_stream(loc: str, port: int):
                             cfg = load_config()
                             for hub in cfg.get("hubs", []):
                                 if hub["location"] == loc:
-                                    hub.setdefault("port_smart", {})[str(port)] = smart
+                                    _store_smart_verdict(hub, port, smart)
                                     break
                             save_config(cfg)
                         verdict = ("SMART ✓" if smart
