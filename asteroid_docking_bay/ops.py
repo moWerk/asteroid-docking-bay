@@ -625,6 +625,7 @@ def _flash_one_watch(
     dry_run: bool = False,
     local_dir: "Path | None" = None,
     force_dl: bool = False,
+    channel: "str | None" = None,
 ) -> str:
     """
     Flash one watch end-to-end. Progress is reported via log.*; returns "ok"
@@ -640,6 +641,12 @@ def _flash_one_watch(
 
     dl_dir = Path(flash_cfg.download_dir)
     nightly_url = flash_cfg.nightly_url
+    # A release channel (e.g. "2.1") is the nightly URL with its last path
+    # segment swapped, cached in its own subdir so it never collides with the
+    # nightly's identically-named images.
+    if channel:
+        nightly_url = nightly_url.rsplit("/", 1)[0] + "/" + channel
+        dl_dir = dl_dir / channel
 
     if local_dir:
         boot_file = local_dir / f"zImage-dtb-{codename}.fastboot"

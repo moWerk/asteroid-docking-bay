@@ -462,8 +462,8 @@ function menuFlash(ev,slot){
     mi('','&#8617; Restore data',`doRestore('${slot}')`)+
     '<div class="menu-sep"></div>'+
     mi('','&#9889; Flash nightly',`doFl('${slot}')`)+
-    mi('',"Flash 2.1",`doFlV('${slot}','2.1')`,true)+
-    mi('',"Flash 2.0",`doFlV('${slot}','2.0')`,true)+
+    mi('',"Flash 2.1",`doFlV('${slot}','2.1')`)+
+    mi('',"Flash 2.0",`doFlV('${slot}','2.0')`)+
     '<div class="menu-sep"></div>'+
     mi('','&#128189; Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
     mi('','&#8617; Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
@@ -479,7 +479,7 @@ function toast(msg){
 function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComponent(s)+'/settime',{method:'POST'}).then(()=>toast('time synced from host'));}
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
-function doFlV(s,v){toast('Flash '+v+' — not released yet');}
+function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
@@ -638,14 +638,14 @@ function doWb(c){
 function doStopWb(c){
   fetch('/api/workbench/stop/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
 }
-function doFl(c){
+function doFl(c,channel){
   if(srcs[c])return;
   const box=document.getElementById('log-'+c);
   if(!box)return;
   box.textContent='';box.classList.add('show');
   const r=document.getElementById('wr-'+c);
   if(r)r.querySelectorAll('button').forEach(b=>b.disabled=true);
-  const es=new EventSource('/api/flash/'+_api(c));
+  const es=new EventSource('/api/flash/'+_api(c)+(channel?('?channel='+encodeURIComponent(channel)):''));
   srcs[c]=es;
   es.onmessage=ev=>{box.textContent+=ev.data+'\\n';box.scrollTop=box.scrollHeight};
   es.addEventListener('done',()=>{box.textContent+='\\n\\u2500\\u2500 done \\u2500\\u2500\\n';box.scrollTop=box.scrollHeight;es.close();delete srcs[c];refresh()});

@@ -62,7 +62,7 @@ _JSON_ROUTES = [
 def serve(args, cfg: dict):
     """Start the web UI. Requires the bottle package."""
     try:
-        from bottle import Bottle, response as resp
+        from bottle import Bottle, request, response as resp
     except ImportError:
         log.error("bottle is required for 'serve'.\n"
                   "  Arch:    sudo pacman -S python-bottle\n"
@@ -174,7 +174,11 @@ def serve(args, cfg: dict):
     @app.get("/api/flash/<loc>/<port:int>")
     def api_flash(loc, port):
         _event_stream_headers()
-        return _sse("flash.start", {"loc": loc, "port": port})
+        args = {"loc": loc, "port": port}
+        channel = request.query.get("channel")   # e.g. "2.1"; absent = nightly
+        if channel:
+            args["channel"] = channel
+        return _sse("flash.start", args)
 
     @app.get("/api/remap/<loc>/<port:int>")
     def api_remap(loc, port):
