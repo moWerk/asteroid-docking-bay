@@ -325,7 +325,7 @@ function render(data){
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
           (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">&#x23FB; Power &#9662;</button>`:'')+
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">&#128295; Workbench &#9662;</button>`:'')+
-          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="backup / restore / flash">&#128190; Flash &#9662;</button>` +
+          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">&#128190; Flashing &#9662;</button>` +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -463,7 +463,10 @@ function menuFlash(ev,slot){
     '<div class="menu-sep"></div>'+
     mi('','&#9889; Flash nightly',`doFl('${slot}')`)+
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`,true)+
-    mi('',"Flash 2.0",`doFlV('${slot}','2.0')`,true));
+    mi('',"Flash 2.0",`doFlV('${slot}','2.0')`,true)+
+    '<div class="menu-sep"></div>'+
+    mi('','&#128189; Dump mmcblk0',`doDump('${slot}')`,true)+
+    mi('','&#8617; Restore from dump',`doRestoreDump('${slot}')`,true));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element
@@ -478,6 +481,7 @@ function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){toast('Flash '+v+' — not released yet');}
 function doBackup(s){} function doRestore(s){}
+function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
   const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
