@@ -626,12 +626,22 @@ def _flash_one_watch(
     local_dir: "Path | None" = None,
     force_dl: bool = False,
     channel: "str | None" = None,
+    target: "tuple[str, int, str | None] | None" = None,
 ) -> str:
     """
     Flash one watch end-to-end. Progress is reported via log.*; returns "ok"
     or a short error string. Used by both cmd_flash_all and the web UI SSE handler.
+
+    target = (loc, port, serial): flash exactly this port/unit — the web path,
+    which knows the slot the user clicked. Without it, derive the port from the
+    codename (fine when the codename is unique, e.g. the CLI flash-all path);
+    with two same-codename watches that derivation can pick the wrong one.
     """
-    loc, port = find_port_for_codename(cfg, codename)
+    if target is not None:
+        loc, port, want_serial = target
+    else:
+        loc, port = find_port_for_codename(cfg, codename)
+        want_serial = None
     if loc is None:
         log.error("%s: not mapped to any hub port", codename)
         return "not mapped"
@@ -669,7 +679,7 @@ def _flash_one_watch(
 
     serial = None
     if not dry_run:
-        serial = wait_for_adb(codename, cfg, charge_config(cfg))
+        serial = wait_for_adb(codename, cfg, charge_config(cfg), serial=want_serial)
         if serial is None:
             if _detect_rndis():
                 log.warning(
@@ -677,7 +687,7 @@ def _flash_one_watch(
                     "switch to ADB mode: Settings → USB on the watch",
                     codename,
                 )
-                serial = wait_for_adb(codename, cfg, charge_config(cfg))
+                serial = wait_for_adb(codename, cfg, charge_config(cfg), serial=want_serial)
             if serial is None:
                 log.error("%s: ADB not available — skipping", codename)
                 uhubctl_set_power(loc, port, False)

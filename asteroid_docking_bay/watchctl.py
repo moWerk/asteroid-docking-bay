@@ -17,36 +17,43 @@ from .config import ChargeConfig, find_serial_for_codename, save_config
 
 
 def wait_for_adb(codename: str, cfg: dict,
-                 charge_cfg: ChargeConfig) -> str | None:
+                 charge_cfg: ChargeConfig,
+                 serial: "str | None" = None) -> str | None:
     """
-    Poll ADB until the watch with the given codename appears as 'device'.
-    Returns the serial string, or None on timeout.
+    Poll ADB until the target watch appears as 'device'. Returns its serial,
+    or None on timeout.
+
+    When `serial` is given, wait for exactly that unit — this disambiguates
+    two watches that share a codename (flashing the wrong one is the danger).
+    Without it, match by codename.
 
     If the watch needs a physical power button press after USB power-on,
     this function will time out and log an actionable warning.
     """
     wait_secs = charge_cfg.adb_wait_seconds
     retries = charge_cfg.adb_wait_retries
-    known_serial = find_serial_for_codename(cfg, codename)
+    known_serial = serial or find_serial_for_codename(cfg, codename)
 
     for attempt in range(1, retries + 1):
         devices = adb_devices()
 
-        # Fast path: known serial is already online.
+        # Fast path: the exact serial is already online.
         if known_serial and _adb_state(devices, known_serial) == "device":
             log.debug("%s: ADB online (serial %s)", codename, known_serial)
             return known_serial
 
-        # Slower path: scan all 'device'-state entries for the codename.
-        for serial, state in devices.items():
-            if state['status'] != "device":
-                continue
-            detected = get_watch_codename(serial)
-            if detected and detected.lower() == codename.lower():
-                log.info("%s: ADB online as %s", codename, serial)
-                cfg.setdefault("serials", {})[serial] = codename
-                save_config(cfg)
-                return serial
+        # Codename scan only when no exact serial was requested — otherwise we
+        # could return the wrong unit of a duplicated codename.
+        if serial is None:
+            for s, state in devices.items():
+                if state['status'] != "device":
+                    continue
+                detected = get_watch_codename(s)
+                if detected and detected.lower() == codename.lower():
+                    log.info("%s: ADB online as %s", codename, s)
+                    cfg.setdefault("serials", {})[s] = codename
+                    save_config(cfg)
+                    return s
 
         log.info(
             "%s: waiting for ADB (%d/%d, %ds intervals)…",

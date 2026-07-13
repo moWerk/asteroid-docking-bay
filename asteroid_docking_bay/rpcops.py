@@ -337,10 +337,11 @@ class _QueueHandler(logging.Handler):
                 self.handleError(record)
 
 
-def _flash_stream(codename: str, slot: str, cfg: dict, channel: "str | None" = None):
+def _flash_stream(codename: str, slot: str, cfg: dict, channel: "str | None" = None,
+                  target: "tuple[str, int, str | None] | None" = None):
     """Run a flash in a daemon thread and yield its log lines as they happen.
     channel selects a release (e.g. "2.1"); None flashes the nightly.
-    Empty string = heartbeat."""
+    target = (loc, port, serial) pins the exact watch. Empty string = heartbeat."""
     q: "queue.Queue[str | None]" = queue.Queue()
     flash_cfg = flash_config(cfg)
     cfg_copy = copy.deepcopy(cfg)
@@ -354,7 +355,8 @@ def _flash_stream(codename: str, slot: str, cfg: dict, channel: "str | None" = N
             q.put(f"INFO: flashing {codename} ({channel or 'nightly'})")
             q.put("INFO: waiting for ADB bus (another operation in progress)…")
             with _adb_lock:
-                _flash_one_watch(codename, cfg_copy, flash_cfg, channel=channel)
+                _flash_one_watch(codename, cfg_copy, flash_cfg,
+                                 channel=channel, target=target)
         except Exception as exc:
             try:
                 q.put(f"ERROR: {exc}")
@@ -400,7 +402,11 @@ def _flash_start(args):
     if not codename:
         yield "ERROR: port not mapped to any codename"
         return
-    yield from _flash_stream(codename, slot, cfg, channel)
+    # Pin the exact watch by the slot the user clicked — never re-derive the
+    # port from the codename, which flashes the wrong unit when two watches
+    # share a codename.
+    serial = find_serial_for_loc_port(cfg, loc, port)
+    yield from _flash_stream(codename, slot, cfg, channel, target=(loc, port, serial))
 
 
 def _onboard_stream(loc: str, port: int):
