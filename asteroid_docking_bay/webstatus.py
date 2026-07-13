@@ -5,14 +5,17 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 from .util import log
 from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
-from .config import _config_lock, find_codename_for_serial, load_config, save_config
+from .config import (_config_lock, charge_config, find_codename_for_serial,
+                     load_config, save_config)
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
-                  _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_list)
+                  _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
+                  uhubctl_list)
 from .fastboot import _fastboot_getvar_product, _fastboot_list
 from .events import _latest_drain_summaries
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
@@ -29,6 +32,34 @@ _soft_remap_unknown: set[str] = set()
 # completes — the kernel logs -110/-62 errors while the UI showed nothing.
 _enum_stuck_since: dict[str, float] = {}
 _ENUM_STUCK_GRACE_SEC = 60  # normal boots enumerate well within this
+
+# Fake-power self-heal (opt-in): a mapped port that reports power but never
+# enumerates a connection is the stale-node wedge. Track how long it's been
+# wedged and when we last auto-cycled it, so recovery fires once per episode.
+_fake_power_since: dict[str, float] = {}
+_fake_power_cycled: dict[str, float] = {}
+_FAKE_POWER_GRACE_SEC = 60
+_FAKE_POWER_BACKOFF_SEC = 300
+
+
+def _maybe_self_heal_fake_power(slot: str, loc: str, port: int,
+                                wedged: bool, busy: bool, cfg: dict) -> None:
+    """Power-cycle a mapped port stuck powered-but-not-connecting for >60s.
+    Opt-in (charge.fake_power_self_heal); once per episode with a backoff; never
+    during an active op; never blocks the status path (the cycle runs in a
+    daemon thread)."""
+    if not wedged or busy or not charge_config(cfg).fake_power_self_heal:
+        _fake_power_since.pop(slot, None)
+        return
+    now = time.time()
+    if now - _fake_power_since.setdefault(slot, now) < _FAKE_POWER_GRACE_SEC:
+        return
+    if now - _fake_power_cycled.get(slot, 0) < _FAKE_POWER_BACKOFF_SEC:
+        return
+    _fake_power_cycled[slot] = now
+    log.info("%s: fake-power wedge (powered, no connect >%ds) — auto-cycling",
+             slot, _FAKE_POWER_GRACE_SEC)
+    threading.Thread(target=uhubctl_cycle, args=(loc, port), daemon=True).start()
 
 
 def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
@@ -247,6 +278,13 @@ def _web_status_data(cfg: dict) -> list[dict]:
                     "done":        dt.get("done", True),
                     "stopped":     dt.get("stopped", False),
                 }
+            # Powered but nothing ever connects = the stale-node/fake-power
+            # wedge; self-heal it (opt-in) when the port is otherwise idle.
+            wedged = bool(power) and not connect and adb_state is None
+            busy   = bool(flashing or charging_active
+                          or (drain and drain["active"])
+                          or (workbench and workbench["active"]))
+            _maybe_self_heal_fake_power(slot, loc, port_num, wedged, busy, cfg)
             hub_ports.append({
                 "port": port_num, "codename": codename, "serial": serial,
                 "slot_loc": loc,

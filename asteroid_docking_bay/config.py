@@ -52,6 +52,10 @@ class ChargeConfig:
     # rather than sitting drained. Off by default: leaves the test result
     # watch as-is unless you opt in.
     drain_rest_recharge: bool = False
+    # Opt-in self-heal: a mapped port that reports power but never enumerates a
+    # connection for >60s is the stale-node/fake-power wedge — power-cycle it
+    # once (with backoff) to recover. Off by default: it actuates hardware.
+    fake_power_self_heal: bool = False
 
     @classmethod
     def from_dict(cls, d: "dict | None") -> "ChargeConfig":
