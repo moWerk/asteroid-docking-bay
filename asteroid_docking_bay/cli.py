@@ -272,6 +272,30 @@ def _charge_one(
     return True
 
 
+def _web_busy_slots(host: str = "127.0.0.1", port: int = 8080) -> set:
+    """Slots the running web service is actively operating on (charge / drain /
+    workbench / flash), read from its /api/status. Empty when the web service
+    isn't up — then the timer runs standalone as before. This is the decision-
+    level handoff: flock serialises bus access, but only this stops the timer
+    from waking a watch the web service is mid-drain on."""
+    import json as _json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://{host}:{port}/api/status", timeout=3) as resp:
+            data = _json.load(resp)
+    except Exception:
+        return set()
+    busy = set()
+    for hub in data.get("hubs", []):
+        for p in hub.get("ports", []):
+            if (p.get("charging_active") or p.get("flashing")
+                    or (p.get("drain") or {}).get("active")
+                    or (p.get("workbench") or {}).get("active")):
+                busy.add(f"{hub['location']}:{p['port']}")
+    return busy
+
+
 def cmd_check_charge(args, cfg: dict):
     """
     Periodic charge check — called by the systemd timer.
@@ -291,10 +315,22 @@ def cmd_check_charge(args, cfg: dict):
 
     log.info("Periodic charge check starting")
 
+    # Defer to a running web service: skip any watch it is actively operating
+    # on, so the timer never wakes/charges a watch mid-drain or mid-workbench.
+    busy_slots = _web_busy_slots(getattr(args, "host", "127.0.0.1"),
+                                 getattr(args, "port", 8080))
+    if busy_slots:
+        log.info("web service busy on %d slot(s) — deferring those",
+                 len(busy_slots))
+
     for hub in cfg.get("hubs", []):
         loc = hub["location"]
         for port_str, codename in hub.get("ports", {}).items():
             port = int(port_str)
+            if f"{loc}:{port}" in busy_slots:
+                log.info("%s: %s:%d busy in web service — deferring",
+                         codename, loc, port)
+                continue
             smart = hub.get("port_smart", {}).get(port_str)
             if smart is False:
                 log.info(
