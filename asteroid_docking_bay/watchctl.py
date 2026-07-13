@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -160,6 +161,24 @@ _BACKUP_PATHS = (
     ("settings", "/home/ceres/.config"),   # app settings + dconf db (ceres-owned)
     ("wifi",     "/var/lib/connman"),       # connman WiFi credentials (root-owned)
 )
+
+# Diagnostics bundle: read-only state useful for a bug report. Each entry is a
+# filename and a device-side (root) shell command; the command is quoted whole
+# so its pipes/globs run on the watch, not the host. Keep commands free of
+# double quotes (they'd break the wrapper). journalctl is tail-capped.
+DIAG_ROOT = Path.home() / ".local/share/asteroid-docking-bay/diagnostics"
+_DIAG_CMDS = {
+    "os-release.txt": "cat /etc/os-release /etc/asteroid-release 2>/dev/null",
+    "journal.txt":    "journalctl -b --no-pager 2>/dev/null | tail -n 5000",
+    "dmesg.txt":      "dmesg 2>/dev/null",
+    "battery.txt":    "cat /sys/class/power_supply/*/uevent 2>/dev/null",
+    # grep -H, not a $(...) loop: command substitution inside the double-quoted
+    # wrapper would be expanded by the host shell, not the watch.
+    "thermal.txt":    ("grep -H . /sys/class/thermal/thermal_zone*/type "
+                       "/sys/class/thermal/thermal_zone*/temp 2>/dev/null"),
+    "df.txt":         "df -h 2>/dev/null",
+    "connman.txt":    "connmanctl technologies 2>/dev/null; connmanctl services 2>/dev/null",
+}
 
 
 def _host_timezone() -> "str | None":
@@ -358,3 +377,30 @@ class Watch:
         log.info("%s: restore <- %s (%s)", self.serial, src,
                  "ok" if ok else "partial")
         return {"ok": ok, "path": str(src), "items": items}
+
+    def collect_diagnostics(self) -> dict:
+        """Gather read-only device state (logs, battery, thermal, storage,
+        connman, dconf) into a per-watch .tar.gz on the host for bug reports.
+        Read-only on the watch. Returns {ok, path, items}."""
+        codename = get_watch_codename(self.serial) or self.serial
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        workdir = DIAG_ROOT / f"{codename}-{ts}"
+        workdir.mkdir(parents=True, exist_ok=True)
+        items: list[dict] = []
+        for fname, cmd in _DIAG_CMDS.items():
+            # Quote the whole command so its pipes/globs run on the watch, not
+            # the host shell (_run uses shell=True).
+            rc, out, _ = adb_shell(self.serial, f'"{cmd}"', timeout=30)
+            (workdir / fname).write_text(out)
+            items.append({"name": fname, "ok": rc == 0 and bool(out.strip())})
+        rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
+        (workdir / "dconf.txt").write_text(out if rc == 0 else "")
+        items.append({"name": "dconf.txt", "ok": rc == 0})
+        archive = shutil.make_archive(str(workdir), "gztar",
+                                      root_dir=str(DIAG_ROOT),
+                                      base_dir=f"{codename}-{ts}")
+        shutil.rmtree(workdir, ignore_errors=True)
+        ok = all(i["ok"] for i in items)
+        log.info("%s: diagnostics -> %s (%s)", self.serial, archive,
+                 "ok" if ok else "partial")
+        return {"ok": ok, "path": archive, "items": items}

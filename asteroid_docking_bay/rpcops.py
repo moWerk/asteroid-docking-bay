@@ -128,6 +128,14 @@ def _watch_restore(args):
     return Watch(serial).restore()
 
 
+@DISPATCH.op("watch.diagnostics")
+def _watch_diagnostics(args):
+    serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    return Watch(serial).collect_diagnostics()
+
+
 @DISPATCH.op("watch.screenshot")
 def _watch_screenshot(args):
     """JPEG as base64 in the response — keeps the protocol single-channel

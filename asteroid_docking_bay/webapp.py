@@ -54,6 +54,7 @@ _JSON_ROUTES = [
     ("POST", "/api/drain/stop/<loc>/<port:int>",   "drain.stop",      {},             True),
     ("POST", "/api/backup/<loc>/<port:int>",       "watch.backup",    {},             False),
     ("POST", "/api/restore/<loc>/<port:int>",      "watch.restore",   {},             False),
+    ("POST", "/api/diagnostics/<loc>/<port:int>",  "watch.diagnostics", {},           False),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
 ]

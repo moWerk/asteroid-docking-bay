@@ -454,7 +454,8 @@ function menuWorkbench(ev,slot,serial,wb,online){
     '<div class="menu-sep"></div>'+
     mi('','&#x21BB; Set time from host',`doSetTime('${serial}')`,!online)+
     mi('','&#128247; Screenshot',`doScreenshot('${serial}')`,!online)+
-    mi('','&#128276; Test notification',`doNotify('${serial}')`,!online));
+    mi('','&#128276; Test notification',`doNotify('${serial}')`,!online)+
+    mi('','&#128203; Collect diagnostics',`doDiag('${slot}')`,!online));
 }
 function menuFlash(ev,slot){
   openMenu(ev,
@@ -480,6 +481,7 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
+function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'diagnostics saved on host':'diagnostics partial — see log')).catch(()=>toast('diagnostics failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
