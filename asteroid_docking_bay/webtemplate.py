@@ -54,9 +54,10 @@ _WEB_TEMPLATE = """\
     .cc-tgls{display:flex;flex-wrap:wrap;gap:8px;padding:2px 12px 10px}
     .cc-tgl{flex:1;padding:7px 4px;border-radius:6px;border:1px solid #30363d;background:transparent;cursor:pointer;font:inherit;color:#8b949e}
     .cc-tgl.on{border-color:#3fb950;color:#3fb950}
-    /* Screen/demo-mode toggle when active: amber + filled, not the benign
-       green — a forced-on screen is a drain, so it should read as an alert. */
-    .cc-tgl.scrnon{border-color:#d29922;color:#f0b429;background:#2a2113;font-weight:700}
+    /* Screen/demo-mode toggle when active: bright warning yellow (not the
+       benign green of wifi/bt) — a forced-on screen is a drain, so its ON
+       state should read as an alert. Off state is the plain greyed pill. */
+    .cc-tgl.scrnon{border-color:#f0b429;color:#f0b429;background:rgba(240,180,41,.15);font-weight:700}
     .cc-tgl.busy{opacity:.5;cursor:progress}
     .cc-tgl:hover{background:#0d1117}
     .cc-acts{padding:0 12px 12px}
@@ -399,7 +400,7 @@ function renderCC(d){
     `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">&#128243; Buzz</button>`+
-      `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">&#128161; Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
+      `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
       `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">&#128247; Shot</button></div>`+
     `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">&#x21BB; Sync time from host</button></div>`;
   ccPlace();
