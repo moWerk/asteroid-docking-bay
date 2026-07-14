@@ -37,6 +37,7 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
 from .watchctl import Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .fastboot import _switch_ssh_to_adb
+from .watchimg import watch_image_bytes
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
 from .webstatus import _web_status_data
 from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
@@ -127,6 +128,16 @@ def _watch_restore(args):
     if not serial:
         return {"ok": False, "error": "no watch mapped to this port"}
     return Watch(serial).restore()
+
+
+@DISPATCH.op("watch.image")
+def _watch_image(args):
+    """The watch's product photo (cached from asteroidos.org) as base64 PNG.
+    ok=False means no image for this codename."""
+    data = watch_image_bytes(args.get("codename"))
+    if not data:
+        return {"ok": False}
+    return {"ok": True, "png_b64": base64.b64encode(data).decode()}
 
 
 @DISPATCH.op("ssh.switch_adb")

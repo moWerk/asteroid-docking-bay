@@ -163,6 +163,17 @@ def serve(args, cfg: dict):
         resp.content_type = "image/jpeg"
         return base64.b64decode(d["jpeg_b64"])
 
+    @app.get("/api/watch-image/<codename>")
+    def api_watch_image(codename):
+        d = _call("watch.image", {"codename": codename})
+        if not (isinstance(d, dict) and d.get("ok")):
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return b""
+        resp.content_type = "image/png"
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+        return base64.b64decode(d["png_b64"])
+
     @app.post("/api/watch/<serial>/screen/<state>")
     def api_watch_screen(serial, state):
         resp.content_type = "application/json"
