@@ -38,6 +38,11 @@ class ChargeConfig:
     adb_wait_seconds: int = 15
     adb_wait_retries: int = 8
     onboard_wait_seconds: int = 30       # boot window per onboarding attempt
+    # A drain reading powers the port on (charging) only until ADB reconnects,
+    # so poll fast there — the watch is already booted and re-enumerates in a
+    # few seconds. Polling on the 15 s charge interval kept it charging ~12 s
+    # longer than needed every read, a systematic bump that overrates standby.
+    drain_read_poll_seconds: int = 3
     # Adaptive cadence: skip waking a watch during check-charge until its
     # observed standby drain projects it near low_threshold. Watches with
     # no drain history are always checked.

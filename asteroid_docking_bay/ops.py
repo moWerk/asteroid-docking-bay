@@ -382,9 +382,12 @@ def _adb_read_battery(loc: str, port: int, serial: str | None,
         return None
     try:
         uhubctl_set_power(loc, port, True)
-        if wait_serial_online(serial,
-                              charge_cfg.adb_wait_seconds,
-                              charge_cfg.adb_wait_retries,
+        # Fast poll to minimise the charge window (the port charges the whole
+        # time it's on): keep the same total timeout budget but detect the
+        # re-enumerated watch within a few seconds instead of ~15.
+        poll = max(1, charge_cfg.drain_read_poll_seconds)
+        retries = max(1, charge_cfg.adb_wait_seconds * charge_cfg.adb_wait_retries // poll)
+        if wait_serial_online(serial, poll, retries,
                               stop_event, recover_loc_port=(loc, port)):
             return get_battery_level(serial)
         if not stop_event.is_set():
