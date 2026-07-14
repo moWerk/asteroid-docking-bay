@@ -134,3 +134,26 @@ def test_charge_to_target_defaults_to_high_threshold(monkeypatch):
     monkeypatch.setattr(opsmod, "get_battery_level", lambda s: 90)
     got = opsmod.charge_to_target("skipjack", "SER", ChargeConfig())
     assert got == 90
+
+
+# ── drain reading: fast poll to minimise the charge bump ──────────────────────
+
+def test_drain_read_uses_fast_poll_same_budget(monkeypatch):
+    import threading
+    from asteroid_docking_bay.config import ChargeConfig
+    captured = {}
+    monkeypatch.setattr(opsmod, "uhubctl_set_power", lambda *a: None)
+    monkeypatch.setattr(opsmod, "get_battery_level", lambda s: 55)
+
+    def fake_wait(serial, wait_secs, retries, *a, **k):
+        captured["wait"], captured["retries"] = wait_secs, retries
+        return True
+    monkeypatch.setattr(opsmod, "wait_serial_online", fake_wait)
+
+    cc = ChargeConfig()   # adb_wait_seconds=15, adb_wait_retries=8 -> 120s budget
+    got = opsmod._adb_read_battery("1-2", 1, "SER", cc, threading.Event())
+    assert got == 55
+    # short poll (small charge window) but the same total wall-clock budget.
+    assert captured["wait"] <= 3
+    budget = cc.adb_wait_seconds * cc.adb_wait_retries
+    assert 0.8 * budget <= captured["wait"] * captured["retries"] <= budget
