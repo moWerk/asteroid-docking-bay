@@ -97,3 +97,53 @@ def test_served_js_parses():
     r = subprocess.run(["node", "--check", path], capture_output=True,
                        text=True)
     assert r.returncode == 0, f"served JS has a syntax error:\n{r.stderr}"
+
+
+# Representative status doc exercising render's branches: a mapped on-adb watch
+# with a wearable drain result + forced screen, a draining watch with a
+# swap-candidate result, an empty port. Enough to run mkthumb/mkstrip/mkbat and
+# the charge/drain paths.
+_SAMPLE = {
+    "version": "test", "thresholds": {"low": 40, "high": 80},
+    "drain_floor": 15, "wearable_min_hours": 24,
+    "hubs": [{"location": "1-2", "description": "Hub", "hidden": False, "ports": [
+        {"port": 1, "codename": "skipjack", "serial": "S1", "slot_loc": "1-2",
+         "power": True, "smart": True, "connected": True, "adb": "device",
+         "battery": 83, "os": "asteroidos", "screen_forced": True,
+         "drain_last": {"est_h": 300, "ts": 1783900000}, "drain": None,
+         "charging_active": False, "socket": 1},
+        {"port": 2, "codename": "bass", "serial": "S2", "slot_loc": "1-2",
+         "power": False, "smart": True, "connected": False, "adb": None,
+         "battery": None, "drain": {"active": True, "last_pct": 50, "drain_rate": 0.9},
+         "drain_last": {"est_h": 90, "ts": 1783900000}, "socket": 2},
+        {"port": 3, "codename": None, "slot_loc": "1-2", "power": False,
+         "empty": True, "adb": None, "socket": 3},
+    ]}],
+}
+
+_DOM_STUBS = r"""
+function el(){return{style:{},classList:{add(){},remove(){},contains:()=>false,toggle(){}},
+  innerHTML:'',textContent:'',value:'',querySelectorAll:()=>[],querySelector:()=>null,
+  appendChild(){},removeChild(){},remove(){},setAttribute(){},getAttribute:()=>null,offsetHeight:100,offsetWidth:100};}
+global.document={getElementById:()=>el(),createElement:()=>el(),addEventListener(){},body:el(),documentElement:el()};
+global.window={innerWidth:1200,innerHeight:800,addEventListener(){},open(){},location:{href:''}};
+global.fetch=()=>Promise.resolve({json:()=>Promise.resolve({}),text:()=>Promise.resolve('')});
+global.EventSource=function(){this.close=function(){}};
+global.localStorage={getItem:()=>null,setItem(){}};global.navigator={};
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_render_runs_without_throwing(tmp_path):
+    """render() must execute against a real-shaped status doc. The parse test
+    can't catch a runtime throw — e.g. a helper (mkstrip) referencing a
+    render-local const (wearH), which silently surfaced as 'connection error'
+    because the throw lands in the status fetch's .catch."""
+    import json
+    h = tmp_path / "harness.js"
+    h.write_text(_DOM_STUBS + JS +
+                 f"\ntry{{render({json.dumps(_SAMPLE)});console.log('RENDER_OK');}}"
+                 f"catch(e){{console.error('THREW '+e);process.exit(1);}}\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0 and "RENDER_OK" in r.stdout, (
+        f"render() threw when run headless:\n{r.stderr[:600]}")
