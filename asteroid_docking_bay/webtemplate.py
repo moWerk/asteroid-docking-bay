@@ -74,6 +74,23 @@ _WEB_TEMPLATE = """\
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    /* Watch product-photo thumbnail + click-to-enlarge overlay */
+    td.thumb{width:34px;padding:2px 2px 2px 0}
+    .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s}
+    .wthumb:hover{transform:scale(1.12)}
+    .wimg-bg{position:fixed;inset:0;z-index:119;background:rgba(0,0,0,.55);display:none}
+    .wimg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;display:none;
+          background:#161b22;border:1px solid #30363d;border-radius:10px;
+          box-shadow:0 12px 40px rgba(0,0,0,.6);padding:14px;max-width:94vw;max-height:92vh;overflow:auto}
+    .wimg-hd{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:10px;
+             color:#58a6ff;font-weight:700}
+    .wimg-hd .dim{font-weight:400;font-size:11px}
+    .wimg-x{cursor:pointer;color:#6e7681;font-size:18px;line-height:1}
+    .wimg-x:hover{color:#fff}
+    .wimg-body{display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center}
+    .wimg-body img.prod{max-width:230px;max-height:250px;object-fit:contain}
+    .wimg-shot{width:180px;height:180px;object-fit:contain;background:#000}
+    .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
        positions may shift slightly with string length — that's fine. */
@@ -149,16 +166,19 @@ _WEB_TEMPLATE = """\
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
       .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(2){font-weight:700;font-size:20px;justify-content:flex-start;
-                          padding:10px 0;border-bottom:1px solid #161b22}
-      .wr td:nth-child(3)::before{content:"Port"}
-      .wr td:nth-child(4)::before{content:"Power"}
-      .wr td:nth-child(5)::before{content:"Smart"}
-      .wr td:nth-child(6)::before{content:"Connection"}
-      .wr td:nth-child(7)::before{content:"Battery"}
+      .wr td:nth-child(2){display:block;float:left;margin:8px 12px 0 0;padding:0;border:none}
+      .wr td:nth-child(2) .wthumb{width:44px;height:44px}       /* thumb beside the title */
+      .wr td:nth-child(3){display:block;text-align:left;font-weight:700;font-size:20px;
+                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}
+      .wr td:nth-child(4){clear:both}                            /* fields start below the thumb */
+      .wr td:nth-child(4)::before{content:"Port"}
+      .wr td:nth-child(5)::before{content:"Power"}
+      .wr td:nth-child(6)::before{content:"Smart"}
+      .wr td:nth-child(7)::before{content:"Connection"}
+      .wr td:nth-child(8)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(8){display:block;text-align:left;padding-top:10px}  /* actions span the card */
+      .wr td:nth-child(9){display:block;text-align:left;padding-top:10px}  /* actions span the card */
       /* Bigger, tappable controls */
       .wr .btn,.wr .tgl,.wr .ico{font-size:15px;padding:9px 13px;margin:3px 6px 3px 0}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
@@ -178,7 +198,7 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
+      <th></th><th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
       <th>Connection</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -187,6 +207,8 @@ _WEB_TEMPLATE = """\
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
   <div id="menu" class="menu" onmouseleave="menuLeave()" onmouseenter="menuEnter()"></div>
+  <div id="wimg-bg" class="wimg-bg" onclick="closeWatchImg()"></div>
+  <div id="wimg" class="wimg"></div>
 <script>
 const srcs={};
 const chargeEnd={};
@@ -203,6 +225,11 @@ function mkbat(v,lo,hi){
   if(v==null)return '<span class="dim">&mdash;</span>';
   const cls=v<lo?'err':v<=hi?'on':'dim';
   return `<span class="${cls}">${v}%</span>`;
+}
+function mkthumb(p){
+  // Product photo thumbnail; removes itself if the watch has no image (404).
+  if(!p.codename)return '';
+  return `<img class="wthumb" loading="lazy" alt="" src="/api/watch-image/${encodeURIComponent(p.codename)}" onerror="this.remove()" onclick="openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event)">`;
 }
 function mkport(p){
   let s = p.socket!=null
@@ -243,12 +270,12 @@ function render(data){
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
   const wearH=(data&&data.wearable_min_hours)||24;
-  if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="9" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
-    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
+    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="9"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
       const tree=i===visPorts.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
@@ -269,6 +296,7 @@ function render(data){
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
+          `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
@@ -277,7 +305,7 @@ function render(data){
           `<td class="dim">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="9"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
@@ -337,6 +365,7 @@ function render(data){
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
+          `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.adb==='device'
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
             :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
@@ -351,7 +380,7 @@ function render(data){
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           `</td></tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="9"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }
     });
@@ -459,6 +488,25 @@ function openMenu(ev,html){
   m.style.left=Math.max(8,left)+'px'; m.style.top=top+'px';
 }
 function closeMenu(){document.getElementById('menu').style.display='none';}
+function openWatchImg(codename,serial,ev){
+  if(ev)ev.stopPropagation();
+  // A live screenshot beside the product photo when the watch is on adb; the
+  // box removes itself if the watch is offline or the capture fails.
+  const shot=serial
+    ?`<div><img class="wimg-shot" alt="" src="/api/watch/${encodeURIComponent(serial)}/screenshot.jpg?t=${Date.now()}" onerror="this.parentNode.remove()"><div class="wimg-cap">live screen</div></div>`
+    :'';
+  const o=document.getElementById('wimg');
+  o.innerHTML=
+    `<div class="wimg-hd"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
+    `<div class="wimg-body">`+
+      `<div><img class="prod" alt="" src="/api/watch-image/${encodeURIComponent(codename)}"><div class="wimg-cap">product</div></div>`+
+      shot+
+    `</div>`;
+  document.getElementById('wimg-bg').style.display='block';
+  o.style.display='block';
+}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';document.getElementById('wimg-bg').style.display='none';}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function menuLeave(){menuTimer=setTimeout(closeMenu,450);}
 function menuEnter(){if(menuTimer){clearTimeout(menuTimer);menuTimer=null;}}
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
