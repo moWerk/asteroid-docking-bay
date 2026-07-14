@@ -78,6 +78,9 @@ _WEB_TEMPLATE = """\
     td.thumb{width:34px;padding:2px 2px 2px 0}
     .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s}
     .wthumb:hover{transform:scale(1.12)}
+    .svgi{width:15px;height:15px;fill:currentColor;vertical-align:-2px}
+    .strip{margin-left:8px;display:inline-flex;gap:7px;align-items:center;vertical-align:middle}
+    .strip .svgw{cursor:default;line-height:0}
     .wimg-bg{position:fixed;inset:0;z-index:119;background:rgba(0,0,0,.55);display:none}
     .wimg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;display:none;
           background:#161b22;border:1px solid #30363d;border-radius:10px;
@@ -231,6 +234,15 @@ function mkthumb(p){
   if(!p.codename)return '';
   return `<img class="wthumb" loading="lazy" alt="" src="/api/watch-image/${encodeURIComponent(p.codename)}" onerror="this.remove()" onclick="openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event)">`;
 }
+const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
+function svgicon(n){return `<svg class="svgi" viewBox="0 0 512 512">${ICONS[n]}</svg>`;}
+function mkstrip(p){
+  const dl=p.drain_last; if(!dl||dl.est_h==null)return '';
+  const ok=dl.est_h>=wearH;
+  const when=new Date(dl.ts*1000).toLocaleDateString();
+  const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`);
+  return `<span class="strip"><span class="svgw ${ok?'on':'err'}" title="${tip}">${svgicon(ok?'watch':'batterydead')}</span></span>`;
+}
 function mkport(p){
   let s = p.socket!=null
     ? `<b style="color:#c9d1d9">socket ${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
@@ -349,14 +361,6 @@ function render(data){
           bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
         }else{
           bat=mkbat(p.battery,lo,hi);
-          if(p.drain_last&&p.drain_last.est_h!=null){
-            const ok=p.drain_last.est_h>=wearH;
-            const when=new Date(p.drain_last.ts*1000).toLocaleDateString();
-            const tip=ok
-              ?`holds ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — wearable`
-              :`holds only ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — below ${wearH}h wearable threshold: battery swap candidate / dev watch`;
-            bat+=` <span class="${ok?'dim':'err'}" style="font-size:10px" title="${tip}">~${fmtDur(p.drain_last.est_h)}</span>`;
-          }
         }
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
@@ -368,7 +372,7 @@ function render(data){
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.adb==='device'
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+mkstrip(p)+`</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
