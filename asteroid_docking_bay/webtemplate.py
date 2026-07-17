@@ -112,6 +112,7 @@ _WEB_TEMPLATE = """\
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
     .stale{color:#a1793a}.stale .agec{opacity:.7;font-size:10px}
     .shot-stale{opacity:.55;filter:grayscale(.3)}
+    .wimg-shot.shape-round{border-radius:50%}.wimg-shot.shape-rect{border-radius:4px}
     .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
@@ -253,7 +254,8 @@ function mkbatCell(p,lo,hi){
 function mkthumb(p){
   // Product photo thumbnail; removes itself if the watch has no image (404).
   if(!p.codename)return '';
-  return `<img class="wthumb" loading="lazy" alt="" src="/api/watch-image/${encodeURIComponent(p.codename)}" onerror="this.remove()" onclick="openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event)">`;
+  const g=p.geometry||{};
+  return `<img class="wthumb" loading="lazy" alt="" src="/api/watch-image/${encodeURIComponent(p.codename)}" onerror="this.remove()" onclick="openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event,${g.round?1:0},'${g.resolution?esc(g.resolution):''}')">`;
 }
 const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
 function svgicon(n){return `<svg class="svgi" viewBox="0 0 512 512">${ICONS[n]}</svg>`;}
@@ -463,7 +465,8 @@ function renderCC(d){
     kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
     kv('Load',d.load)+kv('Threads',d.threads)+
-    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage));
+    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
+    kv('Resolution',d.resolution));
   const bat=sec('Battery',
     kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
@@ -518,14 +521,16 @@ function openMenu(ev,html){
   m.style.left=Math.max(8,left)+'px'; m.style.top=top+'px';
 }
 function closeMenu(){document.getElementById('menu').style.display='none';}
-function openWatchImg(codename,serial,ev){
+function openWatchImg(codename,serial,ev,isRound,res){
   if(ev)ev.stopPropagation();
   // A screenshot beside the product photo. Loaded via fetch (not <img src>)
   // so we can read the stale header: a live capture shows "live screen"; when
   // the watch is off the bus the last pulled screen is shown dimmed with its
-  // age; a watch never captured removes the box.
+  // age; a watch never captured removes the box. The screen is masked to the
+  // watch's real shape (round watches get a circle) from live geometry.
+  const shotCls='wimg-shot '+(isRound?'shape-round':'shape-rect');
   const shot=serial
-    ?`<div id="shotbox"><img class="wimg-shot" id="shotimg" alt=""><div class="wimg-cap" id="shotcap">loading&hellip;</div></div>`
+    ?`<div id="shotbox"><img class="${shotCls}" id="shotimg" alt=""><div class="wimg-cap" id="shotcap">loading&hellip;</div></div>`
     :'';
   const o=document.getElementById('wimg');
   o.innerHTML=
@@ -536,9 +541,10 @@ function openWatchImg(codename,serial,ev){
     `</div>`;
   document.getElementById('wimg-bg').style.display='block';
   o.style.display='block';
-  if(serial)loadShot(serial);
+  if(serial)loadShot(serial,res);
 }
-function loadShot(serial){
+function loadShot(serial,res){
+  const suffix=res?' · '+res:'';
   fetch('/api/watch/'+encodeURIComponent(serial)+'/screenshot.jpg?t='+Date.now())
     .then(r=>{if(!r.ok)throw 0;const st=r.headers.get('X-Screenshot-Stale');
       const ts=+r.headers.get('X-Screenshot-Ts')||0;
@@ -547,8 +553,8 @@ function loadShot(serial){
       cap=document.getElementById('shotcap'); if(!img)return;
       img.src=URL.createObjectURL(b);
       if(st){img.classList.add('shot-stale');cap.className='wimg-cap warn';
-        cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'');}
-      else{cap.textContent='live screen';}})
+        cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'')+suffix;}
+      else{cap.textContent='live screen'+suffix;}})
     .catch(()=>{const box=document.getElementById('shotbox');if(box)box.remove();});
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';document.getElementById('wimg-bg').style.display='none';}
