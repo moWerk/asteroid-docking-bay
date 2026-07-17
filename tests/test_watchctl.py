@@ -39,3 +39,38 @@ def test_no_serial_still_matches_by_codename(monkeypatch):
     monkeypatch.setattr(wc, "get_watch_codename", lambda s: "skipjack")
     monkeypatch.setattr(wc, "save_config", lambda cfg: None)
     assert wait_for_adb("skipjack", {}, _CC()) == "SOMEUNIT"
+
+
+# ── geometry: shape from machine.conf, resolution from fb0/modes ─────────────
+
+def _geo_run(conf, modes):
+    def fake(cmd, check=True, timeout=None):
+        if "machine.conf" in cmd:
+            return (0, conf, "")
+        if "fb0/modes" in cmd:
+            return (0, modes, "")
+        return (1, "", "")
+    return fake
+
+
+def test_geometry_round_watch(monkeypatch):
+    monkeypatch.setattr(wc, "_run", _geo_run(
+        "[Display]\nROUND = true\n\n[Identity]\nMACHINE = skipjack\n",
+        "U:360x360p-2640\n"))
+    geo = wc.Watch("S1").geometry()
+    assert geo["round"] is True and geo["machine"] == "skipjack"
+    # Resolution must come from modes, not the double-buffered virtual_size.
+    assert geo["width"] == 360 and geo["height"] == 360
+    assert geo["resolution"] == "360x360"
+
+
+def test_geometry_square_watch(monkeypatch):
+    monkeypatch.setattr(wc, "_run", _geo_run(
+        "[Display]\nROUND = false\nFLAT_TIRE = 0\n", "U:320x320p-100\n"))
+    geo = wc.Watch("S1").geometry()
+    assert geo["round"] is False and geo["flat_tire"] == 0 and geo["width"] == 320
+
+
+def test_geometry_empty_when_unreachable(monkeypatch):
+    monkeypatch.setattr(wc, "_run", lambda *a, **k: (1, "", ""))
+    assert wc.Watch("S1").geometry() == {}

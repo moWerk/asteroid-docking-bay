@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import tempfile
@@ -233,6 +234,40 @@ class Watch:
         bi = info.get("blank_inhibit", "").lower()
         info["screen_forced"] = bool(bi) and bi != "disabled"
         return info
+
+    def geometry(self) -> dict:
+        """Screen shape + resolution, for masking screenshots and showing the
+        real resolution in the Control Center.
+
+        Shape comes from /etc/asteroid/machine.conf — the same source
+        qml-asteroid's DeviceSpecs reads (Display/ROUND, Display/FLAT_TIRE),
+        so a freshly-ported watch is handled without any per-codename table.
+        Resolution comes from /sys/class/graphics/fb0/modes ('U:360x360p-...');
+        fb0/virtual_size is double-buffered (height doubled), so it is NOT a
+        reliable panel size. Returns {} when nothing could be read."""
+        rc, conf, _ = _run(f"adb -s {self.serial} shell "
+                           f"cat /etc/asteroid/machine.conf", check=False, timeout=10)
+        geo: dict = {}
+        if rc == 0 and conf.strip():
+            vals: dict[str, str] = {}
+            for line in conf.splitlines():
+                line = line.strip()
+                if "=" in line and not line.startswith("["):
+                    k, v = line.split("=", 1)
+                    vals[k.strip().upper()] = v.strip()
+            geo["round"] = vals.get("ROUND", "").lower() == "true"
+            flat = vals.get("FLAT_TIRE", "0")
+            geo["flat_tire"] = int(flat) if flat.isdigit() else 0
+            if vals.get("MACHINE"):
+                geo["machine"] = vals["MACHINE"]
+        rc2, modes, _ = _run(f"adb -s {self.serial} shell "
+                             f"cat /sys/class/graphics/fb0/modes", check=False, timeout=8)
+        if rc2 == 0:
+            m = re.search(r"(\d+)x(\d+)", modes)
+            if m:
+                geo["width"], geo["height"] = int(m.group(1)), int(m.group(2))
+                geo["resolution"] = f"{m.group(1)}x{m.group(2)}"
+        return geo
 
     def toggle(self, tech: str, on: bool) -> bool:
         """Enable/disable a connman technology (wifi|bluetooth)."""

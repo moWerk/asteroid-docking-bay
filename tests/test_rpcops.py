@@ -134,6 +134,15 @@ def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
 
 
+def test_watch_cc_attaches_cached_resolution(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    ls.record("S1", geometry={"round": True, "resolution": "360x360"})
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["resolution"] == "360x360" and d["geometry"]["round"] is True
+
+
 def _fake_watch_cls(shot_return, last_path):
     class _W:
         def __init__(self, serial):

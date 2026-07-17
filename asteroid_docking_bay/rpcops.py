@@ -79,12 +79,21 @@ def _watch_cc(args):
     data = Watch(serial).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
+        # Screen geometry/resolution is cached separately (probed by the status
+        # path); fold it in so the CC shows the real resolution + can mask the
+        # screen correctly.
+        geo = (last_seen.get(serial) or {}).get("geometry")
+        if geo:
+            data = {**data, "geometry": geo, "resolution": geo.get("resolution")}
         return data
     cached = last_seen.get(serial)
     if cached and cached.get("cc"):
         blob = dict(cached["cc"])
         blob["stale"] = True
         blob["last_live_ts"] = cached.get("cc_ts")
+        if cached.get("geometry"):
+            blob["geometry"] = cached["geometry"]
+            blob["resolution"] = cached["geometry"].get("resolution")
         return blob
     return {}
 

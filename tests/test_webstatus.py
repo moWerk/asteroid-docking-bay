@@ -82,3 +82,37 @@ def test_battery_view_falls_back_when_offline(monkeypatch, tmp_path):
 def test_battery_view_blank_without_a_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
     assert ws._battery_view(None, "S1", None, False, None) == (None, None)
+
+
+# ── geometry: probe once when live, then serve from cache ────────────────────
+
+def test_geometry_view_probes_once_then_caches(monkeypatch, tmp_path):
+    monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
+    calls = []
+
+    class _W:
+        def __init__(self, serial):
+            pass
+        def geometry(self):
+            calls.append(1)
+            return {"round": True, "resolution": "360x360"}
+
+    monkeypatch.setattr(ws, "Watch", _W)
+    g1 = ws._geometry_view("device", "S1")
+    g2 = ws._geometry_view("device", "S1")     # cached → must not re-probe
+    assert g1["round"] is True and g2 == g1 and len(calls) == 1
+
+
+def test_geometry_view_offline_without_cache_is_none(monkeypatch, tmp_path):
+    monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
+    assert ws._geometry_view(None, "S1") is None
+
+
+def test_geometry_view_offline_reads_cache_without_probing(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(ws, "last_seen", ls)
+    ls.record("S1", geometry={"round": True, "resolution": "400x400"})
+    # If it tried to probe an offline watch this would blow up.
+    monkeypatch.setattr(ws, "Watch",
+                        lambda s: (_ for _ in ()).throw(AssertionError("probed!")))
+    assert ws._geometry_view(None, "S1")["resolution"] == "400x400"

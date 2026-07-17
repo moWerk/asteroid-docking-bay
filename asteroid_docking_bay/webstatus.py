@@ -21,7 +21,7 @@ from .events import _latest_drain_summaries
 from .lastseen import last_seen
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
-from .watchctl import _watch_os, _watch_os_for
+from .watchctl import Watch, _watch_os, _watch_os_for
 
 
 # Serials that could not be identified via ADB — don't re-probe every refresh.
@@ -171,6 +171,26 @@ def _battery_view(adb_state: "str | None", serial: "str | None",
     return cached.get("battery"), cached.get("last_live_ts")
 
 
+def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | None":
+    """The watch's screen geometry, probed once and cached forever.
+
+    Geometry is static per watch, so probe it lazily — only when the watch is
+    live and we've never stored it — and read it back from the cache on every
+    later refresh (including while offline, for the screenshot mask). A watch
+    never seen live has None until it appears."""
+    if not serial:
+        return None
+    geo = (last_seen.get(serial) or {}).get("geometry")
+    if geo:
+        return geo
+    if adb_state == "device":
+        geo = Watch(serial).geometry()
+        if geo:
+            last_seen.record(serial, geometry=geo)
+            return geo
+    return None
+
+
 def _web_status_data(cfg: dict) -> list[dict]:
     """
     Return hub-structured status including unmapped (empty) ports.
@@ -258,6 +278,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # rather than a blank cell.
             battery_cached, last_live_ts = _battery_view(
                 adb_state, serial, battery, screen_forced, watch_os)
+            geometry = _geometry_view(adb_state, serial)
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -317,6 +338,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
+                "geometry": geometry,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
                 "flashing": flashing, "empty": False,
