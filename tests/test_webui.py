@@ -148,8 +148,12 @@ def test_render_runs_without_throwing(tmp_path):
     because the throw lands in the status fetch's .catch."""
     import json
     h = tmp_path / "harness.js"
+    # Render twice: the first pass is the initial load (firstStatus true), the
+    # second exercises the post-load path — the newly-plugged-row flash compares
+    # against the serials seen on the first pass.
     h.write_text(_DOM_STUBS + JS +
-                 f"\ntry{{render({json.dumps(_SAMPLE)});console.log('RENDER_OK');}}"
+                 f"\ntry{{const S={json.dumps(_SAMPLE)};render(S);render(S);"
+                 f"console.log('RENDER_OK');}}"
                  f"catch(e){{console.error('THREW '+e);process.exit(1);}}\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0 and "RENDER_OK" in r.stdout, (

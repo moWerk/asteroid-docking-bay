@@ -123,6 +123,8 @@ _WEB_TEMPLATE = """\
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
     .stale{color:#a1793a}.stale .agec{opacity:.7;font-size:10px}
     .shot-stale{opacity:.55;filter:grayscale(.3)}
+    tr.justplugged>td{animation:plug 2s ease-out}
+    @keyframes plug{0%{background:rgba(31,111,235,.4)}100%{background:transparent}}
     .wimg-shot.shape-round{border-radius:50%}.wimg-shot.shape-rect{border-radius:4px}
     .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
@@ -233,6 +235,10 @@ const chargeEnd={};
 let countdownRunning=false;
 let showHidden=false;
 const refreshing=new Set();
+// Serials seen enumerated on the last render, to flash a row when a watch is
+// freshly plugged in. firstStatus suppresses the flash on the initial load.
+let seenSerials=new Set();
+let firstStatus=true;
 function mkhide(slot,excluded){
   return `<a href="#" class="hidebtn" onclick="doHidePort('${slot}');return false" title="${excluded?'un-hide this row':'hide this row'}">${excluded?'&#x2295;':'&#x2296;'}</a>`;
 }
@@ -353,6 +359,7 @@ function render(data){
   const wearH=(data&&data.wearable_min_hours)||24;
   if(!hubs.length){tb.innerHTML='<tr><td colspan="9" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
+  const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
@@ -390,6 +397,10 @@ function render(data){
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
+        // A watch that just enumerated (absent last render) flashes its row.
+        const enumd=p.serial&&p.adb==='device';
+        if(enumd)present.add(p.serial);
+        const isNew=enumd&&!firstStatus&&!seenSerials.has(p.serial);
         // Only a FUTURE end time is a countdown: accepting a stale/past one
         // creates a tick->expire->refresh->re-add loop that hammers the API.
         if(p.charge_end_ts&&p.charge_end_ts*1000>Date.now()&&!chargeEnd[slot])chargeEnd[slot]=p.charge_end_ts*1000;
@@ -436,7 +447,7 @@ function render(data){
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
         rows.push(
-          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}" id="wr-${slot}">` +
+          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.adb==='device'
@@ -459,6 +470,7 @@ function render(data){
     });
   });
   tb.innerHTML=rows.join('');
+  seenSerials=present; firstStatus=false;
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
