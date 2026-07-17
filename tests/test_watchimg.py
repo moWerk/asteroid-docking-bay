@@ -44,6 +44,23 @@ def test_html_404_is_a_negative_cache(monkeypatch, tmp_path):
     assert wi.watch_image_bytes("nope") is None and not hit
 
 
+def test_prefers_local_trans_cutout_over_plain(monkeypatch, tmp_path):
+    monkeypatch.setattr(wi, "_CACHE_DIR", tmp_path)
+    (tmp_path / "skipjack.png").write_bytes(PNG)
+    (tmp_path / "skipjack-trans.png").write_bytes(PNG + b"TRANS")
+    def boom(*a, **k):
+        raise AssertionError("must not fetch when a local image exists")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    assert wi.watch_image_bytes("skipjack") == PNG + b"TRANS"   # -trans wins
+
+
+def test_empty_trans_falls_through_to_plain(monkeypatch, tmp_path):
+    monkeypatch.setattr(wi, "_CACHE_DIR", tmp_path)
+    (tmp_path / "skipjack-trans.png").write_bytes(b"")          # zero-byte -trans ignored
+    (tmp_path / "skipjack.png").write_bytes(PNG)
+    assert wi.watch_image_bytes("skipjack") == PNG
+
+
 def test_bad_codename_never_reaches_the_network(monkeypatch, tmp_path):
     monkeypatch.setattr(wi, "_CACHE_DIR", tmp_path)
 

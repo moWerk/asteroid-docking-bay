@@ -38,6 +38,13 @@ def watch_image_bytes(codename: "str | None") -> "bytes | None":
         return None
     cn = codename.lower()
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # Prefer a locally-placed transparent-screen cutout, "<cn>-trans.png": these
+    # are the reworked HD masters whose alpha screen drives the live-screen
+    # composite. They live only on disk (not on the website), so this is a pure
+    # local-override layer; watches without one fall through to the plain image.
+    trans = _CACHE_DIR / f"{cn}-trans.png"
+    if trans.exists() and trans.stat().st_size:
+        return trans.read_bytes()
     local = _CACHE_DIR / f"{cn}.png"
     if local.exists():
         data = local.read_bytes()
