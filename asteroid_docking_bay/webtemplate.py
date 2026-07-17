@@ -110,6 +110,7 @@ _WEB_TEMPLATE = """\
     .device{display:inline-block}
     .dev-frame{position:relative;display:inline-block;line-height:0}
     .dev-prod{display:block;height:230px;width:auto;max-width:44vw;position:relative;z-index:2}
+    .device.cut .dev-prod{max-width:min(88vw,720px);max-height:82vh;height:auto}
     .dev-shot{position:absolute;z-index:1;object-fit:cover}
     .dev-fill{position:absolute;z-index:0;background:#000}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
@@ -285,15 +286,16 @@ function mkthumb(p){
   const oc=`openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event,${g.round?1:0},'${g.resolution?esc(g.resolution):''}')`;
   // Wrapped so a cut-out product image gets a black fill behind its
   // transparent screen — otherwise the row would shine through the hole.
-  return `<span class="thumbwrap"><img class="wthumb" loading="lazy" alt="" onload="onThumbLoad(this,'${esc(p.codename)}')" onerror="this.closest('.thumbwrap').remove()" src="/api/watch-image/${encodeURIComponent(p.codename)}" onclick="${oc}"></span>`;
+  return `<span class="thumbwrap"><img class="wthumb" loading="lazy" alt="" onload="onThumbLoad(this,'${esc(p.codename)}',${g.round?1:0})" onerror="this.closest('.thumbwrap').remove()" src="/api/watch-image/${encodeURIComponent(p.codename)}" onclick="${oc}"></span>`;
 }
-function onThumbLoad(img,codename){
-  // Fill the transparent screen with black in the row thumbnail (once cut).
+function onThumbLoad(img,codename,round){
+  // Fill the transparent screen with black in the row thumbnail (once cut),
+  // clipped to a circle for round screens so no black corners leak.
   const box=holeFor(codename,img), wrap=img.closest('.thumbwrap');
   if(!box||!wrap)return;
   const f=document.createElement('div'); f.className='thumbfill';
   const pct=v=>(v*100).toFixed(2)+'%';
-  f.style.cssText=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`;
+  f.style.cssText=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`+(round?';border-radius:50%':'');
   wrap.insertBefore(f,img);
 }
 const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
@@ -675,8 +677,15 @@ function onProdLoad(codename,serial,isRound,res){
     // an off / not-yet-loaded screen reads as an off panel. Positions are % of
     // the frame, which is exactly the image (caption lives outside it).
     dev.classList.add('cut');
+    // Size the product so its screen hole displays the screenshot at native
+    // resolution; the watch scales around it (bounded by the viewport in CSS).
+    const nw=parseInt((res||'').split('x')[0],10);
+    if(nw&&box.w>0){prod.style.width=Math.round(nw/box.w)+'px';prod.style.height='auto';}
     const pct=v=>(v*100).toFixed(3)+'%';
-    const css=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`;
+    // Round screens: clip the fill+screenshot to a circle so the square hole
+    // bounding box can't shine black corners past the bezel.
+    const clip=isRound?';border-radius:50%':'';
+    const css=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}${clip}`;
     const fill=document.createElement('div'); fill.className='dev-fill'; fill.style.cssText=css;
     frame.insertBefore(fill,prod);
     if(serial){
