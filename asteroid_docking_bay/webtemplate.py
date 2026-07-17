@@ -110,7 +110,7 @@ _WEB_TEMPLATE = """\
     .device{display:inline-block}
     .dev-frame{position:relative;display:inline-block;line-height:0}
     .dev-prod{display:block;height:230px;width:auto;max-width:44vw;position:relative;z-index:2}
-    .device.cut .dev-prod{max-width:min(88vw,720px);max-height:82vh;height:auto}
+    .device.cut .dev-prod{max-width:none;height:auto}   /* JS (sizeComposite) sets the width, aspect-safe */
     .dev-shot{position:absolute;z-index:1;object-fit:cover}
     .dev-fill{position:absolute;z-index:0;background:#000}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
@@ -504,6 +504,21 @@ function render(data){
 // ── Control Center overlay ──────────────────────────────────────────────────
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
 let wimgAX=0, wimgAY=0;
+let _compo=null;   // {boxW, target, aspect} for an open composite, else null
+function sizeComposite(){
+  // Set the product width so the screen hole shows the screenshot at `target`
+  // px (2/3 of native — the screenshot is heavily JPEG-compressed, so full
+  // size shows artefacts). Only width is set (height:auto), so the aspect
+  // ratio is always kept; the width is bounded by BOTH viewport dimensions so
+  // a small/squished window can't stretch or overflow it. Re-run on resize.
+  const prod=document.getElementById('prodimg');
+  if(!prod||!_compo)return;
+  let w=_compo.target/_compo.boxW;
+  w=Math.min(w, window.innerWidth*0.9, window.innerHeight*0.82*_compo.aspect);
+  prod.style.width=Math.round(w)+'px'; prod.style.height='auto';
+  wimgPlace();
+}
+window.addEventListener('resize',sizeComposite);
 function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
 function ccPlace(){
   // Anchor to the click; flip ABOVE the anchor if the panel would run off the
@@ -677,10 +692,9 @@ function onProdLoad(codename,serial,isRound,res){
     // an off / not-yet-loaded screen reads as an off panel. Positions are % of
     // the frame, which is exactly the image (caption lives outside it).
     dev.classList.add('cut');
-    // Size the product so its screen hole displays the screenshot at native
-    // resolution; the watch scales around it (bounded by the viewport in CSS).
+    // Remember what sizeComposite() needs so it can re-fit on window resize.
     const nw=parseInt((res||'').split('x')[0],10);
-    if(nw&&box.w>0){prod.style.width=Math.round(nw/box.w)+'px';prod.style.height='auto';}
+    _compo=(nw&&box.w>0)?{boxW:box.w,target:nw*2/3,aspect:prod.naturalWidth/prod.naturalHeight}:null;
     const pct=v=>(v*100).toFixed(3)+'%';
     // Round screens: clip the fill+screenshot to a circle so the square hole
     // bounding box can't shine black corners past the bezel.
@@ -696,6 +710,7 @@ function onProdLoad(codename,serial,isRound,res){
     cap.textContent=serial?'loading…':('screen off'+(res?' · '+res:''));
     dev.appendChild(cap);
     if(serial)loadShot(serial,res);
+    sizeComposite();
   }else{
     // No cutout yet → product beside a shape-masked screenshot (prior look).
     const cap=document.createElement('div'); cap.className='wimg-cap'; cap.textContent='product';
@@ -740,7 +755,7 @@ function loadShot(serial,res){
       const c=document.getElementById('shotcap');if(c){c.className='wimg-cap';c.textContent='screen off';}
     });
 }
-function closeWatchImg(){document.getElementById('wimg').style.display='none';}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
