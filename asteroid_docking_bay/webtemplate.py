@@ -110,6 +110,8 @@ _WEB_TEMPLATE = """\
     tr.empty td{color:#6e7681}
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
+    .stale{color:#a1793a}.stale .agec{opacity:.7;font-size:10px}
+    .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
@@ -228,6 +230,24 @@ function mkbat(v,lo,hi){
   if(v==null)return '<span class="dim">&mdash;</span>';
   const cls=v<lo?'err':v<=hi?'on':'dim';
   return `<span class="${cls}">${v}%</span>`;
+}
+function fmtAge(ts){
+  // Compact "how long ago" for a last-live timestamp (seconds since epoch).
+  if(!ts)return '';
+  const s=Math.max(0,Math.floor(Date.now()/1000-ts));
+  if(s<3600)return Math.floor(s/60)+'m';
+  if(s<86400)return Math.floor(s/3600)+'h';
+  return Math.floor(s/86400)+'d';
+}
+function mkbatCell(p,lo,hi){
+  // Prefer the live reading; when the watch is off the bus fall back to the
+  // last-seen value shown stale (amber) with its age, not a blank cell.
+  if(p.battery!=null)return mkbat(p.battery,lo,hi);
+  if(p.battery_cached!=null){
+    const age=fmtAge(p.last_live_ts);
+    return `<span class="stale" title="watch off the bus — last reading${age?' '+age+' ago':''}">${p.battery_cached}%<span class="agec">${age?' '+age:''}</span></span>`;
+  }
+  return '<span class="dim">&mdash;</span>';
 }
 function mkthumb(p){
   // Product photo thumbnail; removes itself if the watch has no image (404).
@@ -360,7 +380,7 @@ function render(data){
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
           bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
         }else{
-          bat=mkbat(p.battery,lo,hi);
+          bat=mkbatCell(p,lo,hi);
         }
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
@@ -409,6 +429,7 @@ function openCC(serial,name,ev){
   ev.stopPropagation();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
+  cc.classList.remove('stale-cc');
   cc.innerHTML=`<div class="cc-hd">${name} <span class="dim">loading&hellip;</span></div>`;
   cc.style.display='block'; ccPlace();
   ccFetch();
@@ -421,6 +442,8 @@ function ccFetch(){
 }
 function renderCC(d){
   const cc=document.getElementById('cc');
+  const stale=!!(d&&d.stale);
+  cc.classList.toggle('stale-cc',stale);
   if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;ccPlace();return;}
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
@@ -453,7 +476,9 @@ function renderCC(d){
     kv('Timezone',d.tz)+kv('Clock',d.datetime)+kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ccToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
   cc.innerHTML=
-    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`+
+    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
+      (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+

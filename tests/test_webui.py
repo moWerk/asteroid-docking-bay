@@ -118,6 +118,10 @@ _SAMPLE = {
          "drain_last": {"est_h": 90, "ts": 1783900000}, "socket": 2},
         {"port": 3, "codename": None, "slot_loc": "1-2", "power": False,
          "empty": True, "adb": None, "socket": 3},
+        {"port": 4, "codename": "casio", "serial": "S4", "slot_loc": "1-2",
+         "power": False, "smart": True, "connected": False, "adb": None,
+         "battery": None, "battery_cached": 62, "last_live_ts": 1783900000,
+         "drain": None, "drain_last": None, "socket": 4},
     ]}],
 }
 
