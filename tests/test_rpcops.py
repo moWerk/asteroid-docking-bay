@@ -12,6 +12,7 @@ import pytest
 
 from asteroid_docking_bay import rpcops
 from asteroid_docking_bay.rpc import RpcError
+from asteroid_docking_bay.lastseen import LastSeen
 
 WEBAPP_SRC = (Path(__file__).resolve().parent.parent
               / "asteroid_docking_bay" / "webapp.py").read_text()
@@ -98,6 +99,39 @@ def test_hide_on_unknown_hub(monkeypatch):
     monkeypatch.setattr(rpcops, "load_config", lambda: {"hubs": []})
     d = rpcops.DISPATCH._data["port.hide"]({"loc": "9-9", "port": 1})
     assert d == {"ok": False, "error": "hub not found"}
+
+
+class _FakeWatch:
+    def __init__(self, serial, data):
+        self._data = data
+    def cc_data(self):
+        return self._data
+
+
+def test_watch_cc_live_returns_and_caches(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "Watch",
+                        lambda s: _FakeWatch(s, {"kernel": "x", "serial": s}))
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["kernel"] == "x" and "stale" not in d
+    assert ls.get("S1")["cc"]["kernel"] == "x"
+
+
+def test_watch_cc_offline_serves_stale(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})       # seed while live
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))  # offline
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["kernel"] == "x" and d["stale"] is True and d["last_live_ts"] > 0
+
+
+def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "last_seen", LastSeen(tmp_path / "ls.json"))
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))
+    assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
 
 
 def test_flash_start_unmapped_port_streams_error(monkeypatch):

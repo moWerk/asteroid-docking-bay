@@ -40,6 +40,7 @@ from .fastboot import _switch_ssh_to_adb
 from .watchimg import watch_image_bytes
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
 from .webstatus import _web_status_data
+from .lastseen import last_seen
 from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
 from .rpc import Dispatcher
 from . import __version__
@@ -68,7 +69,24 @@ def _status_get(args):
 
 @DISPATCH.op("watch.cc")
 def _watch_cc(args):
-    return Watch(args["serial"]).cc_data()
+    """Live Control Center stats, or the last-seen ones marked stale.
+
+    A reachable watch answers fresh and its stats are cached with the moment
+    they were captured. An unreachable one gets served the cached blob (if we
+    ever saw it) stamped stale + last_live_ts, so the CC shows dimmed old
+    values with an age rather than a bare 'no data'."""
+    serial = args["serial"]
+    data = Watch(serial).cc_data()
+    if data:
+        last_seen.record(serial, cc=data, cc_ts=time.time())
+        return data
+    cached = last_seen.get(serial)
+    if cached and cached.get("cc"):
+        blob = dict(cached["cc"])
+        blob["stale"] = True
+        blob["last_live_ts"] = cached.get("cc_ts")
+        return blob
+    return {}
 
 
 @DISPATCH.op("watch.toggle")
