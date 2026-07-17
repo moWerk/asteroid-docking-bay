@@ -141,6 +141,36 @@ global.localStorage={getItem:()=>null,setItem(){}};global.navigator={};
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_hole_detection_finds_interior_transparency(tmp_path):
+    """holeBoxFromAlpha must return the enclosed screen-cutout box and ignore
+    the render's transparent background (border-connected transparency)."""
+    import json
+    harness = r"""
+      function grid(w,h,f){const a=new Uint8Array(w*h);
+        for(let y=0;y<h;y++)for(let x=0;x<w;x++)a[y*w+x]=f(x,y);return a;}
+      // opaque body, a 2x2 hole at (2,2) in a 6x6 image
+      const b1=holeBoxFromAlpha(grid(6,6,(x,y)=>(x>=2&&x<=3&&y>=2&&y<=3)?0:255),6,6);
+      // transparent BACKGROUND ring + opaque body + a 1px interior hole at (3,3)
+      const b2=holeBoxFromAlpha(grid(7,7,(x,y)=>
+        (x===0||y===0||x===6||y===6)?0:((x===3&&y===3)?0:255)),7,7);
+      // no interior transparency at all -> null
+      const b3=holeBoxFromAlpha(grid(5,5,(x,y)=>(x===0||y===0||x===4||y===4)?0:255),5,5);
+      console.log(JSON.stringify({b1,b2,b3}));
+      process.exit(0);
+    """
+    h = tmp_path / "hole.js"
+    h.write_text(_DOM_STUBS + JS + "\n" + harness)
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:600]
+    out = json.loads(r.stdout)
+    b1 = out["b1"]
+    assert abs(b1["x"] - 2/6) < 1e-6 and abs(b1["w"] - 2/6) < 1e-6
+    b2 = out["b2"]                                    # background ring excluded
+    assert abs(b2["x"] - 3/7) < 1e-6 and abs(b2["w"] - 1/7) < 1e-6
+    assert out["b3"] is None
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_render_runs_without_throwing(tmp_path):
     """render() must execute against a real-shaped status doc. The parse test
     can't catch a runtime throw — e.g. a helper (mkstrip) referencing a
