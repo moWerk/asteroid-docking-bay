@@ -533,7 +533,8 @@ function renderCC(d){
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
     kv('Load',d.load)+kv('Threads',d.threads)+
     kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
-    kv('Resolution',d.resolution));
+    kv('Resolution',d.resolution)+
+    kv('Machine (image)',d.geometry&&d.geometry.machine));
   const bat=sec('Battery',
     kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+

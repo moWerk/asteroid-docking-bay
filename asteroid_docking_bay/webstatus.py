@@ -19,6 +19,7 @@ from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
 from .fastboot import _fastboot_getvar_product, _fastboot_list
 from .events import _latest_drain_summaries
 from .lastseen import last_seen
+from .variants import exact_codename
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
 from .watchctl import Watch, _watch_os, _watch_os_for
@@ -279,6 +280,15 @@ def _web_status_data(cfg: dict) -> list[dict]:
             battery_cached, last_live_ts = _battery_view(
                 adb_state, serial, battery, screen_forced, watch_os)
             geometry = _geometry_view(adb_state, serial)
+            # Show the exact hardware codename (tunny, belugaxl) rather than the
+            # shared MACHINE/image name — resolved from the watch's resolution
+            # where a family shares one image. Cosmetic: config + ops still key
+            # on the machine name (the local `codename`); only the display name
+            # changes. Falls back to the machine name when it can't refine.
+            machine = (geometry.get("machine") if geometry else None) or codename
+            observed = ({"resolution": geometry.get("resolution")}
+                        if geometry else {})
+            display_codename = exact_codename(machine, observed)
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -333,7 +343,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
                           or (workbench and workbench["active"]))
             _maybe_self_heal_fake_power(slot, loc, port_num, wedged, busy, cfg)
             hub_ports.append({
-                "port": port_num, "codename": codename, "serial": serial,
+                "port": port_num, "codename": display_codename,
+                "machine": machine, "serial": serial,
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
