@@ -276,12 +276,18 @@ class Watch:
             log.warning("notify %s failed: %s", self.serial, err.strip())
         return rc == 0
 
+    def last_screenshot_path(self) -> Path:
+        """Stable local path the last pulled screenshot sits at. It persists
+        between captures, so it doubles as the stale fallback when a fresh
+        grab fails (watch offline). May not exist yet."""
+        return Path(tempfile.gettempdir()) / f"dockingbay_ss_{self.serial}.jpg"
+
     def screenshot(self) -> "Path | None":
         """Capture the screen and pull it locally. Returns the Path or None.
         screenshottool exits 10 even on success, so judge by the pulled file."""
         remote = "/home/ceres/.dockingbay_ss.jpg"
         self.user_cmd(f"screenshottool {remote} 0", timeout=15)
-        local = Path(tempfile.gettempdir()) / f"dockingbay_ss_{self.serial}.jpg"
+        local = self.last_screenshot_path()
         rc, _, _ = _run(f"adb -s {self.serial} pull {remote} "
                         f"{shlex.quote(str(local))}", check=False, timeout=15)
         _run(f"adb -s {self.serial} shell rm -f {remote}", check=False, timeout=8)

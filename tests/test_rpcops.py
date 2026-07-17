@@ -134,6 +134,39 @@ def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
 
 
+def _fake_watch_cls(shot_return, last_path):
+    class _W:
+        def __init__(self, serial):
+            pass
+        def screenshot(self):
+            return shot_return
+        def last_screenshot_path(self):
+            return last_path
+    return _W
+
+
+def test_watch_screenshot_stale_fallback(monkeypatch, tmp_path):
+    shot = tmp_path / "s.jpg"; shot.write_bytes(b"\xff\xd8jpg")
+    # Fresh capture fails (offline) but a last pull exists → serve it stale.
+    monkeypatch.setattr(rpcops, "Watch", _fake_watch_cls(None, shot))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] and d["stale"] is True and d["captured_ts"] > 0
+
+
+def test_watch_screenshot_fresh_is_not_stale(monkeypatch, tmp_path):
+    shot = tmp_path / "s.jpg"; shot.write_bytes(b"\xff\xd8jpg")
+    monkeypatch.setattr(rpcops, "Watch", _fake_watch_cls(shot, shot))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] and d["stale"] is False
+
+
+def test_watch_screenshot_fails_when_never_captured(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "Watch",
+                        _fake_watch_cls(None, tmp_path / "nope.jpg"))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] is False
+
+
 def test_flash_start_unmapped_port_streams_error(monkeypatch):
     monkeypatch.setattr(rpcops, "load_config",
                         lambda: {"hubs": [], "serials": {}})

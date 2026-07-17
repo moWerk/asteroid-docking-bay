@@ -161,6 +161,10 @@ def serve(args, cfg: dict):
             resp.content_type = "text/plain"
             return d.get("error", "screenshot failed")
         resp.content_type = "image/jpeg"
+        if d.get("stale"):
+            resp.set_header("X-Screenshot-Stale", "1")
+        if d.get("captured_ts"):
+            resp.set_header("X-Screenshot-Ts", str(int(d["captured_ts"])))
         return base64.b64decode(d["jpeg_b64"])
 
     @app.get("/api/watch-image/<codename>")

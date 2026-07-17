@@ -176,11 +176,22 @@ def _watch_diagnostics(args):
 @DISPATCH.op("watch.screenshot")
 def _watch_screenshot(args):
     """JPEG as base64 in the response — keeps the protocol single-channel
-    (a screenshot is ~60 KB, the overhead is irrelevant)."""
-    local = Watch(args["serial"]).screenshot()
+    (a screenshot is ~60 KB, the overhead is irrelevant).
+
+    A fresh capture needs the watch on the bus; when it fails, fall back to
+    the last pulled screenshot (if any) marked stale, so the overlay shows
+    the last screen instead of an empty box."""
+    w = Watch(args["serial"])
+    local = w.screenshot()
+    stale = False
+    if not local:
+        last = w.last_screenshot_path()
+        if last.exists() and last.stat().st_size > 0:
+            local, stale = last, True
     if not local:
         return {"ok": False, "error": "screenshot failed"}
-    return {"ok": True, "jpeg_b64": base64.b64encode(local.read_bytes()).decode()}
+    return {"ok": True, "stale": stale, "captured_ts": local.stat().st_mtime,
+            "jpeg_b64": base64.b64encode(local.read_bytes()).decode()}
 
 
 # ── port power ──────────────────────────────────────────────────────────────

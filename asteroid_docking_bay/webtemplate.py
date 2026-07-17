@@ -111,6 +111,7 @@ _WEB_TEMPLATE = """\
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
     .stale{color:#a1793a}.stale .agec{opacity:.7;font-size:10px}
+    .shot-stale{opacity:.55;filter:grayscale(.3)}
     .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
@@ -519,10 +520,12 @@ function openMenu(ev,html){
 function closeMenu(){document.getElementById('menu').style.display='none';}
 function openWatchImg(codename,serial,ev){
   if(ev)ev.stopPropagation();
-  // A live screenshot beside the product photo when the watch is on adb; the
-  // box removes itself if the watch is offline or the capture fails.
+  // A screenshot beside the product photo. Loaded via fetch (not <img src>)
+  // so we can read the stale header: a live capture shows "live screen"; when
+  // the watch is off the bus the last pulled screen is shown dimmed with its
+  // age; a watch never captured removes the box.
   const shot=serial
-    ?`<div><img class="wimg-shot" alt="" src="/api/watch/${encodeURIComponent(serial)}/screenshot.jpg?t=${Date.now()}" onerror="this.parentNode.remove()"><div class="wimg-cap">live screen</div></div>`
+    ?`<div id="shotbox"><img class="wimg-shot" id="shotimg" alt=""><div class="wimg-cap" id="shotcap">loading&hellip;</div></div>`
     :'';
   const o=document.getElementById('wimg');
   o.innerHTML=
@@ -533,6 +536,20 @@ function openWatchImg(codename,serial,ev){
     `</div>`;
   document.getElementById('wimg-bg').style.display='block';
   o.style.display='block';
+  if(serial)loadShot(serial);
+}
+function loadShot(serial){
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/screenshot.jpg?t='+Date.now())
+    .then(r=>{if(!r.ok)throw 0;const st=r.headers.get('X-Screenshot-Stale');
+      const ts=+r.headers.get('X-Screenshot-Ts')||0;
+      return r.blob().then(b=>({b,st,ts}));})
+    .then(({b,st,ts})=>{const img=document.getElementById('shotimg'),
+      cap=document.getElementById('shotcap'); if(!img)return;
+      img.src=URL.createObjectURL(b);
+      if(st){img.classList.add('shot-stale');cap.className='wimg-cap warn';
+        cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'');}
+      else{cap.textContent='live screen';}})
+    .catch(()=>{const box=document.getElementById('shotbox');if(box)box.remove();});
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';document.getElementById('wimg-bg').style.display='none';}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
