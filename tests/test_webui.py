@@ -110,6 +110,7 @@ _SAMPLE = {
         {"port": 1, "codename": "skipjack", "serial": "S1", "slot_loc": "1-2",
          "power": True, "smart": True, "connected": True, "adb": "device",
          "battery": 83, "os": "asteroidos", "screen_forced": True,
+         "charge_status": "Charging",
          "geometry": {"round": True, "resolution": "360x360",
                       "width": 360, "height": 360},
          "drain_last": {"est_h": 300, "ts": 1783900000}, "drain": None,
