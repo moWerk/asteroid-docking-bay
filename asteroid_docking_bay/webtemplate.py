@@ -83,7 +83,9 @@ _WEB_TEMPLATE = """\
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     /* Watch product-photo thumbnail + click-to-enlarge overlay */
     td.thumb{width:34px;padding:2px 2px 2px 0}
-    .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s}
+    .thumbwrap{position:relative;display:inline-block;line-height:0;vertical-align:middle}
+    .thumbfill{position:absolute;z-index:0;background:#000}
+    .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s;position:relative;z-index:1}
     .wthumb:hover{transform:scale(1.12)}
     .svgi{width:15px;height:15px;fill:currentColor;vertical-align:-2px}
     td.stats{min-width:52px;white-space:nowrap}   /* >=2 icons wide so the base pair never wraps to two rows */
@@ -105,7 +107,11 @@ _WEB_TEMPLATE = """\
     /* Product photo (left) and live screenshot (right) side by side at one
        shared height, so both read as the same size whatever the screen aspect. */
     .wimg-body{display:flex;gap:18px;align-items:flex-start;flex-wrap:nowrap;justify-content:center}
-    .wimg-body img.prod{height:230px;width:auto;max-width:44vw;object-fit:contain}
+    .device{display:inline-block}
+    .dev-frame{position:relative;display:inline-block;line-height:0}
+    .dev-prod{display:block;height:230px;width:auto;max-width:44vw;position:relative;z-index:2}
+    .dev-shot{position:absolute;z-index:1;object-fit:cover}
+    .dev-fill{position:absolute;z-index:0;background:#000}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
     .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
@@ -276,7 +282,19 @@ function mkthumb(p){
   // Product photo thumbnail; removes itself if the watch has no image (404).
   if(!p.codename)return '';
   const g=p.geometry||{};
-  return `<img class="wthumb" loading="lazy" alt="" src="/api/watch-image/${encodeURIComponent(p.codename)}" onerror="this.remove()" onclick="openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event,${g.round?1:0},'${g.resolution?esc(g.resolution):''}')">`;
+  const oc=`openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event,${g.round?1:0},'${g.resolution?esc(g.resolution):''}')`;
+  // Wrapped so a cut-out product image gets a black fill behind its
+  // transparent screen — otherwise the row would shine through the hole.
+  return `<span class="thumbwrap"><img class="wthumb" loading="lazy" alt="" onload="onThumbLoad(this,'${esc(p.codename)}')" onerror="this.closest('.thumbwrap').remove()" src="/api/watch-image/${encodeURIComponent(p.codename)}" onclick="${oc}"></span>`;
+}
+function onThumbLoad(img,codename){
+  // Fill the transparent screen with black in the row thumbnail (once cut).
+  const box=holeFor(codename,img), wrap=img.closest('.thumbwrap');
+  if(!box||!wrap)return;
+  const f=document.createElement('div'); f.className='thumbfill';
+  const pct=v=>(v*100).toFixed(2)+'%';
+  f.style.cssText=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`;
+  wrap.insertBefore(f,img);
 }
 const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
 function svgicon(n){return `<svg class="svgi" viewBox="0 0 512 512">${ICONS[n]}</svg>`;}
@@ -633,25 +651,54 @@ function holeFor(codename,img){
 }
 function openWatchImg(codename,serial,ev,isRound,res){
   if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
-  // A screenshot beside the product photo. Loaded via fetch (not <img src>)
-  // so we can read the stale header: a live capture shows "live screen"; when
-  // the watch is off the bus the last pulled screen is shown dimmed with its
-  // age; a watch never captured removes the box. The screen is masked to the
-  // watch's real shape (round watches get a circle) from live geometry.
-  const shotCls='wimg-shot '+(isRound?'shape-round':'shape-rect');
-  const shot=serial
-    ?`<div id="shotbox"><img class="${shotCls}" id="shotimg" alt=""><div class="wimg-cap" id="shotcap">loading&hellip;</div></div>`
-    :'';
+  // Load the product photo in a device frame; onProdLoad then decides the
+  // layout once we can inspect the image for a transparent screen cutout.
   const o=document.getElementById('wimg');
   o.innerHTML=
     `<div class="wimg-hd"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
-    `<div class="wimg-body">`+
-      `<div><img class="prod" alt="" onload="wimgPlace()" src="/api/watch-image/${encodeURIComponent(codename)}"><div class="wimg-cap">product</div></div>`+
-      shot+
+    `<div class="wimg-body" id="wimg-body">`+
+      `<div class="device" id="device"><div class="dev-frame" id="devframe">`+
+        `<img class="dev-prod" id="prodimg" alt="" onerror="closeWatchImg()" `+
+          `onload="onProdLoad('${esc(codename)}','${esc(serial||'')}',${isRound?1:0},'${res?esc(res):''}')" `+
+          `src="/api/watch-image/${encodeURIComponent(codename)}"></div></div>`+
     `</div>`;
   o.style.display='block';
   wimgPlace();
-  if(serial)loadShot(serial,res);
+}
+function onProdLoad(codename,serial,isRound,res){
+  const prod=document.getElementById('prodimg'); if(!prod)return;
+  const dev=document.getElementById('device'), frame=document.getElementById('devframe');
+  const box=holeFor(codename,prod);
+  if(box){
+    // Cutout present → composite: the product's transparent screen reveals the
+    // screenshot behind it (bezel + hands occlude); a black fill under that so
+    // an off / not-yet-loaded screen reads as an off panel. Positions are % of
+    // the frame, which is exactly the image (caption lives outside it).
+    dev.classList.add('cut');
+    const pct=v=>(v*100).toFixed(3)+'%';
+    const css=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`;
+    const fill=document.createElement('div'); fill.className='dev-fill'; fill.style.cssText=css;
+    frame.insertBefore(fill,prod);
+    if(serial){
+      const shot=document.createElement('img'); shot.className='dev-shot'; shot.id='shotimg';
+      shot.style.cssText=css; frame.insertBefore(shot,prod);
+    }
+    const cap=document.createElement('div'); cap.className='wimg-cap'; cap.id='shotcap';
+    cap.textContent=serial?'loading…':('screen off'+(res?' · '+res:''));
+    dev.appendChild(cap);
+    if(serial)loadShot(serial,res);
+  }else{
+    // No cutout yet → product beside a shape-masked screenshot (prior look).
+    const cap=document.createElement('div'); cap.className='wimg-cap'; cap.textContent='product';
+    dev.appendChild(cap);
+    if(serial){
+      const sb=document.createElement('div'); sb.id='shotbox';
+      sb.innerHTML=`<img class="wimg-shot ${isRound?'shape-round':'shape-rect'}" id="shotimg" alt="" onload="wimgPlace()"><div class="wimg-cap" id="shotcap">loading&hellip;</div>`;
+      document.getElementById('wimg-body').appendChild(sb);
+      loadShot(serial,res);
+    }
+  }
+  wimgPlace();
 }
 function wimgPlace(){
   // Anchor to the click and flip above if it would run off the bottom, like
@@ -677,7 +724,12 @@ function loadShot(serial,res){
       if(st){img.classList.add('shot-stale');cap.className='wimg-cap warn';
         cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'')+suffix;}
       else{cap.textContent='live screen'+suffix;}})
-    .catch(()=>{const box=document.getElementById('shotbox');if(box)box.remove();});
+    .catch(()=>{
+      const box=document.getElementById('shotbox');
+      if(box){box.remove();return;}                      // side-by-side: drop the box
+      const s=document.getElementById('shotimg');if(s)s.remove();   // composite: keep black fill
+      const c=document.getElementById('shotcap');if(c){c.className='wimg-cap';c.textContent='screen off';}
+    });
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
