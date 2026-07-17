@@ -35,6 +35,7 @@ from .webtemplate import _WEB_TEMPLATE
 _JSON_ROUTES = [
     # method, path,                                op,                static args,    bust
     ("GET",  "/api/watch/<serial>",                "watch.cc",        {},             False),
+    ("GET",  "/api/watch/<serial>/timeline",       "watch.timeline",  {},             False),
     ("POST", "/api/watch/<serial>/settime",        "watch.settime",   {},             False),
     ("POST", "/api/watch/<serial>/notify",         "watch.notify",    {},             False),
     ("POST", "/api/watch/<serial>/buzz",           "watch.buzz",      {},             False),

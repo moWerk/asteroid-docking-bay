@@ -93,6 +93,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `watch.cc / toggle / settime / notify / buzz / screen / screenshot` | Watch methods |
 | `op.charge.start / stop` (same for drain, workbench) | Operation classes |
 | `drain.history` | drain results |
+| `watch.timeline` | per-watch battery timeline (event log) |
 | `config.hide / hide_hub` | config mutations |
 | `flash.start`, `onboard.start` | streaming ops |
 

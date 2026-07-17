@@ -41,7 +41,8 @@ def test_registered_ops_are_the_documented_contract():
     here and in docs/CONTAINERS.md — that is the point."""
     assert REGISTERED == {
         "status.get",
-        "watch.cc", "watch.toggle", "watch.settime", "watch.notify",
+        "watch.cc", "watch.timeline",
+        "watch.toggle", "watch.settime", "watch.notify",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics",
         "watch.image", "ssh.switch_adb",
@@ -132,6 +133,23 @@ def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(rpcops, "last_seen", LastSeen(tmp_path / "ls.json"))
     monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
+
+
+def test_watch_timeline_returns_battery_points(monkeypatch):
+    class _EL:
+        def read(self, serial, codename=None):
+            return [
+                {"event": "check_reading", "ts": 100, "pct": 80},
+                {"event": "charge_start", "ts": 150},
+                {"event": "drain_reading", "ts": 200, "pct": 70},
+                {"event": "flash", "ts": 250},          # no pct → excluded
+            ]
+        def standby_loss_rate(self, serial, codename, evs):
+            return 1.5
+    monkeypatch.setattr(rpcops, "event_log", _EL())
+    d = rpcops.DISPATCH._data["watch.timeline"]({"serial": "S1"})
+    assert d["rate"] == 1.5
+    assert d["points"] == [{"ts": 100, "pct": 80}, {"ts": 200, "pct": 70}]
 
 
 def test_watch_cc_attaches_cached_resolution(monkeypatch, tmp_path):

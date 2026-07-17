@@ -38,7 +38,7 @@ from .watchctl import Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .fastboot import _switch_ssh_to_adb
 from .watchimg import watch_image_bytes
-from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
+from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
 from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
@@ -350,6 +350,22 @@ def _register_lifecycle(op_cls, name, stop_error):
 _register_lifecycle(ChargeOp, "charge", "no charge running")
 _register_lifecycle(WorkbenchOp, "workbench", "no workbench active")
 _register_lifecycle(DrainOp, "drain", "no drain test running")
+
+
+@DISPATCH.op("watch.timeline")
+def _watch_timeline(args):
+    """The watch's battery-over-time points for the row sparkline, plus its
+    standby loss rate. Serial keys the per-watch event log (codename is the
+    fallback key)."""
+    serial = args.get("serial")
+    codename = args.get("codename")
+    evs = event_log.read(serial, codename)
+    points = [{"ts": e["ts"], "pct": e["pct"]}
+              for e in evs
+              if e.get("event") in ("check_reading", "drain_reading")
+              and e.get("pct") is not None and e.get("ts") is not None]
+    return {"points": points,
+            "rate": event_log.standby_loss_rate(serial, codename, evs)}
 
 
 @DISPATCH.op("drain.history")
