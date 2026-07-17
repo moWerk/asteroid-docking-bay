@@ -3,6 +3,7 @@
 once per episode. Guards a hardware-actuating path, so it's worth pinning."""
 
 import asteroid_docking_bay.webstatus as ws
+from asteroid_docking_bay.lastseen import LastSeen
 
 
 class _SyncThread:
@@ -59,3 +60,25 @@ def test_backoff_prevents_repeat(monkeypatch):
     ws._fake_power_cycled["1-2:1"] = time.time()   # just cycled
     ws._maybe_self_heal_fake_power("1-2:1", "1-2", 1, wedged=True, busy=False, cfg=cfg)
     assert calls == []
+
+
+# ── stale-value fallback (_battery_view) ─────────────────────────────────────
+
+def test_battery_view_records_live_and_offers_no_stale(monkeypatch, tmp_path):
+    monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
+    # A live watch stores its reading and returns no stale fallback — the
+    # caller's live `battery` must not be shadowed by a cached one.
+    assert ws._battery_view("device", "S1", 55, False, "aos") == (None, None)
+    assert ws.last_seen.get("S1")["battery"] == 55
+
+
+def test_battery_view_falls_back_when_offline(monkeypatch, tmp_path):
+    monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
+    ws._battery_view("device", "S1", 55, False, "aos")     # seed while live
+    battery_cached, last_live_ts = ws._battery_view(None, "S1", None, False, None)
+    assert battery_cached == 55 and last_live_ts > 0
+
+
+def test_battery_view_blank_without_a_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(ws, "last_seen", LastSeen(tmp_path / "ls.json"))
+    assert ws._battery_view(None, "S1", None, False, None) == (None, None)

@@ -18,6 +18,7 @@ from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   uhubctl_list)
 from .fastboot import _fastboot_getvar_product, _fastboot_list
 from .events import _latest_drain_summaries
+from .lastseen import last_seen
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
 from .watchctl import _watch_os, _watch_os_for
@@ -150,6 +151,26 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+def _battery_view(adb_state: "str | None", serial: "str | None",
+                  battery: "int | None", screen_forced: bool,
+                  watch_os: "str | None") -> "tuple[int | None, float | None]":
+    """Record a live reading, or fall back to the last-seen one when offline.
+
+    A watch on ADB has its current values stored (last_live_ts stamped now);
+    an offline watch returns the cached (battery, last_live_ts) so the UI can
+    show a stale value instead of a blank. The live `battery` contract is left
+    untouched — the caller keeps it None when offline and prefers cached only
+    for display, so nothing mistakes a cached number for a fresh one."""
+    if adb_state == "device":
+        last_seen.record(serial, battery=battery,
+                         screen_forced=screen_forced, os=watch_os)
+        return None, None
+    cached = last_seen.get(serial) if serial else None
+    if not cached:
+        return None, None
+    return cached.get("battery"), cached.get("last_live_ts")
+
+
 def _web_status_data(cfg: dict) -> list[dict]:
     """
     Return hub-structured status including unmapped (empty) ports.
@@ -232,6 +253,11 @@ def _web_status_data(cfg: dict) -> list[dict]:
             else:
                 battery, screen_forced = None, False
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None
+            # Store the live reading, or fall back to the last-seen one when
+            # the watch is off the bus, so the row shows a stale value + age
+            # rather than a blank cell.
+            battery_cached, last_live_ts = _battery_view(
+                adb_state, serial, battery, screen_forced, watch_os)
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -290,6 +316,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
+                "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
                 "flashing": flashing, "empty": False,
