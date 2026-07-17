@@ -103,9 +103,11 @@ _WEB_TEMPLATE = """\
     .wimg-hd .dim{font-weight:400;font-size:11px}
     .wimg-x{cursor:pointer;color:#6e7681;font-size:18px;line-height:1}
     .wimg-x:hover{color:#fff}
-    .wimg-body{display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center}
-    .wimg-body img.prod{max-width:230px;max-height:250px;object-fit:contain}
-    .wimg-shot{width:180px;height:180px;object-fit:contain;background:#000}
+    /* Product photo (left) and live screenshot (right) side by side at one
+       shared height, so both read as the same size whatever the screen aspect. */
+    .wimg-body{display:flex;gap:18px;align-items:flex-start;flex-wrap:nowrap;justify-content:center}
+    .wimg-body img.prod{height:230px;width:auto;max-width:44vw;object-fit:contain}
+    .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
     .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
