@@ -318,8 +318,9 @@ function openSpark(serial,name,ev){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/timeline').then(r=>r.json()).then(d=>{
     const m=document.getElementById('menu');
     const pts=(d&&d.points)||[];
-    if(pts.length<2){m.innerHTML=`<div class="spark-hd">${esc(name)} <span class="dim">no history yet — readings accrue as it's checked/drained</span></div>`;return;}
+    if(pts.length<2){m.innerHTML=`<div class="spark-hd">${esc(name)} <span class="dim">no history yet — readings accrue as it's checked/drained</span></div>`;placeMenu();return;}
     m.innerHTML=`<div class="spark-hd">${esc(name)} battery history`+(d.rate?` <span class="dim">~${(+d.rate).toFixed(2)}%/h standby</span>`:'')+`</div>`+sparkSvg(pts);
+    placeMenu();   // reposition now the real (larger) chart size is known
   }).catch(()=>{});
 }
 function mkport(p){
@@ -573,11 +574,20 @@ function closeCC(){const cc=document.getElementById('cc');cc.style.display='none
 function ccLeave(){ccTimer=setTimeout(closeCC,600);}
 function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
+let _menuAnchor=null;
 function openMenu(ev,html){
   ev.stopPropagation();
-  const m=document.getElementById('menu');
-  m.innerHTML=html; m.style.left='-9999px'; m.style.top='0px'; m.style.display='block';
-  const r=ev.currentTarget.getBoundingClientRect(), mw=m.offsetWidth, mh=m.offsetHeight;
+  _menuAnchor=ev.currentTarget.getBoundingClientRect();
+  document.getElementById('menu').innerHTML=html;
+  placeMenu();
+}
+// Position the menu against its anchor, flipping above/below and clamping to
+// the viewport. Kept separate from openMenu so async content (the sparkline,
+// which loads after the box opens) can re-place once its real size is known.
+function placeMenu(){
+  const m=document.getElementById('menu'); if(!_menuAnchor)return;
+  m.style.left='-9999px'; m.style.top='0px'; m.style.display='block';
+  const r=_menuAnchor, mw=m.offsetWidth, mh=m.offsetHeight;
   let left=r.left, top=r.bottom+3;
   if(left+mw>window.innerWidth-8)left=window.innerWidth-8-mw;
   if(top+mh>window.innerHeight-8)top=Math.max(8,r.top-mh-3);
