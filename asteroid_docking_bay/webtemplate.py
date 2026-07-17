@@ -741,7 +741,14 @@ function doBootloader(c){
 function doCy(c){
   const r=document.getElementById('wr-'+c);
   if(r)r.querySelectorAll('button').forEach(b=>b.disabled=true);
-  fetch('/api/cycle/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,7000));
+  toast('power-cycling — testing port switching…');
+  fetch('/api/cycle/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
+    if(d.smart===true)toast('port switches power (smart ✓)');
+    else if(d.smart===false)toast('port does NOT cut power (not smart)');
+    else if(d.ok)toast('power-cycled — smart still unverified');
+    else toast(d.error||'cycle failed');
+    setTimeout(refresh,2500);
+  }).catch(()=>setTimeout(refresh,2500));
 }
 function doCharge(c){
   const r=document.getElementById('wr-'+c);

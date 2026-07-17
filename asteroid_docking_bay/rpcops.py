@@ -217,13 +217,25 @@ def _port_set(args):
 @DISPATCH.op("port.cycle")
 def _port_cycle(args):
     loc, port = args["loc"], args["port"]
+    serial = find_serial_for_loc_port(load_config(), loc, port)
+    # A power-cycle IS a PPPS test — it cuts VBUS and restores it while checking
+    # whether the device dropped — so use it to (re)assess and record the port's
+    # smart verdict. This is the way to resolve a '?' without a full re-onboard,
+    # matching the common workflow of just powering a port up rather than
+    # onboarding it. test_port_power_switching restores the port's prior state.
     try:
-        uhubctl_set_power(loc, port, False)
-        time.sleep(5)
-        uhubctl_set_power(loc, port, True)
+        smart, reason = test_port_power_switching(loc, port, serial)
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
-    return {"ok": True}
+    if smart is not None:
+        with _config_lock:
+            cfg = load_config()
+            for hub in cfg.get("hubs", []):
+                if hub["location"] == loc:
+                    _store_smart_verdict(hub, port, smart)
+                    save_config(cfg)
+                    break
+    return {"ok": True, "smart": smart, "reason": reason}
 
 
 @DISPATCH.op("port.poweroff")

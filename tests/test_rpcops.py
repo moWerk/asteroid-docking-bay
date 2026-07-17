@@ -71,6 +71,32 @@ def test_port_set_ok(monkeypatch):
     assert d == {"ok": True, "confirmed": True}
 
 
+def test_port_cycle_records_smart_verdict(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    monkeypatch.setattr(rpcops, "test_port_power_switching",
+                        lambda l, p, s: (True, "VBUS cut confirmed"))
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"hubs": [{"location": "1-2", "port_smart": {}}]})
+    monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg=cfg))
+    d = rpcops.DISPATCH._data["port.cycle"]({"loc": "1-2", "port": 2})
+    assert d["ok"] is True and d["smart"] is True
+    assert saved["cfg"]["hubs"][0]["port_smart"]["2"] is True
+
+
+def test_port_cycle_inconclusive_does_not_save(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: None)
+    monkeypatch.setattr(rpcops, "test_port_power_switching",
+                        lambda l, p, s: (None, "unverified"))
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"hubs": [{"location": "1-2", "port_smart": {}}]})
+    monkeypatch.setattr(rpcops, "save_config",
+                        lambda cfg: calls.setdefault("saved", True))
+    d = rpcops.DISPATCH._data["port.cycle"]({"loc": "1-2", "port": 2})
+    assert d["ok"] is True and d["smart"] is None and "saved" not in calls
+
+
 def test_watch_toggle_rejects_unknown_tech():
     d = rpcops.DISPATCH._data["watch.toggle"](
         {"serial": "S", "tech": "nfc", "on": True})
