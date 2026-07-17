@@ -168,6 +168,22 @@ def serve(args, cfg: dict):
             resp.set_header("X-Screenshot-Ts", str(int(d["captured_ts"])))
         return base64.b64decode(d["jpeg_b64"])
 
+    @app.get("/api/diagnostics/download/<name>")
+    def api_diag_download(name):
+        # Serve a diagnostics bundle for download. Basename-only + a .tar.gz
+        # gate keeps this scoped to the diagnostics dir (no path traversal).
+        from pathlib import Path
+        from .watchctl import DIAG_ROOT
+        safe = Path(name).name
+        f = DIAG_ROOT / safe
+        if not (safe.endswith(".tar.gz") and f.is_file()):
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return b""
+        resp.content_type = "application/gzip"
+        resp.set_header("Content-Disposition", f'attachment; filename="{safe}"')
+        return f.read_bytes()
+
     @app.get("/api/watch-image/<codename>")
     def api_watch_image(codename):
         d = _call("watch.image", {"codename": codename})

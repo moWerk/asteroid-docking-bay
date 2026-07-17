@@ -679,7 +679,13 @@ function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
 function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
-function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'diagnostics saved on host':'diagnostics partial — see log')).catch(()=>toast('diagnostics failed'));}
+function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
+  if(d.name){
+    toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');
+    const a=document.createElement('a');a.href='/api/diagnostics/download/'+encodeURIComponent(d.name);
+    a.download=d.name;document.body.appendChild(a);a.click();a.remove();
+  }else{toast(d.error||'diagnostics failed');}
+}).catch(()=>toast('diagnostics failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}

@@ -179,7 +179,12 @@ def _watch_diagnostics(args):
     serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))
     if not serial:
         return {"ok": False, "error": "no watch mapped to this port"}
-    return Watch(serial).collect_diagnostics()
+    res = Watch(serial).collect_diagnostics()
+    # Expose the bundle's basename so the browser can pull it down (it lives on
+    # the host by default, out of reach of a remote operator).
+    if res.get("path"):
+        res["name"] = res["path"].rsplit("/", 1)[-1]
+    return res
 
 
 @DISPATCH.op("watch.screenshot")
