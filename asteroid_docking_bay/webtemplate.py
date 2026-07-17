@@ -66,10 +66,17 @@ _WEB_TEMPLATE = """\
     .btn.pw:hover{background:#2a1a0e}
     .menu{position:fixed;z-index:110;display:none;min-width:172px;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
     .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
-    .menu-item:hover:not(:disabled){background:#0d1117;border-color:#30363d}
+    .menu-item:hover:not(:disabled){filter:brightness(1.4);border-color:#30363d}
     .menu-item:disabled{opacity:.38;cursor:default}
-    .menu-item.ch{color:#3fb950}.menu-item.dr{color:#58a6ff}.menu-item.ht{color:#f0883e}
-    .menu-item.wbx{color:#a371f7}.menu-item.dng{color:#f85149}
+    /* Per-action accent: coloured label on a faint band of the same hue, to
+       keep the colourful feel the flat buttons had. */
+    .menu-item.ch{color:#3fb950;background:rgba(63,185,80,.07)}
+    .menu-item.dr{color:#d29922;background:rgba(210,153,34,.07)}
+    .menu-item.po{color:#f85149;background:rgba(248,81,73,.07)}
+    .menu-item.rb{color:#f0883e;background:rgba(240,136,62,.07)}
+    .menu-item.bl{color:#d2a8ff;background:rgba(210,168,255,.07)}
+    .menu-item.wbx{color:#a371f7;background:rgba(163,113,247,.07)}
+    .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
@@ -217,7 +224,7 @@ _WEB_TEMPLATE = """\
   </div>
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
-  <div id="menu" class="menu" onmouseleave="menuLeave()" onmouseenter="menuEnter()"></div>
+  <div id="menu" class="menu"></div>
   <div id="wimg-bg" class="wimg-bg" onclick="closeWatchImg()"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -548,7 +555,6 @@ function closeCC(){const cc=document.getElementById('cc');cc.style.display='none
 function ccLeave(){ccTimer=setTimeout(closeCC,600);}
 function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
-let menuTimer=null;
 function openMenu(ev,html){
   ev.stopPropagation();
   const m=document.getElementById('menu');
@@ -598,27 +604,25 @@ function loadShot(serial,res){
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';document.getElementById('wimg-bg').style.display='none';}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
-function menuLeave(){menuTimer=setTimeout(closeMenu,450);}
-function menuEnter(){if(menuTimer){clearTimeout(menuTimer);menuTimer=null;}}
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
   openMenu(ev,
     (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
     (draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`,noSw))+
     '<div class="menu-sep"></div>'+
-    (powered?mi('ht','Power off',`doPoweroff('${slot}')`):'')+
-    mi('ht','Reboot',`doReboot('${slot}')`)+
-    mi('dng','Bootloader',`doBootloader('${slot}')`));
+    (powered?mi('po','Power off',`doPoweroff('${slot}')`):'')+
+    mi('rb','Reboot',`doReboot('${slot}')`)+
+    mi('bl','Bootloader',`doBootloader('${slot}')`));
 }
 function menuWorkbench(ev,slot,serial,wb,online){
   openMenu(ev,
     '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+
-    mi('','Set time from host',`doSetTime('${serial}')`,!online)+
-    mi('','Screenshot',`doScreenshot('${serial}')`,!online)+
-    mi('','Test notification',`doNotify('${serial}')`,!online)+
-    mi('','Collect diagnostics',`doDiag('${slot}')`,!online));
+    mi('info','Set time from host',`doSetTime('${serial}')`,!online)+
+    mi('info','Screenshot',`doScreenshot('${serial}')`,!online)+
+    mi('info','Test notification',`doNotify('${serial}')`,!online)+
+    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online));
 }
 function menuFlash(ev,slot){
   openMenu(ev,
