@@ -95,6 +95,31 @@ Or run the helper, which does the edit and validates for you:
 ./onboard-new-watch-to-fleet.sh
 ```
 
+## Optional: live-screen composite (transparent screen cutout)
+
+a-d-b can show the watch's **live screenshot inside its own screen** in the
+product photo, instead of side by side. This needs one art edit per image and
+**no per-watch coordinates** — the position is read from the image's alpha.
+
+To enable it for a watch, edit its product PNG once:
+- Cut the **screen glass** to fully transparent alpha (alpha 0).
+- Leave the bezel, case, and any foreground **opaque** — including hands that
+  sit over the screen (narwhal): they'll correctly occlude the screenshot.
+- Leave the render's background as it is (transparent or opaque); the detector
+  distinguishes the enclosed screen hole from the surrounding background.
+
+a-d-b then composites the screenshot behind the product image (masked to the
+exact screen shape by your cutout), with a black fill so an off/offline screen
+reads as an off panel; the row thumbnail gets the same fill. An **un-cut**
+image just falls back to the side-by-side look, so this is entirely opt-in and
+per-image.
+
+Edit the cached copy to try it (served as-is, no re-fetch):
+`~/.local/share/asteroid-docking-bay/watch-images/<codename>.png`. The
+canonical source is asteroidos.org `public/img/<codename>.png`. Note the image
+is fetched by the **exact** codename, so cut `tunny.png` / `belugaxl.png`, not
+the shared image's `skipjack.png` / `beluga.png`.
+
 ## Checklist
 
 1. Flash + dock + Onboard the watch. Does it show the right codename already?
