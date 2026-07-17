@@ -86,6 +86,8 @@ _WEB_TEMPLATE = """\
     .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s}
     .wthumb:hover{transform:scale(1.12)}
     .svgi{width:15px;height:15px;fill:currentColor;vertical-align:-2px}
+    td.stats{min-width:52px;white-space:nowrap}   /* >=2 icons wide so the base pair never wraps to two rows */
+    td.stats .strip{margin-left:0}
     .strip{margin-left:8px;display:inline-flex;gap:7px;align-items:center;vertical-align:middle}
     .strip .svgw{cursor:default;line-height:0}
     .strip .ib{font-size:12px;line-height:1;font-weight:700}
@@ -191,14 +193,16 @@ _WEB_TEMPLATE = """\
       .wr td:nth-child(3){display:block;text-align:left;font-weight:700;font-size:20px;
                           padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}
       .wr td:nth-child(4){clear:both}                            /* fields start below the thumb */
-      .wr td:nth-child(4)::before{content:"Port"}
-      .wr td:nth-child(5)::before{content:"Power"}
-      .wr td:nth-child(6)::before{content:"Smart"}
-      .wr td:nth-child(7)::before{content:"Connection"}
-      .wr td:nth-child(8)::before{content:"Battery"}
+      .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
+      .wr td:nth-child(4)::before{content:"Stats"}
+      .wr td:nth-child(5)::before{content:"Port"}
+      .wr td:nth-child(6)::before{content:"Power"}
+      .wr td:nth-child(7)::before{content:"Smart"}
+      .wr td:nth-child(8)::before{content:"Connection"}
+      .wr td:nth-child(9)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(9){display:block;text-align:left;padding-top:10px}  /* actions span the card */
+      .wr td:nth-child(10){display:block;text-align:left;padding-top:10px}  /* actions span the card */
       /* Bigger, tappable controls */
       .wr .btn,.wr .tgl,.wr .ico{font-size:15px;padding:9px 13px;margin:3px 6px 3px 0}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
@@ -218,7 +222,7 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
+      <th></th><th></th><th>Watch</th><th>Stats</th><th>Port</th><th>Power</th><th>Smart</th>
       <th>Connection</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -357,13 +361,13 @@ function render(data){
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
   const wearH=(data&&data.wearable_min_hours)||24;
-  if(!hubs.length){tb.innerHTML='<tr><td colspan="9" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="10" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
-    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="9"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
+    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="10"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
       const tree=i===visPorts.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
@@ -386,6 +390,7 @@ function render(data){
           `<td class="tc">${tree}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -393,7 +398,7 @@ function render(data){
           `<td class="dim">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="9"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
@@ -452,7 +457,8 @@ function render(data){
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.adb==='device'
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+mkstrip(p,wearH)+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -464,7 +470,7 @@ function render(data){
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           `</td></tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="9"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }
     });
