@@ -94,8 +94,7 @@ _WEB_TEMPLATE = """\
     .strip .svgw.spark{cursor:pointer}
     .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
-    .wimg-bg{position:fixed;inset:0;z-index:119;background:rgba(0,0,0,.55);display:none}
-    .wimg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;display:none;
+    .wimg{position:fixed;z-index:120;display:none;
           background:#161b22;border:1px solid #30363d;border-radius:10px;
           box-shadow:0 12px 40px rgba(0,0,0,.6);padding:14px;max-width:94vw;max-height:92vh;overflow:auto}
     .wimg-hd{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:10px;
@@ -233,7 +232,6 @@ _WEB_TEMPLATE = """\
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
   <div id="menu" class="menu"></div>
-  <div id="wimg-bg" class="wimg-bg" onclick="closeWatchImg()"></div>
   <div id="wimg" class="wimg"></div>
 <script>
 const srcs={};
@@ -485,6 +483,7 @@ function render(data){
 }
 // ── Control Center overlay ──────────────────────────────────────────────────
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
+let wimgAX=0, wimgAY=0;
 function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
 function ccPlace(){
   // Anchor to the click; flip ABOVE the anchor if the panel would run off the
@@ -598,7 +597,7 @@ function placeMenu(){
 }
 function closeMenu(){document.getElementById('menu').style.display='none';}
 function openWatchImg(codename,serial,ev,isRound,res){
-  if(ev)ev.stopPropagation();
+  if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
   // A screenshot beside the product photo. Loaded via fetch (not <img src>)
   // so we can read the stale header: a live capture shows "live screen"; when
   // the watch is off the bus the last pulled screen is shown dimmed with its
@@ -612,12 +611,24 @@ function openWatchImg(codename,serial,ev,isRound,res){
   o.innerHTML=
     `<div class="wimg-hd"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
     `<div class="wimg-body">`+
-      `<div><img class="prod" alt="" src="/api/watch-image/${encodeURIComponent(codename)}"><div class="wimg-cap">product</div></div>`+
+      `<div><img class="prod" alt="" onload="wimgPlace()" src="/api/watch-image/${encodeURIComponent(codename)}"><div class="wimg-cap">product</div></div>`+
       shot+
     `</div>`;
-  document.getElementById('wimg-bg').style.display='block';
   o.style.display='block';
+  wimgPlace();
   if(serial)loadShot(serial,res);
+}
+function wimgPlace(){
+  // Anchor to the click and flip above if it would run off the bottom, like
+  // the Control Center — images load async, so this is called again on each
+  // image's onload once the real panel size is known.
+  const o=document.getElementById('wimg');
+  if(o.style.display!=='block')return;
+  const h=o.offsetHeight, w=o.offsetWidth;
+  let left=Math.min(wimgAX, window.innerWidth-w-8);
+  let top=wimgAY+10;
+  if(top+h>window.innerHeight-8) top=wimgAY-h-10;
+  o.style.left=Math.max(8,left)+'px'; o.style.top=Math.max(8,top)+'px';
 }
 function loadShot(serial,res){
   const suffix=res?' · '+res:'';
@@ -627,13 +638,13 @@ function loadShot(serial,res){
       return r.blob().then(b=>({b,st,ts}));})
     .then(({b,st,ts})=>{const img=document.getElementById('shotimg'),
       cap=document.getElementById('shotcap'); if(!img)return;
-      img.src=URL.createObjectURL(b);
+      img.onload=wimgPlace; img.src=URL.createObjectURL(b);
       if(st){img.classList.add('shot-stale');cap.className='wimg-cap warn';
         cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'')+suffix;}
       else{cap.textContent='live screen'+suffix;}})
     .catch(()=>{const box=document.getElementById('shotbox');if(box)box.remove();});
 }
-function closeWatchImg(){document.getElementById('wimg').style.display='none';document.getElementById('wimg-bg').style.display='none';}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
@@ -693,6 +704,7 @@ function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
   const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
+  const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
 });
 function showBackendError(msg){
   // Split mode: the page is served but the backend RPC failed, so status.get
