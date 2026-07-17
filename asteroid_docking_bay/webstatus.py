@@ -269,9 +269,9 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 bool(serial and serial in fb_devices),
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             if adb_state == "device":
-                battery, screen_forced = battery_and_screen(serial)
+                battery, screen_forced, charge_status = battery_and_screen(serial)
             else:
-                battery, screen_forced = None, False
+                battery, screen_forced, charge_status = None, False, None
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None
             # Store the live reading, or fall back to the last-seen one when
             # the watch is off the bus, so the row shows a stale value + age
@@ -339,6 +339,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "adb": adb_state, "battery": battery, "os": watch_os,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,
+                "charge_status": charge_status,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
                 "flashing": flashing, "empty": False,

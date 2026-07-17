@@ -98,34 +98,41 @@ def test_battery_and_screen_wraps_whole_pipeline_for_device(monkeypatch):
 
 
 def test_battery_and_screen_forced(monkeypatch):
-    shell, _ = _fake_shell(0, "83\n---SCR---\nBlank inhibit:      stay-on")
+    shell, _ = _fake_shell(0, "83\n---SCR---\nBlank inhibit:      stay-on\n---CHG---\nCharging")
     monkeypatch.setattr(adbmod, "adb_shell", shell)
-    assert battery_and_screen("S") == (83, True)
+    assert battery_and_screen("S") == (83, True, "Charging")
 
 
 def test_battery_and_screen_not_forced(monkeypatch):
-    shell, _ = _fake_shell(0, "83\n---SCR---\nBlank inhibit:      disabled")
+    shell, _ = _fake_shell(0, "83\n---SCR---\nBlank inhibit:      disabled\n---CHG---\nFull")
     monkeypatch.setattr(adbmod, "adb_shell", shell)
-    assert battery_and_screen("S") == (83, False)
+    assert battery_and_screen("S") == (83, False, "Full")
 
 
 def test_battery_and_screen_no_mce(monkeypatch):
     # Watches without mce (or where the line is absent) read as not-forced.
-    shell, _ = _fake_shell(0, "50\n---SCR---\n")
+    shell, _ = _fake_shell(0, "50\n---SCR---\n---CHG---\n")
     monkeypatch.setattr(adbmod, "adb_shell", shell)
-    assert battery_and_screen("S") == (50, False)
+    assert battery_and_screen("S") == (50, False, None)
+
+
+def test_battery_and_screen_prefers_definite_charge_status(monkeypatch):
+    # Two supplies report; the definite battery verdict beats a USB "Unknown".
+    shell, _ = _fake_shell(0, "70\n---SCR---\n---CHG---\nUnknown\nDischarging")
+    monkeypatch.setattr(adbmod, "adb_shell", shell)
+    assert battery_and_screen("S") == (70, False, "Discharging")
 
 
 def test_battery_and_screen_no_battery(monkeypatch):
-    shell, _ = _fake_shell(0, "\n---SCR---\nBlank inhibit: stay-on")
+    shell, _ = _fake_shell(0, "\n---SCR---\nBlank inhibit: stay-on\n---CHG---\nCharging")
     monkeypatch.setattr(adbmod, "adb_shell", shell)
-    assert battery_and_screen("S") == (None, True)
+    assert battery_and_screen("S") == (None, True, "Charging")
 
 
 def test_battery_and_screen_rc_fail(monkeypatch):
     shell, _ = _fake_shell(1, "")
     monkeypatch.setattr(adbmod, "adb_shell", shell)
-    assert battery_and_screen("S") == (None, False)
+    assert battery_and_screen("S") == (None, False, None)
 
 
 # ── _resolve_conn_state: the row connection-state priority (fastboot/ssh) ──────
