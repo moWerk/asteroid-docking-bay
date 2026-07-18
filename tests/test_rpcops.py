@@ -341,3 +341,43 @@ def test_failed_fastboot_poweroff_does_not_cut_vbus(monkeypatch):
     r = ro.DISPATCH._data["port.poweroff"]({"loc": "1-2", "port": 1})
     assert r["ok"] is False, r
     assert "done" not in cut, "cut VBUS after a failed fastboot shutdown"
+
+
+# ── port ops must not disturb a running operation ───────────────────────────
+#
+# The UI greys these controls out on a busy row, but the UI is not a safety
+# boundary. On 2026-07-18 a direct `POST /api/on` to test an unrelated feature
+# re-powered a port mid-drain, recharged the watch 96% -> 100%, and destroyed
+# five hours of readings while the browser correctly showed the row disabled.
+
+@pytest.mark.parametrize("op,args", [
+    ("port.set",        {"on": True}),
+    ("port.cycle",      {}),
+    ("port.poweroff",   {}),
+    ("port.reboot",     {}),
+    ("port.bootloader", {}),
+])
+def test_port_ops_refuse_while_an_operation_owns_the_port(monkeypatch, op, args):
+    import asteroid_docking_bay.rpcops as ro
+    touched = {}
+    monkeypatch.setattr(ro.DrainOp, "is_active", classmethod(lambda cls, slot: True))
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda *a, **k: touched.setdefault("power", True))
+    monkeypatch.setattr(ro, "uhubctl_cycle",
+                        lambda *a, **k: touched.setdefault("cycle", True))
+    monkeypatch.setattr(ro, "test_port_power_switching",
+                        lambda *a, **k: touched.setdefault("ppps", True))
+    monkeypatch.setattr(ro, "_run", lambda *a, **k: touched.setdefault("cmd", True))
+    r = ro.DISPATCH._data[op]({"loc": "1-2.3", "port": 1, **args})
+    assert r["ok"] is False and r.get("busy") == "drain", r
+    assert not touched, f"{op} touched the hardware anyway: {touched}"
+
+
+def test_port_ops_work_normally_when_no_operation_is_running(monkeypatch):
+    """The guard must not break ordinary use — an idle port still switches."""
+    import asteroid_docking_bay.rpcops as ro
+    for cls in (ro.ChargeOp, ro.DrainOp, ro.WorkbenchOp):
+        monkeypatch.setattr(cls, "is_active", classmethod(lambda c, slot: False))
+    monkeypatch.setattr(ro, "uhubctl_set_power", lambda *a, **k: True)
+    r = ro.DISPATCH._data["port.set"]({"loc": "1-2.3", "port": 1, "on": True})
+    assert r == {"ok": True, "confirmed": True}, r

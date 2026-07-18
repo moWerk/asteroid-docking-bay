@@ -38,6 +38,7 @@ from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .fastboot import _switch_ssh_to_adb, _fastboot_list, fastboot_getvar_all
 from .watchimg import watch_image_bytes
+from .variants import image_of
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
@@ -169,7 +170,16 @@ def _watch_restore(args):
 def _watch_image(args):
     """The watch's product photo (cached from asteroidos.org) as base64 PNG.
     ok=False means no image for this codename."""
-    data = watch_image_bytes(args.get("codename"))
+    codename = args.get("codename")
+    data = watch_image_bytes(codename)
+    if not data:
+        # Exact-codename detection can name a variant that has no photo of its
+        # own — rover is physically a rubyfish and asteroidos.org carries one
+        # image for the pair. Fall back to the image the family ships, so
+        # naming a watch more precisely never costs it its picture.
+        base = image_of(codename)
+        if base:
+            data = watch_image_bytes(base)
     if not data:
         return {"ok": False}
     return {"ok": True, "png_b64": base64.b64encode(data).decode()}
@@ -241,8 +251,40 @@ def _watch_screenshot(args):
 
 # ── port power ──────────────────────────────────────────────────────────────
 
+def _op_owning(loc, port) -> "str | None":
+    """The kind of operation currently owning this port, or None.
+
+    A running charge/drain/workbench test owns its port's power state, and
+    changing it underneath silently corrupts the measurement. The UI already
+    disables these controls on a busy row, but the UI is not a safety
+    boundary: any direct API caller — a script, a curl, a compromised
+    frontend (see docs/CONTAINERS.md) — bypasses it entirely.
+
+    This is not hypothetical. On 2026-07-18 a direct `POST /api/on` to test an
+    unrelated feature re-powered a port mid-drain-test, recharged the watch
+    from 96% back to 100%, and destroyed five hours of readings. The row was
+    correctly greyed out in the browser at the time."""
+    slot = f"{loc}:{port}"
+    for op in (ChargeOp, DrainOp, WorkbenchOp):
+        if op.is_active(slot):
+            return op.kind
+    return None
+
+
+def _refuse_if_busy(loc, port) -> "dict | None":
+    kind = _op_owning(loc, port)
+    if kind is None:
+        return None
+    return {"ok": False, "busy": kind,
+            "error": f"a {kind} operation owns this port — stop it first, "
+                     f"otherwise its readings are silently corrupted"}
+
+
 @DISPATCH.op("port.set")
 def _port_set(args):
+    busy = _refuse_if_busy(args["loc"], args["port"])
+    if busy:
+        return busy
     try:
         confirmed = uhubctl_set_power(args["loc"], args["port"], bool(args["on"]))
     except RuntimeError as e:
@@ -253,6 +295,9 @@ def _port_set(args):
 @DISPATCH.op("port.cycle")
 def _port_cycle(args):
     loc, port = args["loc"], args["port"]
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
     # A power-cycle IS a PPPS test — it cuts VBUS and restores it while checking
     # whether the device dropped — so use it to (re)assess and record the port's
@@ -287,6 +332,9 @@ def _port_poweroff(args):
     disconnect — which is normally a cable yank, but here the rig cuts VBUS
     programmatically well inside that window. Same order, same guarantee."""
     loc, port = args["loc"], args["port"]
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
     adb_ok = False
     if serial:
@@ -329,6 +377,9 @@ def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):
     op per concept instead of a parallel fastboot family, and lets the UI
     offer the same menu in both states. Either command may be None where the
     action has no equivalent in that protocol."""
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
     if not serial:
         return {"ok": False, "error": "no serial found for port"}
