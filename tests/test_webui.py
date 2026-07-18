@@ -190,6 +190,45 @@ def test_render_runs_without_throwing(tmp_path):
         f"render() threw when run headless:\n{r.stderr[:600]}")
 
 
+# Caching DOM: getElementById must return the *same* object across calls so an
+# innerHTML written during render is still readable afterwards. The plain
+# _DOM_STUBS mint a fresh element each call, which is fine for "did it throw"
+# but discards everything render() produced.
+_DOM_CAPTURE = _DOM_STUBS.replace(
+    "global.document={getElementById:()=>el(),",
+    "global.__els={};global.document={getElementById:(i)=>(global.__els[i]=global.__els[i]||el()),")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_refresh_button_powers_only_an_off_switchable_port(tmp_path):
+    """The refresh button doubles as "power on and identify". A watch plugged
+    into a powered-down port is invisible to adb, so refresh alone left the row
+    showing the previous occupant forever — the button has to raise VBUS first.
+    It must do that only where power is switchable and not excluded, and must
+    NOT re-power a port that is already on (that would be a pointless write on
+    every ordinary refresh)."""
+    import json
+    h = tmp_path / "refresh.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 f"\nconst S={json.dumps(_SAMPLE)};render(S);"
+                 "console.log(JSON.stringify(Object.values(global.__els)"
+                 ".map(e=>e.innerHTML).join('')));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+
+    flags = dict(re.findall(r"doRefresh\('([^']+)',(true|false)\)", html))
+    assert flags, f"no doRefresh wiring found in rendered rows:\n{html[:400]}"
+    # skipjack is powered on -> refresh must stay a plain re-read
+    assert flags.get("1-2:1") == "false", (
+        f"refresh on an already-powered port asks to power it again: {flags}")
+    # bass and casio are switchable but off -> refresh must raise power
+    assert flags.get("1-2:2") == "true", (
+        f"refresh on an off switchable port does not power it — a watch "
+        f"plugged in while the port was down stays unidentifiable: {flags}")
+    assert flags.get("1-2:4") == "true", f"off port 4 not wired to power: {flags}"
+
+
 def test_refreshing_row_pulse_survives_hover():
     """The refreshing-row pulse is the only feedback that a re-identify is in
     flight. An !important background on the :hover rule outranks the animation

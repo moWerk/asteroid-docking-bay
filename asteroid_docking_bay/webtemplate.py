@@ -455,6 +455,10 @@ function render(data){
         const busy=!!(logActive||charging||draining||wb);
         const d=(busy||p.excluded)?' disabled':'';
         const noSw=p.smart===false;
+        // Refresh doubles as "power on and identify" only where that is both
+        // possible and wanted: a switchable port that is currently off and not
+        // excluded (excluded ports are opted out of automatic power entirely).
+        const needPwr=(p.power!==true&&!noSw&&!p.excluded);
         const dp=(busy||noSw||p.excluded)?' disabled':'';
         const adb=mkadbrow(p);
         let bat;
@@ -501,7 +505,7 @@ function render(data){
           `<td>${adb}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
-          `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
+          `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
           (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
@@ -858,9 +862,17 @@ function refresh(){
   }).catch(()=>{document.getElementById('ts').textContent='connection error'});
 }
 function _api(s){return s.replace(':','/');}
-function doRefresh(c){
-  if(c){refreshing.add(c);setTimeout(()=>refreshing.delete(c),10000);}
-  refresh();
+function doRefresh(c,needPwr){
+  // A powered-down port has nothing to identify — a watch plugged in while the
+  // port was down stays invisible, and the row keeps showing whoever sat there
+  // last. So when the port is off, bring VBUS up first and give the watch time
+  // to boot and enumerate; the pulse runs for that whole window, not just the
+  // instant client-side re-read that a live port needs.
+  if(c){refreshing.add(c);setTimeout(()=>refreshing.delete(c),needPwr?45000:10000);}
+  if(!needPwr){refresh();return;}
+  fetch('/api/on/'+_api(c),{method:'POST'})
+    .then(()=>{[0,5000,15000,30000,44000].forEach(t=>setTimeout(refresh,t));})
+    .catch(()=>refresh());
 }
 function _pwrFlash(c){
   const r=document.getElementById('wr-'+c);
