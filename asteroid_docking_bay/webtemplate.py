@@ -140,6 +140,7 @@ _WEB_TEMPLATE = """\
     @keyframes plug{0%{background:rgba(31,111,235,.4)}100%{background:transparent}}
     .wimg-shot.shape-round{border-radius:50%}.wimg-shot.shape-rect{border-radius:4px}
     .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
+    .cc.stale-cc .cc-tgl,.cc.stale-cc .cc-act{opacity:.4;pointer-events:none}   /* offline: controls do nothing, so block + dim them */
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
