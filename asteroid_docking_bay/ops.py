@@ -21,7 +21,7 @@ from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _wait_for_fastboot)
 from .events import (_DRAIN_FLOOR_PCT, _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
-from .tasks import (_adb_lock, _charge_stop, _charge_tasks, _drain_stop,
+from .tasks import (_charge_stop, _charge_tasks, _drain_stop,
                     _drain_tasks, _flash_tasks, task_store,
                     _workbench_stop, _workbench_tasks)
 from .watchctl import wait_for_adb
@@ -276,94 +276,98 @@ class ChargeOp(Operation):
         max_sec      = charge_cfg.charge_max_minutes * 60
         codename = find_codename_for_loc_port(cfg, loc, port) or slot
 
-        log.info("%s: waiting for ADB bus…", codename)
-        with _adb_lock:
-            try:
-                uhubctl_set_power(loc, port, True)
-                serial = find_serial_for_loc_port(cfg, loc, port)
-                if serial:
-                    # Charging works without enumeration (VBUS is on either way),
-                    # so a timeout here is logged by the helper and charge proceeds.
-                    wait_serial_online(serial,
-                                       charge_cfg.adb_wait_seconds,
-                                       charge_cfg.adb_wait_retries,
-                                       stop_event, recover_loc_port=(loc, port))
-                if stop_event.is_set():
-                    log.info("%s: charge cancelled while waiting for ADB", codename)
-                    return
+        serial = find_serial_for_loc_port(cfg, loc, port)
+        # Power the port on immediately so VBUS starts the moment the user asks,
+        # and do NOT hold _adb_lock for the charge: several watches may charge
+        # at once. mo's call — user intent over the one-at-a-time PSU guard; a
+        # brownout / voltage-drop safeguard is 2.0 material. uhubctl writes are
+        # still serialised at their own level.
+        log.info("%s: charge — powering port on", codename)
+        uhubctl_set_power(loc, port, True)
+        try:
+            if serial:
+                # Charging works without enumeration (VBUS is on either way),
+                # so a timeout here is logged by the helper and charge proceeds.
+                wait_serial_online(serial,
+                                   charge_cfg.adb_wait_seconds,
+                                   charge_cfg.adb_wait_retries,
+                                   stop_event, recover_loc_port=(loc, port))
+            if stop_event.is_set():
+                log.info("%s: charge cancelled while waiting for ADB", codename)
+                return
 
-                level = get_battery_level(serial) if serial else None
-                # A resumed task can carry a blind-mode countdown from a
-                # previous run; entering target mode must clear it or the UI
-                # sees a countdown already in the past.
-                if level is not None:
-                    task.pop("charge_end_ts", None)
-                if level is not None and level >= target:
-                    task["pct"], task["target"] = level, target
-                    log.info("%s: already at %d%% (≥%d%%) — nothing to do",
-                             codename, level, target)
-                elif level is not None:
-                    task["pct"], task["target"] = level, target
-                    task_store.persist("charge", slot, loc, port, task)
-                    event_log.log(serial, codename, "charge_start", pct=level, target=target)
-                    log.info("%s: charging %d%% → %d%%", codename, level, target)
-                    deadline = time.time() + max_sec
-                    detector = ChargeDropDetector(level)
-                    while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
-                        if time.time() >= deadline:
-                            log.warning("%s: target %d%% not reached within "
-                                        "charge_max_minutes — stopping at %s%%",
-                                        codename, target, task.get("pct"))
-                            break
-                        _ensure_port_powered(codename, loc, port)
-                        lvl = get_battery_level(serial)
-                        if lvl is None:
-                            continue  # transient read failure — keep charging
-                        task["pct"] = lvl
-                        prev = detector.prev
-                        verdict = detector.feed(lvl)
-                        if verdict == "alarm":
-                            task["losing_power"] = True
-                            log.warning("%s: battery DROPPING while charging "
-                                        "(%d%% → %d%%) — losing power despite charge; "
-                                        "check contacts/cable/port",
-                                        codename, prev, lvl)
-                            event_log.log(serial, codename, "charge_power_loss",
-                                          pct=lvl, from_pct=prev)
-                        elif verdict == "recovered":
-                            task.pop("losing_power", None)
-                            log.info("%s: charge recovered — gaining again (%d%%)",
-                                     codename, lvl)
-                        task_store.persist("charge", slot, loc, port, task)
-                        if lvl >= target:
-                            log.info("%s: reached %d%% (target %d%%)",
-                                     codename, lvl, target)
-                            break
-                    event_log.log(serial, codename, "charge_end", pct=task.get("pct"))
-                else:
-                    end_ts = time.time() + duration_sec
-                    task["charge_end_ts"] = end_ts
-                    task_store.persist("charge", slot, loc, port, task)
-                    log.info("%s: battery unreadable — charging blind for %d min",
-                             codename, duration_sec // 60)
-                    # Sleep in 5-second chunks so a stop is noticed promptly.
-                    ticks = 0
-                    while not stop_event.wait(timeout=5):
-                        if time.time() >= end_ts:
-                            break
-                        ticks += 1
-                        if ticks % 12 == 0:  # every ~60 s
-                            _ensure_port_powered(codename, loc, port)
-                if stop_event.is_set():
-                    log.info("%s: charge stopped by user", codename)
-            except Exception as exc:
-                log.warning("%s: charge failed: %s", codename, exc)
-            finally:
-                _end_port(loc, port, serial, charge_cfg, "charge ended")
-                task["done"] = True
+            level = get_battery_level(serial) if serial else None
+            # A resumed task can carry a blind-mode countdown from a
+            # previous run; entering target mode must clear it or the UI
+            # sees a countdown already in the past.
+            if level is not None:
                 task.pop("charge_end_ts", None)
-                _charge_stop.pop(slot, None)
-                task_store.unpersist("charge", slot)
+            if level is not None and level >= target:
+                task["pct"], task["target"] = level, target
+                log.info("%s: already at %d%% (≥%d%%) — nothing to do",
+                         codename, level, target)
+            elif level is not None:
+                task["pct"], task["target"] = level, target
+                task_store.persist("charge", slot, loc, port, task)
+                event_log.log(serial, codename, "charge_start", pct=level, target=target)
+                log.info("%s: charging %d%% → %d%%", codename, level, target)
+                deadline = time.time() + max_sec
+                detector = ChargeDropDetector(level)
+                while not stop_event.wait(timeout=_CHARGE_POLL_SEC):
+                    if time.time() >= deadline:
+                        log.warning("%s: target %d%% not reached within "
+                                    "charge_max_minutes — stopping at %s%%",
+                                    codename, target, task.get("pct"))
+                        break
+                    _ensure_port_powered(codename, loc, port)
+                    lvl = get_battery_level(serial)
+                    if lvl is None:
+                        continue  # transient read failure — keep charging
+                    task["pct"] = lvl
+                    prev = detector.prev
+                    verdict = detector.feed(lvl)
+                    if verdict == "alarm":
+                        task["losing_power"] = True
+                        log.warning("%s: battery DROPPING while charging "
+                                    "(%d%% → %d%%) — losing power despite charge; "
+                                    "check contacts/cable/port",
+                                    codename, prev, lvl)
+                        event_log.log(serial, codename, "charge_power_loss",
+                                      pct=lvl, from_pct=prev)
+                    elif verdict == "recovered":
+                        task.pop("losing_power", None)
+                        log.info("%s: charge recovered — gaining again (%d%%)",
+                                 codename, lvl)
+                    task_store.persist("charge", slot, loc, port, task)
+                    if lvl >= target:
+                        log.info("%s: reached %d%% (target %d%%)",
+                                 codename, lvl, target)
+                        break
+                event_log.log(serial, codename, "charge_end", pct=task.get("pct"))
+            else:
+                end_ts = time.time() + duration_sec
+                task["charge_end_ts"] = end_ts
+                task_store.persist("charge", slot, loc, port, task)
+                log.info("%s: battery unreadable — charging blind for %d min",
+                         codename, duration_sec // 60)
+                # Sleep in 5-second chunks so a stop is noticed promptly.
+                ticks = 0
+                while not stop_event.wait(timeout=5):
+                    if time.time() >= end_ts:
+                        break
+                    ticks += 1
+                    if ticks % 12 == 0:  # every ~60 s
+                        _ensure_port_powered(codename, loc, port)
+            if stop_event.is_set():
+                log.info("%s: charge stopped by user", codename)
+        except Exception as exc:
+            log.warning("%s: charge failed: %s", codename, exc)
+        finally:
+            _end_port(loc, port, serial, charge_cfg, "charge ended")
+            task["done"] = True
+            task.pop("charge_end_ts", None)
+            _charge_stop.pop(slot, None)
+            task_store.unpersist("charge", slot)
 
 
 
