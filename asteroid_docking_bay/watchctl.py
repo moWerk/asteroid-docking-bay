@@ -192,6 +192,13 @@ def _host_timezone() -> "str | None":
     return tz.split("zoneinfo/", 1)[1] if "zoneinfo/" in tz else None
 
 
+# Bump whenever geometry() starts collecting a new field. Cached probes are
+# stamped with this by the caching layer, so a cache written before a field
+# existed can be told apart from a complete one and re-probed — otherwise a
+# watch cached earlier keeps serving a result that silently lacks it forever.
+GEOMETRY_PROBE_VERSION = 2   # 2 added androidboot.bootloader
+
+
 class Watch:
     """Everything done *to* one specific watch over ADB, bound to its serial:
     the Control Center data batch, hardware toggles, clock sync, and the
@@ -269,6 +276,16 @@ class Watch:
             if m:
                 geo["width"], geo["height"] = int(m.group(1)), int(m.group(2))
                 geo["resolution"] = f"{m.group(1)}x{m.group(2)}"
+        # androidboot.bootloader carries the bootloader's own version string,
+        # which begins with the TRUE hardware codename even when the watch runs
+        # a sibling's image — rover reports bootloader=rover-... while its
+        # MACHINE, resolution and image all say rubyfish. It comes from the
+        # bootloader rather than the rootfs, so a shared image cannot mask it.
+        rc3, cmdline, _ = self.t.shell("cat /proc/cmdline", timeout=8)
+        if rc3 == 0:
+            m = re.search(r"androidboot\.bootloader=(\S+)", cmdline)
+            if m:
+                geo["bootloader"] = m.group(1)
         return geo
 
     def toggle(self, tech: str, on: bool) -> bool:

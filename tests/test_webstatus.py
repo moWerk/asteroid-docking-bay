@@ -116,3 +116,35 @@ def test_geometry_view_offline_reads_cache_without_probing(monkeypatch, tmp_path
     monkeypatch.setattr(ws, "Watch",
                         lambda s: (_ for _ in ()).throw(AssertionError("probed!")))
     assert ws._geometry_view(None, "S1")["resolution"] == "400x400"
+
+
+def test_geometry_cache_refreshes_when_the_probe_gained_a_field(monkeypatch, tmp_path):
+    """A watch cached before a new probe field existed must re-probe, not serve
+    the stale shape forever. This bit for real: the bootloader codename
+    detector shipped and every already-cached watch kept reporting no
+    bootloader, because the cache was 'probe once, keep forever'."""
+    from asteroid_docking_bay import webstatus as ws
+    from asteroid_docking_bay.lastseen import LastSeen
+    from asteroid_docking_bay.watchctl import GEOMETRY_PROBE_VERSION
+
+    ls = LastSeen(tmp_path / "ls.json")
+    ls.record("S1", geometry={"round": True, "resolution": "454x454"})  # no probe_v
+    monkeypatch.setattr(ws, "last_seen", ls)
+
+    class _W:
+        def __init__(self, serial): pass
+        def geometry(self):
+            # The probe reports what it read; the cache layer stamps probe_v.
+            return {"round": True, "resolution": "454x454",
+                    "bootloader": "rover-03.02.39.03.16"}
+    monkeypatch.setattr(ws, "Watch", _W)
+
+    got = ws._geometry_view("device", "S1")
+    assert got.get("bootloader") == "rover-03.02.39.03.16", (
+        f"stale cache served instead of re-probing: {got}")
+
+    # A current cache must NOT re-probe (the probe costs three adb round trips).
+    def _boom(serial):
+        raise AssertionError("re-probed a cache that was already current")
+    monkeypatch.setattr(ws, "Watch", _boom)
+    assert ws._geometry_view("device", "S1")["bootloader"] == "rover-03.02.39.03.16"

@@ -22,7 +22,8 @@ from .lastseen import last_seen
 from .variants import exact_codename
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
-from .watchctl import Watch, _watch_os, _watch_os_for
+from .watchctl import (GEOMETRY_PROBE_VERSION, Watch, _watch_os,
+                       _watch_os_for)
 
 
 # Serials that could not be identified via ADB — don't re-probe every refresh.
@@ -182,14 +183,19 @@ def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | Non
     if not serial:
         return None
     geo = (last_seen.get(serial) or {}).get("geometry")
-    if geo:
+    if geo and geo.get("probe_v", 1) >= GEOMETRY_PROBE_VERSION:
         return geo
+    # Either nothing cached, or cached before a field we now collect existed —
+    # re-probe while the watch is live so the cache catches up on its own.
     if adb_state == "device":
-        geo = Watch(serial).geometry()
-        if geo:
-            last_seen.record(serial, geometry=geo)
-            return geo
-    return None
+        fresh = Watch(serial).geometry()
+        if fresh:
+            fresh = {**fresh, "probe_v": GEOMETRY_PROBE_VERSION}
+            last_seen.record(serial, geometry=fresh)
+            return fresh
+    # Offline with an outdated cache: incomplete beats nothing (the screenshot
+    # mask only needs shape, which older probes already carry).
+    return geo or None
 
 
 def _web_status_data(cfg: dict) -> list[dict]:
@@ -286,7 +292,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # on the machine name (the local `codename`); only the display name
             # changes. Falls back to the machine name when it can't refine.
             machine = (geometry.get("machine") if geometry else None) or codename
-            observed = ({"resolution": geometry.get("resolution")}
+            observed = ({"resolution": geometry.get("resolution"),
+                         "bootloader": geometry.get("bootloader")}
                         if geometry else {})
             display_codename = exact_codename(machine, observed)
             # Powered + hub sees a connection + nothing ever enumerates:
