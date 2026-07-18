@@ -47,7 +47,8 @@ def test_registered_ops_are_the_documented_contract():
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb",
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
-        "port.bootloader", "port.hide", "hub.hide",
+        "port.bootloader", "port.recovery", "port.continue",
+        "port.hide", "hub.hide",
         "charge.start", "charge.stop",
         "workbench.start", "workbench.stop",
         "drain.start", "drain.stop", "drain.history",
@@ -250,3 +251,93 @@ def test_flash_start_unmapped_port_streams_error(monkeypatch):
     frames = list(rpcops.DISPATCH._stream["flash.start"](
         {"loc": "9-9", "port": 9}))
     assert frames == ["ERROR: port not mapped to any codename"]
+
+
+# ── fastboot-aware power actions ────────────────────────────────────────────
+
+def _cap_cmd(monkeypatch, in_fastboot):
+    """Capture the command a power op would run, with the port's watch either
+    in fastboot or on adb."""
+    import asteroid_docking_bay.rpcops as ro
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return 0, "", ""
+
+    monkeypatch.setattr(ro, "_run", fake_run)
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda *a, **k: "S1")
+    monkeypatch.setattr(ro, "load_config", lambda: {"hubs": []})
+    monkeypatch.setattr(ro, "_fastboot_list",
+                        lambda: ({"S1": "sturgeon"} if in_fastboot else {}))
+    return ro, seen
+
+
+def test_power_actions_use_fastboot_when_watch_is_in_bootloader(monkeypatch):
+    """A watch in the bootloader speaks fastboot, not adb. Sending it an adb
+    command is a silent no-op that leaves the UI claiming success, which is
+    why the menu was previously hidden entirely in fastboot."""
+    ro, seen = _cap_cmd(monkeypatch, in_fastboot=True)
+    ro.DISPATCH._data["port.reboot"]({"loc": "1-2", "port": 1})
+    assert seen["cmd"].startswith("fastboot -s S1 "), seen["cmd"]
+    assert "adb" not in seen["cmd"]
+
+    ro.DISPATCH._data["port.bootloader"]({"loc": "1-2", "port": 1})
+    assert seen["cmd"] == "fastboot -s S1 reboot bootloader", seen["cmd"]
+
+    ro.DISPATCH._data["port.recovery"]({"loc": "1-2", "port": 1})
+    assert seen["cmd"] == "fastboot -s S1 reboot recovery", seen["cmd"]
+
+
+def test_power_actions_use_adb_when_watch_is_booted(monkeypatch):
+    ro, seen = _cap_cmd(monkeypatch, in_fastboot=False)
+    ro.DISPATCH._data["port.reboot"]({"loc": "1-2", "port": 1})
+    assert seen["cmd"] == "adb -s S1 reboot", seen["cmd"]
+
+    ro.DISPATCH._data["port.recovery"]({"loc": "1-2", "port": 1})
+    assert seen["cmd"] == "adb -s S1 reboot recovery", seen["cmd"]
+
+
+def test_continue_is_rejected_on_a_booted_watch(monkeypatch):
+    """`fastboot continue` resumes a boot chain; a running watch has none.
+    Offering it over adb would send a meaningless command and report ok."""
+    ro, seen = _cap_cmd(monkeypatch, in_fastboot=False)
+    r = ro.DISPATCH._data["port.continue"]({"loc": "1-2", "port": 1})
+    assert r["ok"] is False and "adb" in r["error"], r
+    assert "cmd" not in seen, f"ran a command anyway: {seen}"
+
+
+def test_fastboot_poweroff_uses_oem_poweroff_then_cuts_vbus(monkeypatch):
+    """LK cannot shut down with USB attached — it grants ~5s to disconnect.
+    The rig cuts VBUS itself, so the order (command first, power second) is
+    load-bearing: cutting first would strand the watch running on battery."""
+    import asteroid_docking_bay.rpcops as ro
+    order = []
+    monkeypatch.setattr(ro, "_run",
+                        lambda cmd, **kw: (order.append(cmd), (0, "", ""))[1])
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda *a, **k: "S1")
+    monkeypatch.setattr(ro, "load_config", lambda: {"hubs": []})
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {"S1": "sturgeon"})
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda *a, **k: order.append("VBUS_OFF") or True)
+    r = ro.DISPATCH._data["port.poweroff"]({"loc": "1-2", "port": 1})
+    assert r["ok"] is True, r
+    assert order == ["fastboot -s S1 oem poweroff", "VBUS_OFF"], order
+
+
+def test_failed_fastboot_poweroff_does_not_cut_vbus(monkeypatch):
+    """`oem poweroff` is not universal — rover's bootloader lacks it entirely.
+    Cutting VBUS after a failed shutdown strands the watch running on battery
+    in the bootloader, invisible to the host: the rig's worst failure mode.
+    A failed shutdown must leave power ON and say so."""
+    import asteroid_docking_bay.rpcops as ro
+    cut = {}
+    monkeypatch.setattr(ro, "_run", lambda cmd, **kw: (1, "", "unknown command"))
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda *a, **k: "S1")
+    monkeypatch.setattr(ro, "load_config", lambda: {"hubs": []})
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {"S1": "rover"})
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda *a, **k: cut.setdefault("done", True))
+    r = ro.DISPATCH._data["port.poweroff"]({"loc": "1-2", "port": 1})
+    assert r["ok"] is False, r
+    assert "done" not in cut, "cut VBUS after a failed fastboot shutdown"

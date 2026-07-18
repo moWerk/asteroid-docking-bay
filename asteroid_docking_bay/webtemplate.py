@@ -506,7 +506,7 @@ function render(data){
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
-          (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
+          `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `</td></tr>` +
@@ -787,6 +787,20 @@ function menuPower(ev,slot,charging,draining,powered,noSw){
     mi('rb','Reboot',`doReboot('${slot}')`)+
     mi('bl','Bootloader',`doBootloader('${slot}')`));
 }
+// A watch in the bootloader used to get no Power menu at all — a dead end in
+// the UI exactly where the watch needs steering. The same intents apply, they
+// just travel over fastboot; charge and drain are omitted because both need
+// battery reads the bootloader does not serve.
+function menuPowerFb(ev,slot,powered){
+  openMenu(ev,
+    '<div class="menu-hd">in bootloader — fastboot actions</div>'+
+    mi('rb','Continue boot',`doContinue('${slot}')`)+
+    mi('rb','Reboot',`doReboot('${slot}')`)+
+    '<div class="menu-sep"></div>'+
+    mi('bl','Cycle bootloader',`doBootloader('${slot}')`)+
+    mi('bl','Recovery',`doRecovery('${slot}')`)+
+    (powered?'<div class="menu-sep"></div>'+mi('po','Power off',`doPoweroff('${slot}')`):''));
+}
 function menuWorkbench(ev,slot,serial,wb,online){
   openMenu(ev,
     '<div class="menu-hd">watch stays on — power off when done</div>'+
@@ -903,6 +917,16 @@ function doReboot(c){
 }
 function doBootloader(c){
   fetch('/api/bootloader/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,3000));
+}
+function doRecovery(c){
+  fetch('/api/recovery/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,4000));
+}
+function doContinue(c){
+  // Resuming the boot chain takes the watch all the way to the OS, so give
+  // adb time to come up before re-reading rather than showing a bare gap.
+  fetch('/api/continue/'+_api(c),{method:'POST'}).then(()=>{
+    [3000,15000,30000].forEach(t=>setTimeout(refresh,t));
+  });
 }
 function doCy(c){
   const r=document.getElementById('wr-'+c);

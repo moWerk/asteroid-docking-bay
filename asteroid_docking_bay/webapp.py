@@ -44,6 +44,8 @@ _JSON_ROUTES = [
     ("POST", "/api/poweroff/<loc>/<port:int>",     "port.poweroff",   {},             True),
     ("POST", "/api/reboot/<loc>/<port:int>",       "port.reboot",     {},             False),
     ("POST", "/api/bootloader/<loc>/<port:int>",   "port.bootloader", {},             False),
+    ("POST", "/api/recovery/<loc>/<port:int>",     "port.recovery",   {},             False),
+    ("POST", "/api/continue/<loc>/<port:int>",     "port.continue",   {},             False),
     ("POST", "/api/cycle/<loc>/<port:int>",        "port.cycle",      {},             True),
     ("POST", "/api/hide/<loc>/<port:int>",         "port.hide",       {},             True),
     ("POST", "/api/hide-hub/<loc>",                "hub.hide",        {},             True),

@@ -36,7 +36,7 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
-from .fastboot import _switch_ssh_to_adb, fastboot_getvar_all
+from .fastboot import _switch_ssh_to_adb, _fastboot_list, fastboot_getvar_all
 from .watchimg import watch_image_bytes
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
@@ -276,21 +276,40 @@ def _port_cycle(args):
 
 @DISPATCH.op("port.poweroff")
 def _port_poweroff(args):
-    """Graceful OS shutdown then cut VBUS immediately — adb shell is
-    synchronous, so the command is delivered before power is cut and the
-    watch finishes halting on battery. Any delay here races the halt: cutting
-    while the watch is still up lets a watch without offmode charging bounce
-    back on."""
+    """Graceful shutdown then cut VBUS immediately — the shutdown command is
+    synchronous, so it is delivered before power is cut and the watch
+    finishes halting on battery. Any delay here races the halt: cutting while
+    the watch is still up lets a watch without offmode charging bounce back
+    on.
+
+    From the bootloader the equivalent is `fastboot oem poweroff`. LK cannot
+    complete a shutdown while USB is attached and instead gives ~5s to
+    disconnect — which is normally a cable yank, but here the rig cuts VBUS
+    programmatically well inside that window. Same order, same guarantee."""
     loc, port = args["loc"], args["port"]
     serial = find_serial_for_loc_port(load_config(), loc, port)
     adb_ok = False
     if serial:
-        rc, _, err = _run(f"adb -s {serial} shell poweroff", check=False,
-                          timeout=10)
+        in_fb = serial in _fastboot_list()
+        cmd = (f"fastboot -s {serial} oem poweroff" if in_fb
+               else f"adb -s {serial} shell poweroff")
+        rc, _, err = _run(cmd, check=False, timeout=10)
         adb_ok = (rc == 0)
         if not adb_ok:
-            log.warning("poweroff %s:%s (%s): adb shutdown failed: %s",
-                        loc, port, serial, err.strip() or f"rc={rc}")
+            log.warning("poweroff %s:%s (%s): %s shutdown failed: %s",
+                        loc, port, serial, "fastboot" if in_fb else "adb",
+                        err.strip() or f"rc={rc}")
+            if in_fb:
+                # `oem poweroff` is NOT universal — rover's bootloader has no
+                # such command (verified by extracting the oem table from its
+                # aboot partition). Cutting VBUS after a failed shutdown would
+                # strand the watch running on battery in the bootloader,
+                # invisible to the host. Leaving it powered is the safe
+                # failure: it stays reachable and keeps charging.
+                return {"ok": False, "adb_shutdown": False,
+                        "error": "this bootloader has no 'oem poweroff' — "
+                                 "power left on so the watch is not stranded "
+                                 "running on battery"}
     else:
         log.warning("poweroff %s:%s: no serial known — cutting power only",
                     loc, port)
@@ -301,26 +320,57 @@ def _port_poweroff(args):
     return {"ok": True, "adb_shutdown": adb_ok, "confirmed": confirmed}
 
 
-def _adb_action(loc, port, cmd, fail_msg):
+def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):
+    """Run a power action against whichever protocol the watch is speaking.
+
+    A docked watch is reachable over adb when it is booted and over fastboot
+    when it is in the bootloader — the same intent ("reboot", "go to the
+    bootloader") just needs a different command. Dispatching here keeps one
+    op per concept instead of a parallel fastboot family, and lets the UI
+    offer the same menu in both states. Either command may be None where the
+    action has no equivalent in that protocol."""
     serial = find_serial_for_loc_port(load_config(), loc, port)
     if not serial:
         return {"ok": False, "error": "no serial found for port"}
-    rc, _, err = _run(f"adb -s {serial} {cmd}", check=False)
+    in_fb = serial in _fastboot_list()
+    cmd = fb_cmd if in_fb else adb_cmd
+    if cmd is None:
+        return {"ok": False,
+                "error": f"action not available over {'fastboot' if in_fb else 'adb'}"}
+    tool = "fastboot" if in_fb else "adb"
+    rc, _, err = _run(f"{tool} -s {serial} {cmd}", check=False, timeout=20)
     if rc != 0:
         return {"ok": False, "error": err or fail_msg}
-    return {"ok": True}
+    return {"ok": True, "via": tool}
 
 
 @DISPATCH.op("port.reboot")
 def _port_reboot(args):
-    return _adb_action(args["loc"], args["port"], "reboot",
-                       "adb reboot failed")
+    return _watch_action(args["loc"], args["port"], "reboot", "reboot",
+                         "reboot failed")
 
 
 @DISPATCH.op("port.bootloader")
 def _port_bootloader(args):
-    return _adb_action(args["loc"], args["port"], "reboot bootloader",
-                       "adb reboot bootloader failed")
+    # From adb this enters the bootloader; from fastboot it cycles it, which
+    # is also how a fastboot battery reading gets re-sampled (the bootloader
+    # snapshots it on entry and never refreshes within a session).
+    return _watch_action(args["loc"], args["port"], "reboot bootloader",
+                         "reboot bootloader", "reboot to bootloader failed")
+
+
+@DISPATCH.op("port.recovery")
+def _port_recovery(args):
+    return _watch_action(args["loc"], args["port"], "reboot recovery",
+                         "reboot recovery", "reboot to recovery failed")
+
+
+@DISPATCH.op("port.continue")
+def _port_continue(args):
+    """Resume the boot chain from the bootloader. Fastboot-only — a booted
+    watch has nothing to continue."""
+    return _watch_action(args["loc"], args["port"], None, "continue",
+                         "fastboot continue failed")
 
 
 # ── config visibility ───────────────────────────────────────────────────────
