@@ -153,11 +153,11 @@ _WEB_TEMPLATE = """\
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .18em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .ico:hover{background:#21262d;color:#c9d1d9}
     .ico:active{transform:scale(.88);transition:transform 55ms ease-out}
     .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .18em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
     .fl{border-color:#58a6ff;color:#fff}.fl:hover{background:#111d2e}
