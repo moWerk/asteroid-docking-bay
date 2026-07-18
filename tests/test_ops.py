@@ -157,3 +157,83 @@ def test_drain_read_uses_fast_poll_same_budget(monkeypatch):
     assert captured["wait"] <= 3
     budget = cc.adb_wait_seconds * cc.adb_wait_retries
     assert 0.8 * budget <= captured["wait"] * captured["retries"] <= budget
+
+
+# ── drain blind-read guard (rubyfish incident, 2026-07-14) ──────────────────
+#
+# The drain loop deliberately discharges a watch. When rubyfish stopped
+# enumerating mid-test the reads returned None, the loop logged and continued
+# forever, the displayed value froze at 71%, and the watch discharged past the
+# 15% floor to 0% / 3.18V unseen. The floor check only ever runs on a SUCCESSFUL
+# read, so losing the reading disabled the only safety stop.
+
+def _drain_env(monkeypatch, reads):
+    """Run DrainOp's worker against a scripted sequence of battery reads.
+
+    DrainOp reads its task and stop-event out of the module registries, so the
+    slot has to be seeded there rather than passed in."""
+    import threading
+    import asteroid_docking_bay.ops as opsmod
+    seq = list(reads)
+    power = {}
+    slot = "1-2:2"
+    task = {}
+    monkeypatch.setitem(opsmod._drain_tasks, slot, task)
+    monkeypatch.setitem(opsmod._drain_stop, slot, threading.Event())
+
+    monkeypatch.setattr(opsmod, "_DRAIN_POLL_SEC", 0)
+
+    calls = {"n": 0}
+
+    def _read(*a, **k):
+        # Hard stop so a missing guard FAILS loudly instead of spinning
+        # forever — an unbounded retry loop would otherwise hang the suite,
+        # which is a far worse signal than an assertion.
+        calls["n"] += 1
+        if calls["n"] > 25:
+            raise AssertionError(
+                "drain loop polled 25+ times without stopping — it is "
+                "discharging blind (the rubyfish failure)")
+        return seq.pop(0) if seq else None
+
+    monkeypatch.setattr(opsmod, "_adb_read_battery", _read)
+    monkeypatch.setattr(opsmod, "find_serial_for_loc_port", lambda *a, **k: "S1")
+    monkeypatch.setattr(opsmod, "load_config", lambda: {})
+    monkeypatch.setattr(opsmod, "uhubctl_set_power",
+                        lambda loc, port, on: power.__setitem__("on", on))
+    monkeypatch.setattr(opsmod, "_ensure_port_powered", lambda *a, **k: None)
+    monkeypatch.setattr(opsmod, "_end_port",
+                        lambda *a, **k: power.__setitem__("on", False))
+    monkeypatch.setattr(opsmod, "_save_drain_results", lambda *a, **k: None)
+    monkeypatch.setattr(opsmod.task_store, "persist", lambda *a, **k: None)
+    monkeypatch.setattr(opsmod.task_store, "unpersist", lambda *a, **k: None)
+    monkeypatch.setattr(opsmod.event_log, "log", lambda *a, **k: None)
+    return opsmod, power, slot, task
+
+
+def test_drain_aborts_after_consecutive_blind_reads(monkeypatch):
+    """Unbounded retries let a watch discharge invisibly. After the cap the
+    test must stop rather than keep draining something it cannot see."""
+    opsmod, power, slot, task = _drain_env(monkeypatch, [80] + [None] * 10)
+    opsmod.DrainOp(slot, "1-2", 2, {}).run()
+    assert task.get("blind_abort") is True, (
+        "drain kept polling blind instead of aborting — the rubyfish failure")
+
+
+def test_blind_abort_leaves_the_port_powered(monkeypatch):
+    """The watch is low and unreadable: the end-of-test power-off would strand
+    it off charge, which is exactly the deep-discharge path to avoid. Power
+    must be restored instead."""
+    opsmod, power, slot, _ = _drain_env(monkeypatch, [80] + [None] * 10)
+    opsmod.DrainOp(slot, "1-2", 2, {}).run()
+    assert power.get("on") is True, (
+        f"port left unpowered after a blind abort: {power}")
+
+
+def test_a_single_failed_read_does_not_abort(monkeypatch):
+    """One transient miss is normal; aborting on it would make drain tests
+    useless. The guard must tolerate misses below the cap."""
+    opsmod, _, slot, task = _drain_env(monkeypatch, [80, None, 70, 60, 20, 10])
+    opsmod.DrainOp(slot, "1-2", 2, {}).run()
+    assert not task.get("blind_abort"), "aborted on a single recoverable miss"
+    assert task.get("last_pct") == 10, task

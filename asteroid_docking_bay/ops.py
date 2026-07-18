@@ -19,7 +19,8 @@ from .usb import uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _switch_ssh_to_adb,
                        _wait_for_fastboot)
-from .events import (_DRAIN_FLOOR_PCT, _DRAIN_POLL_SEC, event_log,
+from .events import (_DRAIN_FLOOR_PCT, _DRAIN_MAX_BLIND_POLLS,
+                     _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
 from .tasks import (_charge_stop, _charge_tasks, _drain_stop,
                     _drain_tasks, _flash_tasks, task_store,
@@ -561,6 +562,7 @@ class DrainOp(Operation):
                 event_log.log(serial, codename, "drain_reading", pct=start_pct)
                 log.info("%s: drain test started at %d%%", codename, start_pct)
 
+            blind = 0   # consecutive failed battery reads
             while not stop_event.wait(timeout=_DRAIN_POLL_SEC):
                 # Reload config in case serial mapping changed.
                 serial  = find_serial_for_loc_port(load_config(), loc, port)
@@ -568,8 +570,34 @@ class DrainOp(Operation):
                 if stop_event.is_set():
                     break
                 if new_pct is None:
-                    log.warning("%s: drain test: poll failed — skipping", codename)
+                    # A drain test deliberately discharges the watch, so losing
+                    # the reading is not a cosmetic gap — it is the loop
+                    # discharging blind with no way to see the floor coming.
+                    # Two independent bounds, because a watch that stops
+                    # enumerating as it weakens is exactly the case that bit us:
+                    # a hard cap on consecutive misses, and an extrapolation
+                    # from the measured rate so a slow watch cannot coast under
+                    # the floor while still inside the cap.
+                    blind += 1
+                    est = None
+                    rate = task.get("drain_rate")
+                    if rate and rate > 0 and task.get("last_ts"):
+                        est = (task["last_pct"]
+                               - rate * (time.time() - task["last_ts"]) / 3600)
+                    if blind >= _DRAIN_MAX_BLIND_POLLS or (
+                            est is not None and est <= _DRAIN_FLOOR_PCT):
+                        task["blind_abort"] = True
+                        log.error("%s: drain test: %d consecutive failed reads "
+                                  "(last seen %s%%, estimated %s%%) — aborting "
+                                  "and restoring power rather than discharging "
+                                  "blind", codename, blind, task.get("last_pct"),
+                                  "?" if est is None else f"{est:.0f}")
+                        break
+                    log.warning("%s: drain test: poll failed (%d/%d blind) — "
+                                "retrying", codename, blind,
+                                _DRAIN_MAX_BLIND_POLLS)
                     continue
+                blind = 0
 
                 now = time.time()
                 task["readings"].append({"ts": now, "pct": new_pct})
@@ -600,16 +628,29 @@ class DrainOp(Operation):
             # so a completed test doesn't leave the watch stored near the floor.
             # Only when it ran to completion (a user stop leaves it as-is).
             serial = task.get("serial")
-            if (charge_cfg.drain_rest_recharge and serial
-                    and not stop_event.is_set()):
-                log.info("%s: recharging to rest band (%d%%) after drain",
-                         codename, charge_cfg.low_threshold)
-                _ensure_port_powered(codename, loc, port)
-                if wait_serial_online(serial, 5, 4):
-                    charge_to_target(codename, serial, charge_cfg, loc, port,
-                                     target=charge_cfg.low_threshold)
-            # Return the watch to rest: shut it down instead of leaving it on.
-            _end_port(loc, port, serial, charge_cfg, "drain ended")
+            if task.get("blind_abort"):
+                # The watch went unreadable while discharging. Leave the port
+                # powered so the cell recovers, and skip the usual end-of-test
+                # power-off — that would strand an already-low watch off charge,
+                # which is the deep-discharge path this guard exists to prevent.
+                log.warning("%s: leaving port powered after blind drain abort",
+                            codename)
+                try:
+                    uhubctl_set_power(loc, port, True)
+                except RuntimeError as e:
+                    log.warning("%s: could not restore power after blind "
+                                "drain abort: %s", codename, e)
+            else:
+                if (charge_cfg.drain_rest_recharge and serial
+                        and not stop_event.is_set()):
+                    log.info("%s: recharging to rest band (%d%%) after drain",
+                             codename, charge_cfg.low_threshold)
+                    _ensure_port_powered(codename, loc, port)
+                    if wait_serial_online(serial, 5, 4):
+                        charge_to_target(codename, serial, charge_cfg, loc, port,
+                                         target=charge_cfg.low_threshold)
+                # Return the watch to rest: shut it down instead of leaving it on.
+                _end_port(loc, port, serial, charge_cfg, "drain ended")
             _save_drain_results(task, slot, codename)
 
 

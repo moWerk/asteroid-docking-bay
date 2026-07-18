@@ -15,6 +15,11 @@ from .config import charge_config
 
 _DRAIN_FLOOR_PCT   = 15   # stop test when battery reaches this level
 _DRAIN_POLL_SEC    = 30 * 60  # poll interval: 30 minutes
+# A failed battery read costs a whole poll interval of blind discharge, so the
+# drain loop cannot keep retrying forever: rubyfish (2026-07-14) stopped
+# enumerating mid-test, froze the displayed reading at 71%, and discharged past
+# the floor to 0% / 3.18V unseen. Cap consecutive blind polls.
+_DRAIN_MAX_BLIND_POLLS = 3
 _DRAIN_RESULTS_DIR = Path.home() / ".local/share/asteroid-docking-bay/drain-tests"
 
 
