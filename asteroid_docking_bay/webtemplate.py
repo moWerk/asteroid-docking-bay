@@ -62,7 +62,7 @@ _WEB_TEMPLATE = """\
     .cc-act:hover{background:#0d1f3a}
     .cc-act.done{border-color:#3fb950;color:#3fb950}
     /* Row action floating menus */
-    .btn.pw{border-color:#f0883e;color:#f0883e}
+    .btn.pw{border-color:#f0883e;color:#fff}
     .btn.pw:hover{background:#2a1a0e}
     .menu{position:fixed;z-index:110;display:none;min-width:172px;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
     .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
@@ -93,6 +93,9 @@ _WEB_TEMPLATE = """\
     .strip{margin-left:8px;display:inline-flex;gap:7px;align-items:center;vertical-align:middle}
     .strip .svgw{cursor:default;line-height:0}
     .strip .ib{font-size:12px;line-height:1;font-weight:700}
+    .strip .chgop{color:#f2cc60;background:#238636;border-radius:50%;padding:2px}
+    .strip .drainop{color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
+    @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
     .strip .svgw.spark{cursor:pointer}
     .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
@@ -149,14 +152,14 @@ _WEB_TEMPLATE = """\
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .ico{background:none;border:1px solid #30363d;color:#6e7681;padding:2px 6px;border-radius:4px;cursor:pointer;font:13px monospace;vertical-align:middle;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .18em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .ico:hover{background:#21262d;color:#c9d1d9}
     .ico:active{transform:scale(.88);transition:transform 55ms ease-out}
     .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .18em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .fl{border-color:#58a6ff;color:#58a6ff}.fl:hover{background:#111d2e}
+    .fl{border-color:#58a6ff;color:#fff}.fl:hover{background:#111d2e}
     .ch{border-color:#3fb950;color:#3fb950}.ch:hover{background:#0f2a18}
     .ht{border-color:#6e7681;color:#6e7681}.ht:hover{background:#1c1c1c}
     .hcut{border-color:#f85149;color:#f85149}.hcut:hover{background:#2a0d0b}
@@ -164,7 +167,7 @@ _WEB_TEMPLATE = """\
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn.dr{border-color:#388bfd;color:#388bfd}
-    .btn.wb{border-color:#bc8cff;color:#bc8cff}.btn.wb:hover{background:#1d1430}
+    .btn.wb{border-color:#bc8cff;color:#fff}.btn.wb:hover{background:#1d1430}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -212,7 +215,8 @@ _WEB_TEMPLATE = """\
                      letter-spacing:.5px;flex:none;font-weight:400}
       .wr td:nth-child(10){display:block;text-align:left;padding-top:10px}  /* actions span the card */
       /* Bigger, tappable controls */
-      .wr .btn,.wr .tgl,.wr .ico{font-size:15px;padding:9px 13px;margin:3px 6px 3px 0}
+      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
+      .wr .ico{font-size:15px;width:2.6em;height:2.6em;padding:0;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
       .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
@@ -312,8 +316,13 @@ function mkstrip(p,wearH){
   }else if(p.codename){
     out+=`<span class="ib dim" title="never drain-tested — run a drain test to rate standby life">?</span>`;
   }
-  // 2. watch-side charge state (live only) — delivered-power ground truth.
-  if(p.adb==='device'&&p.charge_status){
+  // 2. active dock op first (charging = yellow bolt on a green disc; drain
+  //    test = a dim pulse), else the watch-side charge state (ground truth).
+  if(p.charging_active){
+    out+=`<span class="svgw chgop" title="charging to target">${svgicon('flash')}</span>`;
+  }else if(p.drain&&p.drain.active){
+    out+=`<span class="svgw drainop" title="drain test running">${svgicon('batterydead')}</span>`;
+  }else if(p.adb==='device'&&p.charge_status){
     const cs=p.charge_status;
     if(cs==='Charging')out+=`<span class="svgw on" title="charging (delivered power confirmed)">${svgicon('flash')}</span>`;
     else if(cs==='Full')out+=`<span class="ib on" title="battery full">&#10003;</span>`;
@@ -476,8 +485,8 @@ function render(data){
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
-          `<td>`+(p.adb==='device'
-            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
+          `<td>`+(p.serial
+            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
             :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
@@ -488,8 +497,8 @@ function render(data){
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
           (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
+          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
