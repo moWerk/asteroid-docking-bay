@@ -76,6 +76,9 @@ def _watch_cc(args):
     ever saw it) stamped stale + last_live_ts, so the CC shows dimmed old
     values with an age rather than a bare 'no data'."""
     serial = args["serial"]
+    # Passive standby drain measured across power-off→boot (event log), honest
+    # because it carries no charge-bump. Always current, so fold into either path.
+    standby = event_log.standby_off_to_on_rate(serial, None)
     data = Watch(serial).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
@@ -83,9 +86,12 @@ def _watch_cc(args):
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
         geo = (last_seen.get(serial) or {}).get("geometry")
+        extra = {}
         if geo:
-            data = {**data, "geometry": geo, "resolution": geo.get("resolution")}
-        return data
+            extra = {"geometry": geo, "resolution": geo.get("resolution")}
+        if standby is not None:
+            extra["standby_measured"] = round(standby, 2)
+        return {**data, **extra} if extra else data
     cached = last_seen.get(serial)
     if cached and cached.get("cc"):
         blob = dict(cached["cc"])
@@ -94,6 +100,8 @@ def _watch_cc(args):
         if cached.get("geometry"):
             blob["geometry"] = cached["geometry"]
             blob["resolution"] = cached["geometry"].get("resolution")
+        if standby is not None:
+            blob["standby_measured"] = round(standby, 2)
         return blob
     return {}
 

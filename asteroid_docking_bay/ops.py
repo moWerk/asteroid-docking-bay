@@ -103,6 +103,15 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
                 uhubctl_set_power(loc, port, True)
                 wait_serial_online(serial, 5, 4)
             log.info("%s: graceful poweroff (%s)", serial, reason or "op end")
+            # Snapshot battery % at power-off: compared to the % at the next
+            # boot it yields a TRUE standby-drain rate — on battery the whole
+            # time with no reads, so none of the drain-test charge-bump that
+            # overrates standby. Best-effort. (A watch taken off the rig to be
+            # worn is excluded downstream by the battery-rise / wear guards.)
+            off_pct = get_battery_level(serial)
+            if off_pct is not None:
+                cn = find_codename_for_loc_port(load_config(), loc, port)
+                event_log.log(serial, cn, "power_off", pct=off_pct)
             _run(f"adb -s {serial} shell poweroff", check=False, timeout=10)
     except Exception as exc:
         log.debug("graceful poweroff of %s failed: %s", serial, exc)

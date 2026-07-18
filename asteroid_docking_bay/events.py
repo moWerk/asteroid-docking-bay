@@ -113,6 +113,37 @@ class EventLog:
             return summ["rate"]
         return None
 
+    def standby_off_to_on_rate(self, serial: "str | None",
+                               codename: "str | None",
+                               events: "list[dict] | None" = None) -> "float | None":
+        """True standby %/hour from the last graceful power-off to the next
+        boot reading.
+
+        The watch is on battery the whole interval with NO reads between, so
+        this carries none of the drain-test charge-bump that overrates standby
+        (only the single ~40s boot-read bump at the far end). Pairs each
+        power_off with the first battery reading after it and returns the most
+        recent such drop. A period where the battery ROSE is excluded — standby
+        only falls, so a rise means it was charged off the rig (worn). None
+        until a usable pair exists."""
+        evs = events if events is not None else self.read(serial, codename)
+        off: "tuple[float, float] | None" = None   # (pct, ts) of last power_off
+        rate: "float | None" = None
+        for e in evs:
+            ev = e.get("event")
+            if ev == "power_off" and e.get("pct") is not None and e.get("ts") is not None:
+                off = (e["pct"], e["ts"])
+            elif off is not None and ev in ("check_reading", "drain_reading",
+                                            "charge_start"):
+                pct, ts = e.get("pct"), e.get("ts")
+                if pct is not None and ts is not None:
+                    dt_h = (ts - off[1]) / 3600.0
+                    drop = off[0] - pct
+                    if dt_h > 0.05 and drop > 0:   # exclude off-rig charge + too-short
+                        rate = drop / dt_h
+                    off = None                      # this power_off is paired
+        return rate
+
     def next_due_ts(self, serial: "str | None", codename: "str | None",
                     cfg: dict) -> "float | None":
         """When this watch should next be woken for a charge check, as an

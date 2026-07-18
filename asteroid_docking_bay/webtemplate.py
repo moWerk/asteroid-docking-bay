@@ -583,7 +583,8 @@ function renderCC(d){
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
     kv('Voltage',bv?(bv/1e6).toFixed(3)+' V':null)+kv('Current',cur)+
     kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
-    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null)));
+    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
+    kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
   const net=sec('Network &amp; links',
     kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('IP',d.ip)+
     kv('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'))+

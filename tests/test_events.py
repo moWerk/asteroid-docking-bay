@@ -34,6 +34,39 @@ def reading(ts_h, pct):
     return {"event": "check_reading", "ts": ts_h * 3600.0, "pct": pct}
 
 
+def ev(event, ts_h, pct=None):
+    d = {"event": event, "ts": ts_h * 3600.0}
+    if pct is not None:
+        d["pct"] = pct
+    return d
+
+
+def test_off_to_on_standby_rate(tmp_path):
+    el = make_log(tmp_path)
+    # Powered off at 100%, booted 24h later at 76% → 24% over 24h = 1%/h.
+    evs = [ev("power_off", 0, 100), ev("check_reading", 24, 76)]
+    assert el.standby_off_to_on_rate("S", None, evs) == 1.0
+
+
+def test_off_to_on_excludes_battery_rise(tmp_path):
+    el = make_log(tmp_path)
+    # Came back HIGHER → charged off the rig (worn), not standby → excluded.
+    evs = [ev("power_off", 0, 50), ev("check_reading", 10, 90)]
+    assert el.standby_off_to_on_rate("S", None, evs) is None
+
+
+def test_off_to_on_returns_most_recent_pair(tmp_path):
+    el = make_log(tmp_path)
+    evs = [ev("power_off", 0, 100), ev("check_reading", 10, 90),   # 1%/h
+           ev("power_off", 20, 100), ev("charge_start", 30, 80)]   # 2%/h
+    assert el.standby_off_to_on_rate("S", None, evs) == 2.0
+
+
+def test_off_to_on_none_without_a_pair(tmp_path):
+    el = make_log(tmp_path)
+    assert el.standby_off_to_on_rate("S", None, [ev("power_off", 0, 100)]) is None
+
+
 def test_loss_rate_median(tmp_path):
     el = make_log(tmp_path)
     # 1%/h, 1%/h, then a 3%/h outlier interval: median stays 1.
