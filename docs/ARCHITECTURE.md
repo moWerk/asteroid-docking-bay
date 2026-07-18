@@ -12,6 +12,9 @@ a pytest suite for the pure logic.
 bin/asteroid-docking-bay      thin launcher: finds the package, calls cli.main()
 asteroid_docking_bay/
     util.py        run() subprocess wrapper, logging setup, shared logger
+    transport.py   ADB/SSH transport: one watch's shell/pull/push, over adb
+                   (by serial) or ssh (USB-SSH 192.168.2.15 / WiFi-SSH IP);
+                   Watch routes every command through it
     adb.py         adb devices/-l parsing, per-serial state, shell, battery,
                    codename + OS detection, ADB wait loops
     config.py      config file I/O + defaults, config lock, lookup helpers

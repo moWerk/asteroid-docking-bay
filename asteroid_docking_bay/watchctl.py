@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, adb_shell, get_watch_codename
+from .transport import AdbTransport
 from .config import ChargeConfig, find_serial_for_codename, save_config
 
 
@@ -197,14 +198,17 @@ class Watch:
     ceres-session actions (screenshot, notification) that must not run as
     root because they talk to the user's Wayland compositor / session D-Bus."""
 
-    def __init__(self, serial: str):
+    def __init__(self, serial: str, transport=None):
         self.serial = serial
+        # Reach the watch over ADB by default; a caller can pass an SshTransport
+        # for a watch in SSH/developer mode. Every method issues the same
+        # command through it, so all features work over either link.
+        self.t = transport or AdbTransport(serial)
 
     def cc_data(self) -> dict:
-        """Read About-style stats + connman toggle states in one adb batch.
+        """Read About-style stats + connman toggle states in one batch.
         Returns {} if unreachable."""
-        rc, out, _ = _run(f"adb -s {self.serial} shell {shlex.quote(_CC_SCRIPT)}",
-                          check=False, timeout=12)
+        rc, out, _ = self.t.shell(shlex.quote(_CC_SCRIPT), timeout=12)
         if rc != 0 or not out.strip():
             return {}
         info: dict = {}
@@ -245,8 +249,7 @@ class Watch:
         Resolution comes from /sys/class/graphics/fb0/modes ('U:360x360p-...');
         fb0/virtual_size is double-buffered (height doubled), so it is NOT a
         reliable panel size. Returns {} when nothing could be read."""
-        rc, conf, _ = _run(f"adb -s {self.serial} shell "
-                           f"cat /etc/asteroid/machine.conf", check=False, timeout=10)
+        rc, conf, _ = self.t.shell("cat /etc/asteroid/machine.conf", timeout=10)
         geo: dict = {}
         if rc == 0 and conf.strip():
             vals: dict[str, str] = {}
@@ -260,8 +263,7 @@ class Watch:
             geo["flat_tire"] = int(flat) if flat.isdigit() else 0
             if vals.get("MACHINE"):
                 geo["machine"] = vals["MACHINE"]
-        rc2, modes, _ = _run(f"adb -s {self.serial} shell "
-                             f"cat /sys/class/graphics/fb0/modes", check=False, timeout=8)
+        rc2, modes, _ = self.t.shell("cat /sys/class/graphics/fb0/modes", timeout=8)
         if rc2 == 0:
             m = re.search(r"(\d+)x(\d+)", modes)
             if m:
@@ -272,8 +274,7 @@ class Watch:
     def toggle(self, tech: str, on: bool) -> bool:
         """Enable/disable a connman technology (wifi|bluetooth)."""
         action = "enable" if on else "disable"
-        rc, _, err = _run(f"adb -s {self.serial} shell connmanctl {action} {tech}",
-                          check=False, timeout=12)
+        rc, _, err = self.t.shell(f"connmanctl {action} {tech}", timeout=12)
         if rc != 0:
             log.warning("toggle %s %s on %s failed: %s", action, tech,
                         self.serial, err.strip() or f"rc={rc}")
@@ -283,12 +284,10 @@ class Watch:
         """Sync the watch's clock + timezone from the host: `date -s @epoch`
         then `timedatectl set-timezone`. Returns the tz applied, or None."""
         epoch = int(time.time())
-        _run(f"adb -s {self.serial} shell date -s @{epoch}", check=False,
-             timeout=10)
+        self.t.shell(f"date -s @{epoch}", timeout=10)
         tz = _host_timezone()
         if tz:
-            _run(f"adb -s {self.serial} shell timedatectl set-timezone "
-                 f"{shlex.quote(tz)}", check=False, timeout=10)
+            self.t.shell(f"timedatectl set-timezone {shlex.quote(tz)}", timeout=10)
         log.info("%s: synced time from host (epoch=%d tz=%s)",
                  self.serial, epoch, tz)
         return tz
@@ -296,8 +295,7 @@ class Watch:
     def user_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
         """Run a command in the watch's ceres user session (not as root)."""
         inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
-        return _run(f"adb -s {self.serial} shell {shlex.quote(inner)}",
-                    check=False, timeout=timeout)
+        return self.t.shell(shlex.quote(inner), timeout=timeout)
 
     def notify(self) -> bool:
         """Send a test notification."""
@@ -323,23 +321,20 @@ class Watch:
         remote = "/home/ceres/.dockingbay_ss.jpg"
         self.user_cmd(f"screenshottool {remote} 0", timeout=15)
         local = self.last_screenshot_path()
-        rc, _, _ = _run(f"adb -s {self.serial} pull {remote} "
-                        f"{shlex.quote(str(local))}", check=False, timeout=15)
-        _run(f"adb -s {self.serial} shell rm -f {remote}", check=False, timeout=8)
+        rc, _, _ = self.t.pull(remote, shlex.quote(str(local)), timeout=15)
+        self.t.shell(f"rm -f {remote}", timeout=8)
         return local if (rc == 0 and local.exists()
                          and local.stat().st_size > 0) else None
 
     def buzz(self, ms: int = 300) -> bool:
         """Vibrate briefly — locate/identify the watch in a full dock."""
-        rc, _, _ = _run(f'adb -s {self.serial} shell "echo {ms} > '
-                        f'/sys/class/timed_output/vibrator/enable"',
-                        check=False, timeout=8)
+        rc, _, _ = self.t.shell(f'"echo {ms} > '
+                                f'/sys/class/timed_output/vibrator/enable"', timeout=8)
         return rc == 0
 
     def screen(self, on: bool) -> bool:
         """Force the screen on (mce demo mode) or release it."""
-        rc, _, _ = _run(f"adb -s {self.serial} shell mcetool -D "
-                        f"{'on' if on else 'off'}", check=False, timeout=10)
+        rc, _, _ = self.t.shell(f"mcetool -D {'on' if on else 'off'}", timeout=10)
         return rc == 0
 
     def _backup_dir(self) -> Path:
@@ -356,10 +351,8 @@ class Watch:
         items: list[dict] = []
         for label, remote in _BACKUP_PATHS:
             local = dest / Path(remote).name
-            _run(f"rm -rf {shlex.quote(str(local))}", check=False)
-            rc, _, err = _run(
-                f"adb -s {self.serial} pull {remote} {shlex.quote(str(dest))}",
-                check=False, timeout=120)
+            _run(f"rm -rf {shlex.quote(str(local))}", check=False)   # host-side clean
+            rc, _, err = self.t.pull(remote, shlex.quote(str(dest)), timeout=120)
             ok = rc == 0 and local.exists()
             items.append({"name": label, "ok": ok,
                           "error": None if ok else (err.strip() or f"rc={rc}")})
@@ -394,26 +387,21 @@ class Watch:
             # Push the dir into the remote *parent*; adb merges into the
             # existing target rather than nesting a duplicate.
             parent = str(Path(remote).parent)
-            rc, _, err = _run(
-                f"adb -s {self.serial} push {shlex.quote(str(local))} {parent}",
-                check=False, timeout=120)
+            rc, _, err = self.t.push(shlex.quote(str(local)), parent, timeout=120)
             if rc == 0 and remote.startswith("/home/ceres/"):
-                _run(f"adb -s {self.serial} shell chown -R ceres:ceres {remote}",
-                     check=False, timeout=15)
+                self.t.shell(f"chown -R ceres:ceres {remote}", timeout=15)
             items.append({"name": label, "ok": rc == 0,
                           "error": None if rc == 0 else (err.strip() or f"rc={rc}")})
         dump = src / "dconf.dump"
         if dump.is_file():
             remote = "/tmp/.dockingbay_dconf.dump"
-            _run(f"adb -s {self.serial} push {shlex.quote(str(dump))} {remote}",
-                 check=False, timeout=15)
+            self.t.push(shlex.quote(str(dump)), remote, timeout=15)
             rc, _, _ = self.user_cmd(
                 f"HOME=/home/ceres dconf load / < {remote}", timeout=15)
-            _run(f"adb -s {self.serial} shell rm -f {remote}", check=False, timeout=8)
+            self.t.shell(f"rm -f {remote}", timeout=8)
             items.append({"name": "dconf", "ok": rc == 0, "error": None})
         # Reconnect WiFi from the restored credentials without a reboot.
-        _run(f"adb -s {self.serial} shell systemctl restart connman",
-             check=False, timeout=15)
+        self.t.shell("systemctl restart connman", timeout=15)
         ok = bool(items) and all(i["ok"] for i in items)
         log.info("%s: restore <- %s (%s)", self.serial, src,
                  "ok" if ok else "partial")
@@ -431,7 +419,7 @@ class Watch:
         for fname, cmd in _DIAG_CMDS.items():
             # Quote the whole command so its pipes/globs run on the watch, not
             # the host shell (_run uses shell=True).
-            rc, out, _ = adb_shell(self.serial, f'"{cmd}"', timeout=30)
+            rc, out, _ = self.t.shell(f'"{cmd}"', timeout=30)
             (workdir / fname).write_text(out)
             items.append({"name": fname, "ok": rc == 0 and bool(out.strip())})
         rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)

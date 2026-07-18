@@ -71,9 +71,10 @@ class SshTransport(Transport):
                     check=check, timeout=timeout)
 
     def pull(self, remote, local, timeout=15):
-        return _run(f"scp {_SSH_OPTS} root@{self.ip}:{remote} {local}",
+        # -r so a directory (backup: .config, connman) copies like `adb pull`.
+        return _run(f"scp {_SSH_OPTS} -r root@{self.ip}:{remote} {local}",
                     check=False, timeout=timeout)
 
     def push(self, local, remote, timeout=15):
-        return _run(f"scp {_SSH_OPTS} {local} root@{self.ip}:{remote}",
+        return _run(f"scp {_SSH_OPTS} -r {local} root@{self.ip}:{remote}",
                     check=False, timeout=timeout)

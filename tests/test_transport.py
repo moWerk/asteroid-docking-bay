@@ -32,8 +32,8 @@ def test_ssh_prefixes_the_same_command(monkeypatch):
     t.push("/b", "/a")
     assert calls[0][0].endswith("root@192.168.2.15 connmanctl enable wifi")
     assert calls[0][0].startswith("ssh ")
-    assert calls[1][0].endswith("root@192.168.2.15:/a /b") and calls[1][0].startswith("scp ")
-    assert calls[2][0].endswith("/b root@192.168.2.15:/a")
+    assert calls[1][0].endswith("root@192.168.2.15:/a /b") and " -r " in calls[1][0]
+    assert calls[2][0].endswith("/b root@192.168.2.15:/a") and calls[2][0].startswith("scp ")
     assert t.kind == "ssh (usb)"
 
 
