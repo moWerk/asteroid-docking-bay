@@ -20,17 +20,25 @@ fallback).
 What it does:
 
 - A web dashboard for the fleet: power, ADB and OS detection, battery, and
-  running operations, and it tracks watches you move between ports. Click a
-  watch to open a Control Center that reads its telemetry (battery
-  voltage/current/temperature/cycles, memory, network, paired phone) and
-  controls its hardware over ADB: WiFi, Bluetooth, screen, buzz-to-find,
-  clock sync, screenshots.
-- Battery care: charge to a target rather than on a timer, a sustain job
-  every 12 hours, and a workbench mode that keeps a watch in-band while you
-  work on it over WiFi/SSH.
-- Battery triage: standby drain tests with saved history, to see which
-  watches still hold a day of standby (⌚) and which are battery-swap
-  candidates worth keeping only as dock-powered dev units (🪫).
+  running operations, and it tracks watches you move between ports. When a
+  watch drops off the bus its last-known readings stay on screen — marked
+  stale, with a "last live" age — instead of blanking. Click a watch to open
+  a Control Center that reads its telemetry (battery
+  voltage/current/temperature/cycles, memory, network, screen resolution,
+  paired phone) and controls its hardware over ADB: WiFi, Bluetooth, screen,
+  buzz-to-find, clock sync, screenshots.
+- Watch identity, exactly: each row shows the watch's product photo and its
+  precise hardware codename — even for variants that share a factory image (a
+  TicWatch E2 reads as `tunny`, not the `skipjack` image it actually ships),
+  resolved from the screen resolution. Click the photo to see the watch with
+  its **live screen composited inside it**.
+- Battery care: charge one or several watches at once to a target rather than
+  on a timer, a sustain job every 12 hours, and a workbench mode that keeps a
+  watch in-band while you work on it over WiFi/SSH.
+- Battery triage: standby drain tests with saved history, surfaced in a
+  per-row status strip, to see which watches still hold a day of standby and
+  which are battery-swap candidates worth keeping only as dock-powered dev
+  units.
 - Fleet flashing: fetch, checksum, and flash AsteroidOS nightlies to every
   docked watch at once.
 
@@ -47,9 +55,12 @@ What it does:
    the battery over ADB, charges it to 80% if below 40%, then powers the
    port back off.
 
-Battery level is read from `/sys/class/power_supply/battery/capacity` over
-ADB shell. This is the standard Linux power-supply class — `dumpsys` and
-`getprop` are Android-only and not available on AsteroidOS.
+Battery level is read from the watch's `power_supply` class over ADB shell,
+preferring the named hardware fuel gauge (`nanohub_fuelgauge-*/capacity`)
+over the generic `battery` node where present — on some watches the generic
+node is a separate, miscalibrated source. This is the standard Linux
+power-supply class; `dumpsys` and `getprop` are Android-only and not
+available on AsteroidOS.
 
 ## Requirements
 
@@ -291,11 +302,14 @@ The charge, drain and workbench operations in detail:
   drain rate, estimated 100→15% standby life, and a wearability verdict. A
   rate that rises across months means battery wear.
 
-  Each watch's latest drain result also annotates its battery column
-  permanently: **⌚ ~3d** means the battery holds at least
-  `wearable_min_hours` (default 24 h) of standby — wearable; **🪫 ~9h**
-  marks a battery-swap candidate that's best kept as a dock-powered dev /
-  flash-test watch.
+  Each watch's latest drain result also shows permanently in its **Stats**
+  column: a watch icon with **~3d** means the battery holds at least
+  `wearable_min_hours` (default 24 h) of standby — wearable; a dead-battery
+  icon with **~9h** marks a battery-swap candidate best kept as a dock-powered
+  dev / flash-test watch. The Stats strip also carries a watch-side charging
+  indicator, a **?** until a watch has ever been drain-tested, a
+  click-to-open battery-history sparkline, and a "last live" age when the
+  watch is off the bus.
 - **🔧 Workbench** — check a watch out for hands-on work. The rig powers it
   up and then holds its battery in the low–high band for the whole session:
   charge to `high_threshold`, rest with the port off, re-check every
@@ -313,7 +327,9 @@ The charge, drain and workbench operations in detail:
 mirror of the watch's own About page and quick settings, read in a single ADB
 batch:
 
-- **System** — kernel, Qt, SoC, CPU clock, uptime, boot reason, memory, storage.
+- **System** — kernel, Qt, SoC, CPU clock, uptime, boot reason, memory,
+  storage, screen resolution, and the flashed **machine image** (which names
+  the real image behind a shared-image variant — see below).
 - **Battery** — charge, health, technology, voltage, **real charge/discharge
   current in mA**, temperature, cycle count, and USB-input voltage (confirms
   the port is actually delivering power, not just switched on).
