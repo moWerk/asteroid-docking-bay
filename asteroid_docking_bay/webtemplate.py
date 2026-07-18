@@ -587,7 +587,12 @@ function renderCC(d){
     kv('Load',d.load)+kv('Threads',d.threads)+
     kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
     kv('Resolution',d.resolution)+
-    kv('Machine (image)',d.geometry&&d.geometry.machine));
+    kv('Machine (image)',d.geometry&&d.geometry.machine)+
+    // The bootloader version string names the true hardware, which is the only
+    // thing that distinguishes watches sharing an image (rover vs rubyfish).
+    // Worth showing verbatim: it is the field the porting community reads to
+    // identify a device, so a human can check our detection against it.
+    kv('Bootloader',d.geometry&&d.geometry.bootloader));
   const bat=sec('Battery',
     kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
