@@ -56,6 +56,7 @@ _JSON_ROUTES = [
     ("POST", "/api/backup/<loc>/<port:int>",       "watch.backup",    {},             False),
     ("POST", "/api/restore/<loc>/<port:int>",      "watch.restore",   {},             False),
     ("POST", "/api/diagnostics/<loc>/<port:int>",  "watch.diagnostics", {},           False),
+    ("POST", "/api/fbreport/<loc>/<port:int>",     "watch.fbreport",  {},             False),
     ("POST", "/api/switch-adb",                    "ssh.switch_adb",  {},             True),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
@@ -176,11 +177,12 @@ def serve(args, cfg: dict):
         from .watchctl import DIAG_ROOT
         safe = Path(name).name
         f = DIAG_ROOT / safe
-        if not (safe.endswith(".tar.gz") and f.is_file()):
+        if not (safe.endswith((".tar.gz", ".txt")) and f.is_file()):
             resp.status = 404
             resp.content_type = "text/plain"
             return b""
-        resp.content_type = "application/gzip"
+        resp.content_type = ("text/plain" if safe.endswith(".txt")
+                             else "application/gzip")
         resp.set_header("Content-Disposition", f'attachment; filename="{safe}"')
         return f.read_bytes()
 

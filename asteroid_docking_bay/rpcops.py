@@ -34,9 +34,9 @@ from .config import (_config_lock, _store_smart_verdict, charge_config,
                      flash_config, load_config, save_config)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
-from .watchctl import Watch
+from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
-from .fastboot import _switch_ssh_to_adb
+from .fastboot import _switch_ssh_to_adb, fastboot_getvar_all
 from .watchimg import watch_image_bytes
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
@@ -193,6 +193,29 @@ def _watch_diagnostics(args):
     if res.get("path"):
         res["name"] = res["path"].rsplit("/", 1)[-1]
     return res
+
+
+@DISPATCH.op("watch.fbreport")
+def _watch_fbreport(args):
+    """Save `fastboot getvar all` as a downloadable text report — the
+    bootloader's ground truth (identity, boardid, BT/WLAN MACs, bootloader
+    version, unlock/secure state, live battery-voltage + battery-soc-ok,
+    partition table). Works on a watch too flat to boot, so it's the one
+    report you can still take from a bricked or bootlooping unit."""
+    loc, port = args["loc"], int(args["port"])
+    cfg = load_config()
+    serial = find_serial_for_loc_port(cfg, loc, port)
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    text = fastboot_getvar_all(serial)
+    if not text or ":" not in text:
+        return {"ok": False,
+                "error": "no fastboot device — put the watch in bootloader first"}
+    codename = find_codename_for_loc_port(cfg, loc, port) or serial
+    DIAG_ROOT.mkdir(parents=True, exist_ok=True)
+    name = f"{codename}-{time.strftime('%Y%m%d-%H%M%S')}-fastboot.txt"
+    (DIAG_ROOT / name).write_text(text + "\n")
+    return {"ok": True, "name": name, "lines": len(text.splitlines())}
 
 
 @DISPATCH.op("watch.screenshot")

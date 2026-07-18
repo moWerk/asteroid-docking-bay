@@ -791,6 +791,7 @@ function menuFlash(ev,slot){
   openMenu(ev,
     mi('','Backup data',`doBackup('${slot}')`)+
     mi('','Restore data',`doRestore('${slot}')`)+
+    mi('info','Fastboot report',`doFbReport('${slot}')`)+
     '<div class="menu-sep"></div>'+
     mi('','Flash nightly',`doFl('${slot}')`)+
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`)+
@@ -819,6 +820,13 @@ function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+
     a.download=d.name;document.body.appendChild(a);a.click();a.remove();
   }else{toast(d.error||'diagnostics failed');}
 }).catch(()=>toast('diagnostics failed'));}
+function doFbReport(c){toast('reading bootloader…');fetch('/api/fbreport/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
+  if(d.name){
+    toast('fastboot report ('+d.lines+' lines) — downloading');
+    const a=document.createElement('a');a.href='/api/diagnostics/download/'+encodeURIComponent(d.name);
+    a.download=d.name;document.body.appendChild(a);a.click();a.remove();
+  }else{toast(d.error||'fastboot report failed');}
+}).catch(()=>toast('fastboot report failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}

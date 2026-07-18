@@ -94,6 +94,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `op.charge.start / stop` (same for drain, workbench) | Operation classes |
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
+| `watch.fbreport` | fastboot getvar all -> downloadable text report |
 | `config.hide / hide_hub` | config mutations |
 | `flash.start`, `onboard.start` | streaming ops |
 

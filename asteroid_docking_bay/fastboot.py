@@ -74,6 +74,23 @@ def _fastboot_getvar_product(serial: str) -> str | None:
     return None
 
 
+def fastboot_getvar_all(serial: str) -> str:
+    """The device's full `getvar all` dump as text — the bootloader's ground
+    truth: identity (product, serialno, boardid), BT/WLAN MACs, bootloader
+    version, unlock/secure state, live battery-voltage + battery-soc-ok, and
+    the partition table. Readable even on a watch too flat to boot.
+
+    fastboot writes getvar output to stderr, and prefixes each line with
+    "(bootloader) " — both are normalised here."""
+    _, out, err = _run(f"fastboot -s {serial} getvar all", check=False, timeout=20)
+    lines = []
+    for line in (err + "\n" + out).splitlines():
+        line = line.replace("(bootloader) ", "", 1).rstrip()
+        if line and not line.startswith(("Finished.", "Total time:")):
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def _wait_for_fastboot(known_serials: set[str], timeout: int = 30) -> str | None:
     """Wait for a fastboot serial not present in known_serials."""
     deadline = time.monotonic() + timeout

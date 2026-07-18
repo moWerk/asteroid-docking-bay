@@ -44,7 +44,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.cc", "watch.timeline",
         "watch.toggle", "watch.settime", "watch.notify",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
-        "watch.backup", "watch.restore", "watch.diagnostics",
+        "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb",
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
         "port.bootloader", "port.hide", "hub.hide",
@@ -159,6 +159,28 @@ def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(rpcops, "last_seen", LastSeen(tmp_path / "ls.json"))
     monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
+
+
+def test_fbreport_writes_downloadable_text(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "DIAG_ROOT", tmp_path)
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    monkeypatch.setattr(rpcops, "find_codename_for_loc_port", lambda c, l, p: "sturgeon")
+    monkeypatch.setattr(rpcops, "fastboot_getvar_all",
+                        lambda s: "product:sturgeon\nbattery-voltage:3668mV")
+    d = rpcops.DISPATCH._data["watch.fbreport"]({"loc": "1-2", "port": 1})
+    assert d["ok"] and d["name"].startswith("sturgeon-")
+    assert d["name"].endswith("-fastboot.txt") and d["lines"] == 2
+    assert "battery-voltage:3668mV" in (tmp_path / d["name"]).read_text()
+
+
+def test_fbreport_needs_a_fastboot_device(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "DIAG_ROOT", tmp_path)
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    monkeypatch.setattr(rpcops, "fastboot_getvar_all", lambda s: "")
+    d = rpcops.DISPATCH._data["watch.fbreport"]({"loc": "1-2", "port": 1})
+    assert d["ok"] is False and "bootloader" in d["error"]
 
 
 def test_watch_timeline_returns_battery_points(monkeypatch):
