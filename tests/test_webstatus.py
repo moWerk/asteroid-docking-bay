@@ -148,3 +148,36 @@ def test_geometry_cache_refreshes_when_the_probe_gained_a_field(monkeypatch, tmp
         raise AssertionError("re-probed a cache that was already current")
     monkeypatch.setattr(ws, "Watch", _boom)
     assert ws._geometry_view("device", "S1")["bootloader"] == "rover-03.02.39.03.16"
+
+
+def test_fb_draining_flags_a_watch_left_in_the_bootloader(monkeypatch, tmp_path):
+    """A watch that vanished from an unpowered port while it was in fastboot is
+    still running on battery: LK does not shut down when USB goes away
+    (measured 2026-07-18 — sturgeon reappeared 4s after power returned, where a
+    cold boot takes ~20s). With the port off there is nothing left to read, so
+    the only way to warn is to remember the state it vanished in. This is the
+    failure that deep-discharged sturgeon to 0%."""
+    from asteroid_docking_bay import webstatus as ws
+    from asteroid_docking_bay.lastseen import LastSeen
+
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(ws, "last_seen", ls)
+
+    ls.record("S1", last_conn_state="fastboot")
+    assert (ls.get("S1") or {}).get("last_conn_state") == "fastboot"
+
+    # A watch last seen booted must NOT raise the warning — only fastboot
+    # keeps running through a VBUS cut in the way this flag describes.
+    ls.record("S2", last_conn_state="device")
+    assert (ls.get("S2") or {}).get("last_conn_state") == "device"
+
+
+def test_last_conn_state_is_not_erased_by_an_offline_poll(tmp_path):
+    """record() ignores None fields, so a poll that sees nothing must not wipe
+    the remembered state — that is precisely when the warning is needed."""
+    from asteroid_docking_bay.lastseen import LastSeen
+    ls = LastSeen(tmp_path / "ls.json")
+    ls.record("S1", last_conn_state="fastboot")
+    ls.record("S1", last_conn_state=None, battery=None)
+    assert (ls.get("S1") or {}).get("last_conn_state") == "fastboot", (
+        "an offline poll erased the state the warning depends on")

@@ -280,6 +280,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
             else:
                 battery, screen_forced, charge_status = None, False, None
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None
+            # Remember that a watch was last seen in the bootloader. Cutting
+            # VBUS does NOT stop a watch in fastboot — measured 2026-07-18: it
+            # keeps running on battery, invisible to the host, until flat. That
+            # is how sturgeon reached 0%. Once the port is off the watch cannot
+            # be seen at all, so the only way to warn is to remember the state
+            # it was in when it vanished.
+            if adb_state in ("fastboot", "device", "ssh"):
+                last_seen.record(serial, last_conn_state=adb_state)
             # Store the live reading, or fall back to the last-seen one when
             # the watch is off the bus, so the row shows a stale value + age
             # rather than a blank cell.
@@ -307,6 +315,19 @@ def _web_status_data(cfg: dict) -> list[dict]:
             not_enumerating = (slot in _enum_stuck_since
                                and time.time() - _enum_stuck_since[slot]
                                    > _ENUM_STUCK_GRACE_SEC)
+            # A watch that vanished from an unpowered port while it was in the
+            # bootloader is almost certainly still running on battery, because
+            # LK does not shut down when USB goes away. Nothing else in the UI
+            # can show this: with the port off there is no watch to read, so it
+            # drains silently — the sturgeon failure. An op owning the port is
+            # excluded: a drain test powers the port off deliberately.
+            op_owns_slot = any(
+                not tasks.get(slot, {}).get("done", True)
+                for tasks in (_charge_tasks, _drain_tasks, _workbench_tasks))
+            fb_draining = bool(
+                serial and not power and adb_state is None and not op_owns_slot
+                and (last_seen.get(serial) or {}).get("last_conn_state")
+                    == "fastboot")
             flashing  = ((slot in _flash_tasks and not _flash_tasks[slot].get("done", True))
                          or (slot in _remap_tasks and not _remap_tasks[slot].get("done", True)))
             charging_active = (slot in _charge_tasks
@@ -360,6 +381,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "charge_status": charge_status,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
+                "fb_draining": fb_draining,
                 "flashing": flashing, "empty": False,
                 "charging_active": charging_active,
                 "charge_end_ts": charge_end_ts,

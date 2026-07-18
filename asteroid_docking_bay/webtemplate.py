@@ -379,6 +379,12 @@ function mkadb(adb,fbprod,os){
   return '<span class="dim">&mdash;</span>';
 }
 function mkadbrow(p){
+  // Highest-priority warning: the watch is almost certainly awake and
+  // draining right now, and nothing else on the row can show it. Cutting VBUS
+  // does not stop a watch in the bootloader — it keeps running on battery,
+  // invisible, until flat. That is how sturgeon reached 0%.
+  if(p.fb_draining)
+    return '<span class="err" title="last seen in FASTBOOT, port now unpowered — a watch in the bootloader does NOT stop when power is cut, it keeps running on battery until flat and is invisible while it does. Power the port back on, then either boot it or power it off from the on-screen fastboot menu.">draining in fastboot?</span>';
   if(p.adb===null&&p.not_enumerating)
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
