@@ -330,7 +330,7 @@ function mkstrip(p,wearH){
     else if(cs==='Discharging')out+=`<span class="ib err" title="DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)">&#8595;</span>`;
   }
   // 3. sparkline launcher — click for the battery timeline (click, not hover).
-  if(p.serial)out+=`<span class="svgw dim spark" title="battery history — click for the timeline" onclick="openSpark('${p.serial}','${esc(p.codename||'')}',event)">${svgicon('trend')}</span>`;
+  if(p.serial)out+=`<span class="svgw dim spark" title="battery history" onclick="openSpark('${p.serial}','${esc(p.codename||'')}',event)">${svgicon('trend')}</span>`;
   // 4. last-seen age when the watch is off the bus.
   if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="ib dim" title="last live ${fmtAge(p.last_live_ts)} ago">&#8226;${fmtAge(p.last_live_ts)}</span>`;
   return out?`<span class="strip">${out}</span>`:'';
@@ -367,7 +367,7 @@ function mkadb(adb,fbprod,os){
     if(os&&os!=='unknown')return `<span class="on" title="${esc(os)} on ADB">ADB <span class="dim">${esc(os)}</span></span>`;
     return '<span class="on">ADB</span>';
   }
-  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — no ADB functions. Click to switch this watch to ADB (via 192.168.2.15).">SSH</span>`;
+  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -415,7 +415,7 @@ function render(data){
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
-        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power the port on, wait for the watch to boot (cycles once if it fails to enumerate), then identify and map it">Onboard</button>`;
+        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
@@ -423,7 +423,7 @@ function render(data){
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
+          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="dim">&mdash;</td>` +
@@ -450,7 +450,6 @@ function render(data){
         const d=(busy||p.excluded)?' disabled':'';
         const noSw=p.smart===false;
         const dp=(busy||noSw||p.excluded)?' disabled':'';
-        const noSwT=noSw?' title="port cannot switch power (not smart)"':'';
         const adb=mkadbrow(p);
         let bat;
         if(wb){
@@ -491,7 +490,7 @@ function render(data){
             :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
+          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adb}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
