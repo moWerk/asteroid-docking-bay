@@ -111,7 +111,7 @@ _WEB_TEMPLATE = """\
     .dev-frame{position:relative;display:inline-block;line-height:0}
     .dev-prod{display:block;height:230px;width:auto;max-width:44vw;position:relative;z-index:2}
     .device.cut .dev-prod{max-width:none;height:auto}   /* JS (sizeComposite) sets the width, aspect-safe */
-    .dev-shot{position:absolute;z-index:1;object-fit:cover}
+    .dev-shot{position:absolute;z-index:1;object-fit:fill}   /* the cutout IS the screen; map the shot onto it exactly, never over-scale */
     .dev-fill{position:absolute;z-index:0;background:#000}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
     .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
