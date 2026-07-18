@@ -188,3 +188,19 @@ def test_render_runs_without_throwing(tmp_path):
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0 and "RENDER_OK" in r.stdout, (
         f"render() threw when run headless:\n{r.stderr[:600]}")
+
+
+def test_refreshing_row_pulse_survives_hover():
+    """The refreshing-row pulse is the only feedback that a re-identify is in
+    flight. An !important background on the :hover rule outranks the animation
+    itself (important declarations beat keyframes), pinning the row and hiding
+    the hint exactly while the pointer is on the row being watched."""
+    hover = [ln for ln in _WEB_TEMPLATE.splitlines()
+             if ".wr.refreshing:hover" in ln]
+    assert hover, "no hover rule for a refreshing row — hover will mask the pulse"
+    assert not any("!important" in ln for ln in hover), (
+        f"!important on the refreshing-row hover rule kills the pulse "
+        f"animation it is meant to preserve: {hover}")
+    assert "@keyframes rpulsehover" in _WEB_TEMPLATE, (
+        "hovered refreshing rows need their own keyframe pulsing from the "
+        "hover colour, else the pulse is invisible under the highlight")

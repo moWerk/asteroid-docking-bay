@@ -179,7 +179,13 @@ _WEB_TEMPLATE = """\
     @keyframes bpulse{0%,100%{opacity:1}50%{opacity:.18}}
     @keyframes rpulse{0%,100%{background:transparent}50%{background:rgba(88,166,255,.06)}}
     .wr.refreshing td{animation:rpulse 1.1s ease-in-out infinite}
-    .wr.refreshing:hover td{background:transparent!important;animation:rpulse 1.1s ease-in-out infinite}
+    /* Hovering a refreshing row must not hide the pulse. A plain `background`
+       declaration would lose to :hover, and an !important one beats the
+       animation itself (important declarations outrank keyframes) — pinning
+       the row and killing the hint. So the hovered row gets its own keyframe
+       that pulses *from* the hover colour instead. */
+    @keyframes rpulsehover{0%,100%{background:#161b22}50%{background:rgba(88,166,255,.16)}}
+    .wr.refreshing:hover td{animation:rpulsehover 1.1s ease-in-out infinite}
     .btn-ref.pulsing{animation:bpulse .85s ease-in-out infinite!important;border-color:#58a6ff!important;color:#58a6ff!important}
     @keyframes pwrwarn{0%,100%{background:transparent}40%{background:rgba(248,81,73,.12)}}
     .wr.pwr-warn td{animation:pwrwarn 1.8s ease-in-out 2}
