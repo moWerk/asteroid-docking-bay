@@ -799,7 +799,15 @@ function menuPowerFb(ev,slot,powered){
     '<div class="menu-sep"></div>'+
     mi('bl','Cycle bootloader',`doBootloader('${slot}')`)+
     mi('bl','Recovery',`doRecovery('${slot}')`)+
-    (powered?'<div class="menu-sep"></div>'+mi('po','Power off',`doPoweroff('${slot}')`):''));
+    // Deliberately disabled, not hidden: the watch CAN power off from the
+    // bootloader, just not over the wire. rover and rubyfish have no `oem
+    // poweroff` command at all, and cutting VBUS does not stop a fastboot
+    // watch — it keeps running on battery until flat (measured). The
+    // on-screen menu item works because a key press calls LK's shutdown
+    // directly. Showing it greyed with the manual route is honest; hiding it
+    // would imply the watch cannot be powered off, which is false.
+    (powered?'<div class="menu-sep"></div>'+mi('po','Power off',null,true,
+      'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):''));
 }
 function menuWorkbench(ev,slot,serial,wb,online){
   openMenu(ev,
