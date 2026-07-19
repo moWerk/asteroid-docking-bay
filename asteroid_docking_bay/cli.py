@@ -24,6 +24,7 @@ from .usb import (port_foreign_device, test_port_power_switching,
 from .events import event_log
 from .fastboot import _fastboot_devices
 from .ops import _end_port, _flash_one_watch, charge_to_target
+from .tasks import active_op_on_slot
 from .watchctl import wait_for_adb
 
 
@@ -123,6 +124,28 @@ def cmd_status(args, cfg: dict):
         print("      or re-run 'asteroid-docking-bay test-ports' to recheck.")
 
 
+def _busy_guard(codename: str, loc: str, port: int) -> bool:
+    """True (and complains) when an operation owns this port.
+
+    The CLI talks to the hardware directly rather than through the op table,
+    so the web UI's protection does not cover it — and the registries live in
+    the web service's memory, invisible here. active_op_on_slot falls through
+    to the durable task store, which is the view a separate process has.
+
+    This matters because a charge/drain/workbench does not fail loudly when
+    disturbed: it keeps reporting, with falsified numbers. A drain test whose
+    port is powered mid-run recharges the watch and quietly invents its own
+    result — five hours of readings were destroyed exactly this way.
+    """
+    kind = active_op_on_slot(f"{loc}:{port}")
+    if kind is None:
+        return False
+    log.error("%s: a %s operation owns %s:p%d — refusing.\n"
+              "  Stop it first (web UI, or '%s stop'), otherwise its readings "
+              "are silently corrupted.", codename, kind, loc, port, kind)
+    return True
+
+
 def cmd_on(args, cfg: dict):
     for codename in _resolve_targets(args.codename, cfg):
         loc, port = find_port_for_codename(cfg, codename)
@@ -134,6 +157,8 @@ def cmd_on(args, cfg: dict):
             log.warning("%s: port is NOT power-switchable — command will have no effect", codename)
         elif smart is None:
             log.warning("%s: port switching not tested — run 'test-ports' to verify", codename)
+        if _busy_guard(codename, loc, port):
+            continue
         log.info("%s: powering on hub %s port %d", codename, loc, port)
         uhubctl_set_power(loc, port, True)
         print(f"{codename}: hub {loc} port {port} → ON")
@@ -165,6 +190,8 @@ def cmd_off(args, cfg: dict):
             continue
         if smart is None:
             log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
+        if _busy_guard(codename, loc, port):
+            continue
         log.info("%s: powering off hub %s port %d", codename, loc, port)
         uhubctl_set_power(loc, port, False)
         print(f"{codename}: hub {loc} port {port} → OFF")
@@ -186,6 +213,8 @@ def cmd_cycle(args, cfg: dict):
             continue
         if smart is None:
             log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
+        if _busy_guard(codename, loc, port):
+            continue
         log.info("%s: cycling hub %s port %d (off for %ds)", codename, loc, port, wait)
         uhubctl_set_power(loc, port, False)
         print(f"{codename}: OFF — waiting {wait}s…", flush=True)

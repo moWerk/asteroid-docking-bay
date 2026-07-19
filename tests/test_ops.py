@@ -237,3 +237,44 @@ def test_a_single_failed_read_does_not_abort(monkeypatch):
     opsmod.DrainOp(slot, "1-2", 2, {}).run()
     assert not task.get("blind_abort"), "aborted on a single recoverable miss"
     assert task.get("last_pct") == 10, task
+
+
+# ── who owns a port, across processes ───────────────────────────────────────
+
+def test_active_op_on_slot_sees_in_memory_ops(monkeypatch, tmp_path):
+    """Inside the web service the registries are authoritative."""
+    from asteroid_docking_bay import tasks
+    monkeypatch.setattr(tasks.task_store, "dir", tmp_path)   # no real state
+    monkeypatch.setitem(tasks._drain_tasks, "1-2:1", {"done": False})
+    assert tasks.active_op_on_slot("1-2:1") == "drain"
+    monkeypatch.setitem(tasks._drain_tasks, "1-2:1", {"done": True})
+    assert tasks.active_op_on_slot("1-2:1") is None
+
+
+def test_active_op_on_slot_sees_ops_from_another_process(monkeypatch, tmp_path):
+    """A CLI process has EMPTY registries — the ops run in the web service —
+    so it must fall through to the durable store. Without this a CLI
+    `on`/`off`/`cycle` silently corrupts a running measurement, which is
+    exactly the failure the web guard was added for."""
+    import json
+    from asteroid_docking_bay import tasks
+    monkeypatch.setattr(tasks.task_store, "dir", tmp_path)
+    for name in ("_charge_tasks", "_drain_tasks", "_workbench_tasks"):
+        monkeypatch.setattr(tasks, name, {})
+    (tmp_path / "drain_1-2_1.json").write_text(json.dumps(
+        {"kind": "drain", "slot": "1-2:1", "loc": "1-2", "port": 1,
+         "task": {"done": False}}))
+    assert tasks.active_op_on_slot("1-2:1") == "drain"
+    assert tasks.active_op_on_slot("1-2:2") is None, "matched the wrong slot"
+
+
+def test_finished_persisted_op_does_not_block(monkeypatch, tmp_path):
+    """A completed op left on disk must not refuse forever."""
+    import json
+    from asteroid_docking_bay import tasks
+    monkeypatch.setattr(tasks.task_store, "dir", tmp_path)
+    for name in ("_charge_tasks", "_drain_tasks", "_workbench_tasks"):
+        monkeypatch.setattr(tasks, name, {})
+    (tmp_path / "drain_1-2_1.json").write_text(json.dumps(
+        {"kind": "drain", "slot": "1-2:1", "task": {"done": True}}))
+    assert tasks.active_op_on_slot("1-2:1") is None

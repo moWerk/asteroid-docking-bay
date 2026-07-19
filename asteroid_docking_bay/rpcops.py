@@ -42,7 +42,8 @@ from .variants import image_of
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
-from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
+from .tasks import (_adb_lock, _charge_tasks, _flash_tasks, _remap_tasks,
+                    active_op_on_slot)
 from .rpc import Dispatcher
 from . import __version__
 
@@ -264,11 +265,7 @@ def _op_owning(loc, port) -> "str | None":
     unrelated feature re-powered a port mid-drain-test, recharged the watch
     from 96% back to 100%, and destroyed five hours of readings. The row was
     correctly greyed out in the browser at the time."""
-    slot = f"{loc}:{port}"
-    for op in (ChargeOp, DrainOp, WorkbenchOp):
-        if op.is_active(slot):
-            return op.kind
-    return None
+    return active_op_on_slot(f"{loc}:{port}")
 
 
 def _refuse_if_busy(loc, port) -> "dict | None":

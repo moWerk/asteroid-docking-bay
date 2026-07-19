@@ -360,7 +360,7 @@ def test_failed_fastboot_poweroff_does_not_cut_vbus(monkeypatch):
 def test_port_ops_refuse_while_an_operation_owns_the_port(monkeypatch, op, args):
     import asteroid_docking_bay.rpcops as ro
     touched = {}
-    monkeypatch.setattr(ro.DrainOp, "is_active", classmethod(lambda cls, slot: True))
+    monkeypatch.setattr(ro, "active_op_on_slot", lambda slot: "drain")
     monkeypatch.setattr(ro, "uhubctl_set_power",
                         lambda *a, **k: touched.setdefault("power", True))
     monkeypatch.setattr(ro, "uhubctl_cycle",
@@ -376,8 +376,7 @@ def test_port_ops_refuse_while_an_operation_owns_the_port(monkeypatch, op, args)
 def test_port_ops_work_normally_when_no_operation_is_running(monkeypatch):
     """The guard must not break ordinary use — an idle port still switches."""
     import asteroid_docking_bay.rpcops as ro
-    for cls in (ro.ChargeOp, ro.DrainOp, ro.WorkbenchOp):
-        monkeypatch.setattr(cls, "is_active", classmethod(lambda c, slot: False))
+    monkeypatch.setattr(ro, "active_op_on_slot", lambda slot: None)
     monkeypatch.setattr(ro, "uhubctl_set_power", lambda *a, **k: True)
     r = ro.DISPATCH._data["port.set"]({"loc": "1-2.3", "port": 1, "on": True})
     assert r == {"ok": True, "confirmed": True}, r
