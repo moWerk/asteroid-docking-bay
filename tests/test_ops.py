@@ -278,3 +278,38 @@ def test_finished_persisted_op_does_not_block(monkeypatch, tmp_path):
     (tmp_path / "drain_1-2_1.json").write_text(json.dumps(
         {"kind": "drain", "slot": "1-2:1", "task": {"done": True}}))
     assert tasks.active_op_on_slot("1-2:1") is None
+
+
+def test_workbench_records_who_claimed_the_watch(monkeypatch):
+    """On a rig several sessions share, "workbench active" does not tell you
+    whether to wait or take over. The claim must name its holder."""
+    import threading
+    import asteroid_docking_bay.ops as opsmod
+    monkeypatch.setattr(opsmod, "is_slot_smart", lambda cfg, loc, port: True)
+    monkeypatch.setattr(opsmod.task_store, "persist", lambda *a, **k: None)
+    monkeypatch.setattr(threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda s: None})())
+    monkeypatch.setattr(opsmod, "_workbench_tasks", {})
+    monkeypatch.setattr(opsmod, "_workbench_stop", {})
+    monkeypatch.setattr(opsmod.WorkbenchOp, "tasks", opsmod._workbench_tasks)
+    monkeypatch.setattr(opsmod.WorkbenchOp, "stops", opsmod._workbench_stop)
+
+    assert opsmod.WorkbenchOp.start("1-2", 1, {}, owner="ui-track session") is None
+    assert opsmod.WorkbenchOp.tasks["1-2:1"]["owner"] == "ui-track session"
+
+
+def test_workbench_without_an_owner_still_works(monkeypatch):
+    """The web UI's existing checkout passes no owner; it must not break."""
+    import threading
+    import asteroid_docking_bay.ops as opsmod
+    monkeypatch.setattr(opsmod, "is_slot_smart", lambda cfg, loc, port: True)
+    monkeypatch.setattr(opsmod.task_store, "persist", lambda *a, **k: None)
+    monkeypatch.setattr(threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda s: None})())
+    monkeypatch.setattr(opsmod, "_workbench_tasks", {})
+    monkeypatch.setattr(opsmod, "_workbench_stop", {})
+    monkeypatch.setattr(opsmod.WorkbenchOp, "tasks", opsmod._workbench_tasks)
+    monkeypatch.setattr(opsmod.WorkbenchOp, "stops", opsmod._workbench_stop)
+
+    assert opsmod.WorkbenchOp.start("1-2", 1, {}) is None
+    assert opsmod.WorkbenchOp.tasks["1-2:1"]["owner"] is None

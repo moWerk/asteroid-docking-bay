@@ -471,7 +471,10 @@ function render(data){
         if(wb){
           const w=p.workbench;
           const pct=w.pct!=null?w.pct+'% ':'';
-          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">${pct}${esc(w.phase||'')}</span>`;
+          // Name the holder: on a rig several sessions share, "workbench
+          // active" does not tell you whether to wait or take over.
+          const who=w.owner?` — held by ${esc(w.owner)}`:'';
+          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}${who}">${pct}${esc(w.phase||'')}${w.owner?' ᴋ':''}</span>`;
         }else if(charging){
           if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
           else if(p.charge_target!=null){bat=`<span class="warn">${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}

@@ -347,7 +347,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
             if wb and not wb.get("done", True):
                 workbench = {"active": True, "pct": wb.get("pct"),
                              "phase": wb.get("phase"),
-                             "blind": wb.get("blind", False)}
+                             "blind": wb.get("blind", False),
+                             "owner": wb.get("owner")}
             drain_last = drain_summaries.get(codename.lower())
             if (drain_last and drain_last.get("serial") and serial
                     and drain_last["serial"] != serial):

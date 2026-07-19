@@ -483,7 +483,8 @@ def _register_lifecycle(op_cls, name, stop_error):
     if name != "charge":
         @DISPATCH.op(f"{name}.start")
         def _start(args):
-            err = op_cls.start(args["loc"], args["port"], load_config())
+            err = op_cls.start(args["loc"], args["port"], load_config(),
+                               owner=args.get("owner"))
             return {"ok": False, "error": err} if err else {"ok": True}
 
     @DISPATCH.op(f"{name}.stop")

@@ -232,8 +232,13 @@ class Operation:
         return None
 
     @classmethod
-    def start(cls, loc: str, port: int, cfg: dict) -> "str | None":
-        """Begin the operation. Returns an error string, or None on success."""
+    def start(cls, loc: str, port: int, cfg: dict,
+              owner: "str | None" = None) -> "str | None":
+        """Begin the operation. Returns an error string, or None on success.
+
+        `owner` records who claimed the watch. Several sessions and people now
+        drive this rig, and an operation that says only "workbench active"
+        cannot tell you whether to wait or take over."""
         slot = f"{loc}:{port}"
         if cls.is_active(slot):
             return f"{cls.kind} already running"
@@ -242,7 +247,7 @@ class Operation:
             return err
         if is_slot_smart(cfg, loc, port) is False:
             return "non-smart port — power cannot be switched"
-        cls.tasks[slot] = {"done": False}
+        cls.tasks[slot] = {"done": False, "owner": owner}
         cls.stops[slot] = threading.Event()
         task_store.persist(cls.kind, slot, loc, port, cls.tasks[slot])
         threading.Thread(target=cls(slot, loc, port, cfg).run,
