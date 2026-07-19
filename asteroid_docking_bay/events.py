@@ -107,8 +107,14 @@ class EventLog:
                         if 0 < r < 50:          # ignore absurd spikes
                             rates.append(r)
                 prev = (pct, ts)
-            elif ev in ("charge_start", "charge_end"):
-                prev = None                     # charging breaks the standby chain
+            elif ev in ("charge_start", "charge_end", "external"):
+                # Charging obviously breaks a standby chain. So does an
+                # externally logged event: it means somebody did something to
+                # this watch — a flash, a bench session, an app test — and the
+                # interval spanning it was never passive standby. Breaking the
+                # chain discards that interval rather than reporting a rate
+                # measured across work, which is the safe direction to err.
+                prev = None
         if rates:
             rates.sort()
             return rates[len(rates) // 2]

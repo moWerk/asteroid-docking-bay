@@ -29,6 +29,43 @@ from .tasks import active_op_on_slot
 from .watchctl import wait_for_adb
 
 
+def cmd_log(args, cfg: dict):
+    """Record an externally-driven event on a watch's timeline.
+
+    Flashes, boots and bench sessions run by other tools and sessions are
+    invisible to the per-watch log, which leaves unexplained gaps ("why did
+    this watch's uptime reset four times today?"). This lets an outside
+    driver keep the history complete.
+
+    Injected events are typed `external`, never a reading, so they cannot be
+    mistaken for measured data — and they deliberately break the standby-drain
+    chain, because an interval containing bench work was not passive standby.
+    """
+    codename = args.codename
+    serial = args.serial or find_serial_for_codename(cfg, codename)
+    if not serial:
+        log.error("%s: no serial known — run 'discover', or pass --serial",
+                  codename)
+        return 1
+    seats = [(hub["location"], port_str)
+             for hub in cfg.get("hubs", [])
+             for port_str, cname in (hub.get("ports") or {}).items()
+             if cname.lower() == codename.lower()]
+    if len(seats) > 1 and not args.serial:
+        # Config keys on the MACHINE/image name, which several physically
+        # different watches can share (tunny ships the skipjack image), so a
+        # bare codename can be ambiguous. Say so rather than writing the note
+        # to an arbitrary one of them.
+        log.warning("%s is mapped to %d ports (%s) — logging against serial %s; "
+                    "pass --serial to choose explicitly",
+                    codename, len(seats),
+                    ", ".join(f"{loc}:p{p}" for loc, p in seats), serial)
+    event_log.log(serial, codename, "external",
+                  note=args.message, source=args.source)
+    print(f"{codename} ({serial}): logged \u2014 {args.message}")
+    return 0
+
+
 def cmd_serve(args, cfg: dict):
     """Start the web UI (bottle imported lazily inside webapp.serve)."""
     from .webapp import serve
@@ -815,6 +852,14 @@ def main():
         help="watch codename, or 'all' (default)",
     )
 
+    p_lg = sub.add_parser(
+        "log", help="record an external event on a watch's timeline")
+    p_lg.add_argument("codename")
+    p_lg.add_argument("message", help="what happened, e.g. 'flashed asteroid-image 20260719'")
+    p_lg.add_argument("--source", default="external",
+                      help="who is logging (e.g. 'ui-track session')")
+    p_lg.add_argument("--serial", help="disambiguate when a codename maps to several watches")
+
     sub.add_parser("discover", help="scan for ADB-connected watches and show codenames")
 
     p_sv = sub.add_parser("serve", help="start the web UI (requires the bottle package)")
@@ -887,6 +932,7 @@ def main():
         "map": cmd_map,
         "test-ports": cmd_test_ports,
         "discover": cmd_discover,
+        "log": cmd_log,
         "flash": cmd_flash_all,
         "serve": cmd_serve,
         "serve-backend": cmd_serve_backend,

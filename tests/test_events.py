@@ -118,3 +118,42 @@ def test_next_due_none_without_history(tmp_path):
     el = make_log(tmp_path)
     cfg = {"charge": {}}
     assert el.next_due_ts("ghost", None, cfg) is None
+
+
+def test_external_events_break_the_standby_chain(tmp_path):
+    """An externally logged event means somebody worked on the watch — a
+    flash, a bench session — so the interval spanning it was never passive
+    standby. Counting across it reports a drain rate measured during work,
+    which is exactly the pollution issue #6 asks to avoid."""
+    from asteroid_docking_bay.events import EventLog
+    el = EventLog(tmp_path)
+    base = 1_000_000.0
+    # Exactly ONE clean pair and ONE that spans bench work. With two samples
+    # the median IS the polluted value, so a broken guard changes the answer.
+    # (An earlier version of this test used three clean pairs and passed even
+    # with the guard removed — the median absorbed the outlier. A test that
+    # cannot fail is decoration.)
+    evs = [
+        {"ts": base,          "event": "check_reading", "pct": 100},
+        {"ts": base + 3600,   "event": "check_reading", "pct": 99},   # 1%/h
+        {"ts": base + 4000,   "event": "external", "note": "flashed a build"},
+        # 39%/h apparent drop across the bench window — must NOT be counted.
+        {"ts": base + 7200,   "event": "check_reading", "pct": 60},
+    ]
+    rate = el.standby_loss_rate("S1", "sturgeon", events=evs)
+    assert rate is not None
+    assert rate < 5, (
+        f"standby rate {rate:.1f}%/h absorbed the bench-window drop — "
+        "external events must break the chain")
+
+
+def test_external_event_is_not_a_reading(tmp_path):
+    """Injected events must never be mistakable for measured data."""
+    from asteroid_docking_bay.events import EventLog
+    el = EventLog(tmp_path)
+    el.log("S1", "sturgeon", "external", note="flashed", source="ui-track")
+    rows = el.read("S1", "sturgeon")
+    assert len(rows) == 1
+    assert rows[0]["event"] == "external"
+    assert "pct" not in rows[0], "an external note carries no battery reading"
+    assert rows[0]["note"] == "flashed" and rows[0]["source"] == "ui-track"
