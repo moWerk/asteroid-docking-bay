@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import sys
 import time
 from pathlib import Path
@@ -67,7 +68,19 @@ def cmd_serve_backend(args, cfg: dict):
 
 
 def cmd_status(args, cfg: dict):
+    if getattr(args, "json", False):
+        # Serve the SAME document the web UI renders, rather than a second
+        # status implementation that can drift from it. It already resolves
+        # fastboot, exact codenames, cached batteries and running ops.
+        from . import rpcops
+        print(json.dumps(rpcops.DISPATCH._data["status.get"]({}), indent=2))
+        return
     devices = adb_devices()
+    # A watch in the bootloader is absent from `adb devices`, so consulting
+    # only adb reported it as "--" — indistinguishable from unplugged. During
+    # a flash cycle that reads as "gone" when it is in fact sitting in
+    # fastboot waiting, which is exactly the wrong conclusion.
+    fb_devices = _fastboot_devices()
     rows: list[tuple] = []
     seen_serials: set[str] = set()
     has_dumb_port = False
@@ -89,7 +102,10 @@ def cmd_status(args, cfg: dict):
                 smart_str = "?"
 
             serial = find_serial_for_codename(cfg, codename)
-            adb_state = (_adb_state(devices, serial) or "--") if serial else "--"
+            if serial and serial in fb_devices:
+                adb_state = "fastboot"
+            else:
+                adb_state = (_adb_state(devices, serial) or "--") if serial else "--"
             if serial:
                 seen_serials.add(serial)
 
@@ -760,7 +776,11 @@ def main():
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
-    sub.add_parser("status", help="show all watches: port, power, ADB state, battery")
+    p_st = sub.add_parser("status",
+                          help="show all watches: port, power, ADB state, battery")
+    p_st.add_argument("--json", action="store_true",
+                      help="emit the full status document as JSON (same data "
+                           "the web UI uses) for scripts and agents")
 
     p_on = sub.add_parser("on", help="power on a watch's USB port")
     p_on.add_argument("codename", help="watch codename, or 'all'")
