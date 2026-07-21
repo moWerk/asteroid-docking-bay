@@ -17,6 +17,11 @@ import pytest
 from asteroid_docking_bay.webtemplate import _WEB_TEMPLATE
 
 JS = max(re.findall(r"<script>(.*?)</script>", _WEB_TEMPLATE, re.S), key=len)
+
+
+def global_simple():
+    """JS that swaps reconcileRows for the plain innerHTML path in render tests."""
+    return "\nreconcileRows=function(tb,h){tb.innerHTML=h.join('');};\n"
 DEFINED_FUNCS = set(re.findall(r"function\s+([A-Za-z_]\w*)\s*\(", JS))
 
 
@@ -181,7 +186,7 @@ def test_render_runs_without_throwing(tmp_path):
     # Render twice: the first pass is the initial load (firstStatus true), the
     # second exercises the post-load path — the newly-plugged-row flash compares
     # against the serials seen on the first pass.
-    h.write_text(_DOM_STUBS + JS +
+    h.write_text(_DOM_STUBS + JS + global_simple() +
                  f"\ntry{{const S={json.dumps(_SAMPLE)};render(S);render(S);"
                  f"console.log('RENDER_OK');}}"
                  f"catch(e){{console.error('THREW '+e);process.exit(1);}}\nprocess.exit(0);\n")
@@ -209,7 +214,7 @@ def test_refresh_button_powers_only_an_off_switchable_port(tmp_path):
     every ordinary refresh)."""
     import json
     h = tmp_path / "refresh.js"
-    h.write_text(_DOM_CAPTURE + JS +
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
                  f"\nconst S={json.dumps(_SAMPLE)};render(S);"
                  "console.log(JSON.stringify(Object.values(global.__els)"
                  ".map(e=>e.innerHTML).join('')));\nprocess.exit(0);\n")
@@ -427,3 +432,23 @@ def test_reopening_a_panel_paints_instantly_from_cache(tmp_path):
     html = json.loads(r.stdout.strip().splitlines()[-1])
     assert "System" in html and "3.18" in html, f"did not paint from cache: {html[:200]}"
     assert "loading" not in html, "showed a loading flash despite having a cache"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_reconcile_keys_rows_by_slot_and_hubs_by_location(tmp_path):
+    """The row reconcile reuses a DOM node only when its key matches, so the
+    key MUST be stable and unique per row — a watch row by its slot, a hub
+    header by its location. A wrong key would reuse the wrong node (stale
+    data) or never reuse (back to full flicker)."""
+    import json
+    h = tmp_path / "key.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({"
+                 "row:_rowKey('<tr class=\"wr\" id=\"wr-1-2.3:4\"><td>x</td></tr>'),"
+                 "hub:_rowKey('<tr class=\"hub-hdr\"><td><span class=\"hl\">1-2.3</span></td></tr>')}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["row"] == "row:1-2.3:4", out
+    assert out["hub"] == "hub:1-2.3", out

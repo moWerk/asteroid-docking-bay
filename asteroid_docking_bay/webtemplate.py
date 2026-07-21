@@ -454,6 +454,42 @@ function mkadbrow(p){
     return '<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>';
   return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename);
 }
+// Keyed row reconcile: replacing the whole tbody innerHTML every refresh
+// destroyed and recreated every product <img>, so each thumbnail reloaded and
+// blanked briefly — a visible flicker and wasted decode of the full-size
+// images. Instead, key each row (by its slot, or a hub header by location) and
+// only rebuild rows whose HTML actually changed; unchanged rows keep their
+// exact DOM node — moved, not recreated — so their images never reload.
+const _rowSig={};
+function _rowKey(html){
+  const m=html.match(/id="wr-([^"]+)"/);
+  if(m)return 'row:'+m[1];
+  const h=html.match(/class="hl">([^<]*)</);
+  if(h)return 'hub:'+h[1];
+  return 'x:'+html.length;
+}
+function reconcileRows(tb, htmls){
+  const existing={};
+  for(const el of Array.from(tb.children)){
+    const k=el.getAttribute('data-k'); if(k!==null)existing[k]=el;
+  }
+  const seen=new Set(), out=[];
+  for(const html of htmls){
+    const key=_rowKey(html);
+    if(seen.has(key))continue;
+    seen.add(key);
+    let el=existing[key];
+    if(!(el && _rowSig[key]===html)){          // new or changed → build fresh
+      const tmp=document.createElement('tbody');
+      tmp.innerHTML=html;
+      el=tmp.firstElementChild;
+      if(el){el.setAttribute('data-k',key); _rowSig[key]=html;}
+    }
+    if(el)out.push(el);                          // unchanged → reuse the node
+  }
+  for(const k in _rowSig)if(!seen.has(k))delete _rowSig[k];
+  tb.replaceChildren(...out);
+}
 function render(data){
   const tb=document.getElementById('tb');
   const hubs=(data&&data.hubs)||[];
@@ -590,7 +626,7 @@ function render(data){
       }
     });
   });
-  tb.innerHTML=rows.join('');
+  reconcileRows(tb, rows);
   seenSerials=present; firstStatus=false;
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
