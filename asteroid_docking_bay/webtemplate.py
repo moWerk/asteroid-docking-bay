@@ -151,11 +151,15 @@ _WEB_TEMPLATE = """\
     .don{background:#3fb950}.doff{background:#30363d}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
-    .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle}
+    .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle;background:transparent;font-family:inherit;line-height:1.5}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
-    .cbadge.ssh{border-color:#d29922;color:#d29922;cursor:pointer}
-    .cbadge.ssh:hover{background:#2a2113}
+    .cbadge.ssh{border-color:#d29922;color:#d29922}
+    /* Clickable badges are real <button>s so the cursor is a pointer, not a
+       text caret; the non-clickable ones stay <span>s. */
+    button.cbadge{cursor:pointer}
+    button.cbadge.ssh:hover{background:#2a2113}
+    button.cbadge.adb:hover{background:#122117}
     .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
@@ -377,17 +381,18 @@ const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertic
 function mkadb(adb,fbprod,os,serial,sshIp){
   if(adb==='device'){
     // usb_moded (the SSH switch) is AsteroidOS-only, so the ADB pill is a live
-    // toggle to SSH for an AsteroidOS or not-yet-identified watch, and a plain
-    // status pill for a known other OS (e.g. WearOS). Matches the SSH pill's
-    // shape; green rather than amber, and the logo only when it's AsteroidOS.
+    // toggle to SSH for an AsteroidOS or not-yet-identified watch (a real
+    // <button>), and a plain status pill for a known other OS (e.g. WearOS).
+    // Shows the serial — the ADB address — mirroring the SSH pill's IP.
     const known=os&&os!=='asteroidos'&&os!=='unknown';
     const logo=os==='asteroidos'?AOSLOGO:'';
-    const suffix=known?` <span class="dim">${esc(os)}</span>`:'';
+    const ser=serial?` <span class="dim">${esc(serial)}</span>`:'';
+    const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(known?' — '+esc(os):'')}`;
     if(!known&&serial)
-      return `${logo}<span class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="ADB mode${os==='asteroidos'?' — AsteroidOS':''} — click to switch this watch to SSH">ADB</span>`;
-    return `${logo}<span class="cbadge adb" title="${known?esc(os)+' on ADB':'ADB mode'}">ADB${suffix}</span>`;
+      return `${logo}<button class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="${ttl} — click to switch this watch to SSH">ADB${ser}</button>`;
+    return `${logo}<span class="cbadge adb" title="${ttl}">ADB${ser}</span>`;
   }
-  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click to switch this watch to ADB">SSH${ipl}</span>`;}
+  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<button class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click to switch this watch to ADB">SSH${ipl}</button>`;}
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';

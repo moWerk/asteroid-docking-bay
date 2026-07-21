@@ -263,13 +263,17 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
 
-    # Both are pills (cbadge) and carry the logo (an inline <svg>).
+    # Both are pills (cbadge), real <button>s so the cursor is a pointer, and
+    # carry the logo (an inline <svg>).
     for k in ("adb", "ssh"):
         assert "cbadge" in out[k], f"{k} badge is not the pill style: {out[k]}"
+        assert "<button" in out[k], f"{k} clickable badge is not a real button: {out[k]}"
         assert "<svg" in out[k], f"{k} badge is missing the AsteroidOS logo"
     # Two-way toggle: adb → switch to ssh, ssh → switch to adb.
     assert "switchSsh(" in out["adb"], f"ADB pill does not toggle to SSH: {out['adb']}"
     assert "switchAdb(" in out["ssh"], f"SSH pill does not toggle to ADB: {out['ssh']}"
+    # The ADB pill shows the serial (its address), like SSH shows the IP.
+    assert "S9" in out["adb"], f"ADB pill does not show the serial: {out['adb']}"
     # A known non-AsteroidOS OS is a status pill, not an SSH toggle (usb_moded
     # is AsteroidOS-only) and carries no asteroid logo.
     assert "switchSsh(" not in out["wear"] and "<svg" not in out["wear"], out["wear"]
