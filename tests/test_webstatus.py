@@ -214,3 +214,14 @@ def test_lifecycle_self_clears_when_seen_live_again(monkeypatch):
     assert ws._lifecycle("S1", False, False) == "down"
     store["S1"]["last_live_ts"] = 3000.0   # seen live again
     assert ws._lifecycle("S1", False, False) is None
+
+
+def test_wear_makes_a_departed_watch_worn_not_down(monkeypatch):
+    """A wear-held watch that has left the bus is 'worn' (off-rig), overriding
+    any 'down' — and while still docked it shows no pill (the button carries
+    the armed state)."""
+    from asteroid_docking_bay import webstatus as ws
+    store = {"S1": {"wear": True, "safe_off_ts": 5000.0, "last_live_ts": 4000.0}}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+    assert ws._lifecycle("S1", present=False, power=True) == "worn"  # port held, gone
+    assert ws._lifecycle("S1", present=True, power=True) is None     # docked, topping up

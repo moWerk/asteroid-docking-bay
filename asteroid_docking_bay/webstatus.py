@@ -162,9 +162,15 @@ def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "st
     off-state stays unmarked — absence of the pill is "no claim", never
     "definitely off". Self-clears: the next time the watch is seen live,
     last_live_ts advances past safe_off_ts and this returns None."""
-    if not serial or present or power:
+    if not serial:
         return None
     ls = last_seen.get(serial) or {}
+    if ls.get("wear"):
+        # Wear-held: while docked it is topping off (no pill — the button shows
+        # the armed state); once it leaves the bus it is being worn.
+        return None if present else "worn"
+    if present or power:
+        return None
     so = ls.get("safe_off_ts") or 0
     llt = ls.get("last_live_ts") or 0
     if so and so >= llt:
@@ -399,7 +405,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 }
             # Powered but nothing ever connects = the stale-node/fake-power
             # wedge; self-heal it (opt-in) when the port is otherwise idle.
-            wedged = bool(power) and not connect and adb_state is None
+            # A wear-held port is powered with no watch on purpose (worn) —
+            # never auto-cycle it.
+            wear_held = bool((last_seen.get(serial) or {}).get("wear")) if serial else False
+            wedged = bool(power) and not connect and adb_state is None and not wear_held
             busy   = bool(flashing or charging_active
                           or (drain and drain["active"])
                           or (workbench and workbench["active"]))
@@ -415,6 +424,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 # mode, but shown whenever one has been allocated.
                 "ssh_ip": ssh_ip_for_serial(cfg, serial),
                 "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
+                "wear": bool((last_seen.get(serial) or {}).get("wear")) if serial else False,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,
                 "charge_status": charge_status,

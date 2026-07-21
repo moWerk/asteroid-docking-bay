@@ -190,6 +190,11 @@ _WEB_TEMPLATE = """\
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn.dr{border-color:#388bfd;color:#388bfd}
     .btn.wb{border-color:#bc8cff;color:#fff}.btn.wb:hover{background:#1d1430}
+    /* Wear: pinkish (skin). Filled when armed. A worn row dims but stays. */
+    .btn.wear{border-color:#e08a9e;color:#e0a5b5}.btn.wear:hover{background:#2a1a1f}
+    .btn.wear.on{background:#e08a9e;color:#1a1416;border-color:#e08a9e}
+    .wr.worn td{opacity:.5}
+    .wr.worn:hover td{opacity:.62}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -555,7 +560,7 @@ function render(data){
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
         rows.push(
-          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}" id="wr-${slot}">` +
+          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
@@ -572,6 +577,7 @@ function render(data){
           `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}','${p.ssh_ip||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
+          (!isFb&&p.serial?`<button class="btn wear${p.wear?' on':''}"${p.excluded?' disabled':''} onclick="doWear('${slot}',${p.wear?0:1})" title="${p.wear?'wear armed — port held for re-docking; click to release and free the port':'wear: top up and hold this port so the watch is ready to take off the rig'}">Wear</button>`:'')+
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -1224,6 +1230,11 @@ function doHideHub(loc){
 }
 function doWb(c){
   fetch('/api/workbench/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
+}
+function doWear(c,on){
+  toast(on?'wear armed — topping up, port held':'wear released — port freed');
+  const url=on?('/api/wear/on/'+_api(c)):('/api/wear/off/'+_api(c));
+  fetch(url,{method:'POST'}).then(()=>setTimeout(refresh,1500));
 }
 function doStopWb(c){
   fetch('/api/workbench/stop/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));

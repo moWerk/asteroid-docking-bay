@@ -50,7 +50,7 @@ def test_registered_ops_are_the_documented_contract():
         "port.bootloader", "port.recovery", "port.continue",
         "port.hide", "hub.hide",
         "charge.start", "charge.stop",
-        "workbench.start", "workbench.stop",
+        "workbench.start", "workbench.stop", "wear.set",
         "drain.start", "drain.stop", "drain.history",
         "flash.start", "onboard.start",
     }
@@ -461,3 +461,51 @@ def test_reachable_transport_prefers_adb_then_ssh(monkeypatch):
     # Neither adb nor reachable SSH → default (offline handled downstream).
     monkeypatch.setattr(ro, "_detect_rndis", lambda ip: False)
     assert ro._reachable_transport("S1") is None
+
+
+def test_wear_arm_powers_the_port_and_flags_it(monkeypatch):
+    """Arming wear tops the watch up (port on) and marks it wear-held so the
+    port is kept and not auto-cycled. A wear event is logged to break the
+    standby chain (the coming interval is wearing, not shelf-rest)."""
+    import asteroid_docking_bay.rpcops as ro
+    powered, recorded, events = [], {}, []
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
+    monkeypatch.setattr(ro, "load_config", lambda: {})
+    monkeypatch.setattr(ro, "find_codename_for_loc_port", lambda c, l, p: "skipjack")
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda l, p, on: powered.append((l, p, on)))
+    monkeypatch.setattr(ro.last_seen, "record",
+                        lambda s, **k: recorded.update(k))
+    monkeypatch.setattr(ro.event_log, "log", lambda *a, **k: events.append(a))
+    d = ro.DISPATCH._data["wear.set"]({"loc": "1-2", "port": 1, "on": True})
+    assert d == {"ok": True, "wear": True}
+    assert powered == [("1-2", 1, True)] and recorded.get("wear") is True
+    assert any("wear" in a for a in events), "no wear event logged"
+
+
+def test_wear_release_frees_a_gone_watch_but_not_a_present_one(monkeypatch):
+    """Release frees the port when the watch is gone (worn), but must NOT raw-cut
+    a re-docked present watch — that would strand it running on battery."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
+    monkeypatch.setattr(ro, "load_config", lambda: {})
+    monkeypatch.setattr(ro, "last_seen",
+                        type("L", (), {"record": staticmethod(lambda s, **k: None)}))
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {})
+
+    # Watch gone -> free the port.
+    powered = []
+    monkeypatch.setattr(ro, "adb_devices", lambda: {})
+    monkeypatch.setattr(ro, "_adb_state", lambda d, s: None)
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda l, p, on: powered.append((l, p, on)))
+    assert ro.DISPATCH._data["wear.set"]({"loc": "1-2", "port": 1, "on": False})["ok"]
+    assert powered == [("1-2", 1, False)]
+
+    # Watch present (re-docked) -> leave it powered.
+    powered2 = []
+    monkeypatch.setattr(ro, "_adb_state", lambda d, s: "device")
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda l, p, on: powered2.append((l, p, on)))
+    ro.DISPATCH._data["wear.set"]({"loc": "1-2", "port": 1, "on": False})
+    assert powered2 == [], "release raw-cut a present watch — stranding hazard"

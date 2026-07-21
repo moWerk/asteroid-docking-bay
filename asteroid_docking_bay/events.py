@@ -107,7 +107,7 @@ class EventLog:
                         if 0 < r < 50:          # ignore absurd spikes
                             rates.append(r)
                 prev = (pct, ts)
-            elif ev in ("charge_start", "charge_end", "external"):
+            elif ev in ("charge_start", "charge_end", "external", "wear"):
                 # Charging obviously breaks a standby chain. So does an
                 # externally logged event: it means somebody did something to
                 # this watch — a flash, a bench session, an app test — and the

@@ -161,6 +161,44 @@ def _watch_screen(args):
     return {"ok": _watch(args["serial"]).screen(bool(args["on"]))}
 
 
+@DISPATCH.op("wear.set")
+def _wear_set(args):
+    """Arm or release the wear marker on a watch's port.
+
+    On: power the port up to top the watch off, and flag it wear-held so the
+    port is not auto-cycled and is kept lit even after the watch leaves — the
+    LED then marks exactly where to re-dock. A wear event breaks the standby
+    chain, because the coming off→bus interval is the watch being *worn*, not
+    resting on the shelf. Manual release only: off clears the flag and frees
+    the port so another watch can use it."""
+    loc, port = args["loc"], args["port"]
+    on = bool(args.get("on"))
+    serial = find_serial_for_loc_port(load_config(), loc, port)
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    if on:
+        try:
+            uhubctl_set_power(loc, port, True)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
+        last_seen.record(serial, wear=True)
+        cn = find_codename_for_loc_port(load_config(), loc, port)
+        event_log.log(serial, cn, "wear")
+    else:
+        last_seen.record(serial, wear=False)
+        # Free the port only if the watch is actually gone (the normal worn
+        # case). If it re-docked and is present, leave it powered — a raw cut
+        # would strand a running watch on battery, the ambiguous-off hazard.
+        present = (_adb_state(adb_devices(), serial) == "device"
+                   or serial in _fastboot_list())
+        if not present:
+            try:
+                uhubctl_set_power(loc, port, False)
+            except RuntimeError:
+                pass
+    return {"ok": True, "wear": on}
+
+
 @DISPATCH.op("screen.release_all")
 def _screen_release_all(args):
     """Release every on-adb watch's forced-on screen (mcetool -D off) — the
