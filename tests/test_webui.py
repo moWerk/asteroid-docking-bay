@@ -336,3 +336,57 @@ def test_control_center_no_longer_carries_the_network_section(tmp_path):
     assert r.returncode == 0, r.stderr[:400]
     html = json.loads(r.stdout.strip().splitlines()[-1])
     assert "ccToggle(" not in html, "Control Center still wires the moved WiFi/BT toggles"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_battery_cell_is_a_clickable_pill_opening_battery_info(tmp_path):
+    """The battery cell is a pill: percent plus appended dim detail, clicking
+    it opens Battery Info. A watch with a serial gets a real button."""
+    import json
+    h = tmp_path / "bp.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconst cell=mkbatCell({battery:83,charge_status:'Charging',"
+                 "serial:'S9',codename:'skipjack'}, 40, 80);"
+                 "console.log(JSON.stringify(cell));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    cell = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "cbadge bat" in cell, f"battery cell is not a pill: {cell}"
+    assert "<button" in cell and "openBI('S9'" in cell, cell
+    assert "83%" in cell and "Charging" in cell, "pill missing percent or appended detail"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_battery_info_window_lists_the_detail(tmp_path):
+    """Battery Info carries the detail moved out of the Control Center."""
+    import json
+    h = tmp_path / "bi.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nbiSerial='S9';biName='skipjack';"
+                 "renderBI({serial:'S9',os:'AsteroidOS',bat_cap:83,bat_status:'Charging',"
+                 "bat_volt:3900000,bat_cycles:42,standby_measured:2.5});"
+                 "console.log(JSON.stringify(global.__els['bi'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "Cycles" in html and "42" in html, html[:300]
+    assert "Standby" in html and "Voltage" in html
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_control_center_no_longer_carries_the_battery_section(tmp_path):
+    """Battery detail moved to Battery Info; the Control Center System section
+    stays but the Battery section is gone."""
+    import json
+    h = tmp_path / "ccbat.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nccName='skipjack';ccSerial='S9';"
+                 "renderCC({serial:'S9',kernel:'3.18',os:'AsteroidOS',bat_cap:83,bat_cycles:42});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "System" in html, "Control Center lost its System section"
+    assert "Cycles" not in html, "Control Center still carries the moved battery detail"

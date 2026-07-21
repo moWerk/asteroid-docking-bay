@@ -155,6 +155,11 @@ _WEB_TEMPLATE = """\
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922}
+    .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
+    .cbadge.bat.ok{border-color:#3fb950;color:#3fb950}
+    .cbadge.bat.warn{border-color:#d29922;color:#d29922}
+    .cbadge.bat.low{border-color:#f85149;color:#f85149}
+    button.cbadge.bat:hover{background:rgba(255,255,255,.05)}
     /* Clickable badges are real <button>s so the cursor is a pointer, not a
        text caret; the non-clickable ones stay <span>s. */
     button.cbadge{cursor:pointer}
@@ -261,6 +266,7 @@ _WEB_TEMPLATE = """\
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
   <div id="nc" class="cc" onmouseleave="ncLeave()" onmouseenter="ncEnter()"></div>
+  <div id="bi" class="cc" onmouseleave="biLeave()" onmouseenter="biEnter()"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -279,10 +285,15 @@ function mkhide(slot,excluded){
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
 function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
-function mkbat(v,lo,hi){
-  if(v==null)return '<span class="dim">&mdash;</span>';
-  const cls=v<lo?'err':v<=hi?'on':'dim';
-  return `<span class="${cls}">${v}%</span>`;
+function batBand(v,lo,hi){return v==null?'':(v<lo?'low':v<=hi?'ok':'');}
+function batPill(p,cls,inner,title){
+  // The battery cell as a pill: the charge percent, plus one line of appended
+  // detail (charge state, drain rate, …) in dim — like the mode badges carry
+  // the serial/IP. Clicking opens the Battery Info window; a watch with no
+  // serial (never seen) is a plain non-clickable pill.
+  const t=title?` title="${esc(title)}"`:'';
+  if(!p.serial)return `<span class="cbadge bat ${cls||''}"${t}>${inner}</span>`;
+  return `<button class="cbadge bat ${cls||''}" onclick="openBI('${esc(p.serial)}','${esc(p.codename||p.serial)}',event)"${t}>${inner}</button>`;
 }
 function fmtAge(ts){
   // Compact "how long ago" for a last-live timestamp (seconds since epoch).
@@ -295,10 +306,15 @@ function fmtAge(ts){
 function mkbatCell(p,lo,hi){
   // Prefer the live reading; when the watch is off the bus fall back to the
   // last-seen value shown stale (amber) with its age, not a blank cell.
-  if(p.battery!=null)return mkbat(p.battery,lo,hi);
+  if(p.battery!=null){
+    const cs=p.charge_status;
+    const det=cs?` <span class="dim">${esc(cs)}</span>`:'';
+    return batPill(p,batBand(p.battery,lo,hi),`${p.battery}%${det}`,'battery — click for details');
+  }
   if(p.battery_cached!=null){
     const age=fmtAge(p.last_live_ts);
-    return `<span class="stale" title="watch off the bus — last reading${age?' '+age+' ago':''}">${p.battery_cached}%<span class="agec">${age?' '+age:''}</span></span>`;
+    return batPill(p,'warn',`${p.battery_cached}%<span class="dim">${age?' '+age:''}</span>`,
+                   'watch off the bus — last reading'+(age?' '+age+' ago':''));
   }
   return '<span class="dim">&mdash;</span>';
 }
@@ -496,25 +512,27 @@ function render(data){
           // Name the holder: on a rig several sessions share, "workbench
           // active" does not tell you whether to wait or take over.
           const who=w.owner?` — held by ${esc(w.owner)}`:'';
-          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}${who}">${pct}${esc(w.phase||'')}${w.owner?' ᴋ':''}</span>`;
+          bat=batPill(p,'warn',`${pct}<span class="dim">${esc(w.phase||'')}${w.owner?' ᴋ':''}</span>`,
+                      `workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}${who}`);
         }else if(charging){
-          if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
-          else if(p.charge_target!=null){bat=`<span class="warn">${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
-          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">${m}m${String(s).padStart(2,'0')}s</span>`;}
-          else{bat='<span class="warn">starting&hellip;</span>';}
+          if(p.charge_losing){bat=batPill(p,'low',`${p.charge_pct!=null?p.charge_pct:'?'}% <span class="dim">&#8595; losing</span>`,'battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).');}
+          else if(p.charge_target!=null){bat=batPill(p,'warn',`${p.charge_pct!=null?p.charge_pct:'?'}% <span class="dim">&rarr; ${p.charge_target}%</span>`,'charging');}
+          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=batPill(p,'warn',`<span class="dim">${m}m${String(s).padStart(2,'0')}s</span>`,'charging');}
+          else{bat=batPill(p,'warn','<span class="dim">starting&hellip;</span>','charging');}
         }
         else if(draining){
           const dr=p.drain;
-          let txt=(dr.last_pct!==null?dr.last_pct+'%':'?%')+' &#x2193;';
+          let txt=(dr.last_pct!==null?dr.last_pct+'%':'?%')+' <span class="dim">&#x2193;</span>';
           if(dr.drain_rate!==null&&dr.drain_rate>0){
-            txt=`${dr.last_pct}% &minus;${dr.drain_rate.toFixed(1)}%/h`;
+            txt=`${dr.last_pct}% <span class="dim">&minus;${dr.drain_rate.toFixed(1)}%/h`;
             if(dr.last_pct>floor){const estH=(dr.last_pct-floor)/dr.drain_rate;txt+=` (~${fmtDur(estH)})`;}
+            txt+='</span>';
           }
-          bat=`<span class="warn">${txt}</span>`;
+          bat=batPill(p,'warn',txt,'drain test running');
         }else if(p.drain&&p.drain.done&&p.drain.last_pct!==null){
           const dr=p.drain;
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
-          bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
+          bat=batPill(p,batBand(p.battery,lo,hi),`${p.battery!=null?p.battery+'%':'—'}<span class="dim"> (test: ${dr.last_pct}%${summary})</span>`,'battery — click for details');
         }else{
           bat=mkbatCell(p,lo,hi);
         }
@@ -554,6 +572,7 @@ function render(data){
 // ── Control Center overlay ──────────────────────────────────────────────────
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
 let ncSerial=null, ncName=null, ncTimer=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
+let biSerial=null, biName=null, biTimer=null, biAX=0, biAY=0;
 let wimgAX=0, wimgAY=0;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
@@ -582,6 +601,7 @@ function placeOverlay(el,ax,ay){
 }
 function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
 function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
+function biPlace(){placeOverlay(document.getElementById('bi'),biAX,biAY);}
 function openCC(serial,name,ev){
   ev.stopPropagation();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
@@ -606,12 +626,9 @@ function renderCC(d){
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
   const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
   const mt=+d.memtotal,mf=+d.memfree,memU=mt?Math.round((mt-mf)/1024):null,memT=mt?Math.round(mt/1024):null;
-  const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt),freq=num(d.cpufreq);
+  const freq=num(d.cpufreq);
   const dfp=(d.df||'').trim().split(/[ \t]+/);
   const storage=dfp.length>=5?`${dfp[2]} / ${dfp[1]} (${dfp[4]})`:null;
-  // Real unicode arrows, not entities: this value passes through esc(),
-  // which would render an entity as literal "&#9660;" text.
-  const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
   const sys=sec('System',
     kv('Kernel',d.kernel)+kv('Qt',d.qt)+kv('SoC',(d.soc||'').trim())+
     kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
@@ -625,18 +642,11 @@ function renderCC(d){
     // Worth showing verbatim: it is the field the porting community reads to
     // identify a device, so a human can check our detection against it.
     kv('Bootloader',d.geometry&&d.geometry.bootloader));
-  const bat=sec('Battery',
-    kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
-    kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
-    kv('Voltage',bv?(bv/1e6).toFixed(3)+' V':null)+kv('Current',cur)+
-    kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
-    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
-    kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
   cc.innerHTML=
     `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
       (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div></div>`+
+    `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
     `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
@@ -717,6 +727,54 @@ function ncToggle(tech,on){
 function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 function ncLeave(){ncTimer=setTimeout(closeNC,600);}
 function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
+
+// ── Battery Info ────────────────────────────────────────────────────────────
+// Opened by clicking the battery pill. There is nothing to *control* about a
+// battery, so this detail (voltage, current, temperature, cycles, health,
+// measured standby drain) moved out of the Control Center into its own
+// read-only window, leaving the pill to carry just the charge and one line of
+// appended detail.
+function openBI(serial,name,ev){
+  ev.stopPropagation();
+  biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
+  const bi=document.getElementById('bi');
+  bi.classList.remove('stale-cc');
+  bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;
+  bi.style.display='block'; biPlace(); biFetch();
+}
+function biFetch(){
+  const s=biSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(biSerial===s)renderBI(d)}).catch(()=>{
+    const bi=document.getElementById('bi');bi.innerHTML=`<div class="cc-hd">${esc(biName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeBI()">&times;</span></div>`;
+  });
+}
+function renderBI(d){
+  const bi=document.getElementById('bi');
+  const stale=!!(d&&d.stale);
+  bi.classList.toggle('stale-cc',stale);
+  d=d||{};
+  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
+  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
+  const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt);
+  const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
+  const bat=sec('Battery',
+    kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
+    kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
+    kv('Voltage',bv?(bv/1e6).toFixed(3)+' V':null)+kv('Current',cur)+
+    kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
+    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
+    kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
+  bi.innerHTML=
+    `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>`+
+      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeBI()">&times;</span></div>`+
+    `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`;
+  biPlace();
+}
+function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biTimer){clearTimeout(biTimer);biTimer=null;}}
+function biLeave(){biTimer=setTimeout(closeBI,600);}
+function biEnter(){if(biTimer){clearTimeout(biTimer);biTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
 let _menuAnchor=null;
 function openMenu(ev,html){
@@ -976,6 +1034,7 @@ function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
   const nc=document.getElementById('nc');if(nc.style.display==='block'&&!nc.contains(e.target)&&!e.target.classList.contains('cbadge'))closeNC();
+  const bi=document.getElementById('bi');if(bi.style.display==='block'&&!bi.contains(e.target)&&!e.target.classList.contains('cbadge'))closeBI();
   const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
   const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
 });
