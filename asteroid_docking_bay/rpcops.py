@@ -421,6 +421,12 @@ def _port_poweroff(args):
         confirmed = uhubctl_set_power(loc, port, False)
     except RuntimeError as e:
         return {"ok": False, "error": str(e), "adb_shutdown": adb_ok}
+    # Mark a *confirmed graceful* shutdown as the one off-state we can vouch
+    # for: the watch was told to halt and it went, so it is safely down and not
+    # draining. A raw port toggle never reaches here, so its ambiguous off-state
+    # stays unmarked. The status build turns this into the "down" pill.
+    if serial and adb_ok:
+        last_seen.record(serial, safe_off_ts=time.time())
     return {"ok": True, "adb_shutdown": adb_ok, "confirmed": confirmed}
 
 

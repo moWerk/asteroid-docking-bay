@@ -156,6 +156,11 @@ _WEB_TEMPLATE = """\
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
+    /* Lifecycle pill by the codename — the one power-state we can assert:
+       "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
+    .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
+    .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
+    .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
     .cbadge.bat.ok{border-color:#3fb950;color:#3fb950}
     .cbadge.bat.warn{border-color:#d29922;color:#d29922}
     .cbadge.bat.low{border-color:#f85149;color:#f85149}
@@ -285,6 +290,15 @@ function mkhide(slot,excluded){
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
 function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
+function mklife(p){
+  // The one power-state we positively assert, shown beside the codename.
+  // "down" = safely halted (graceful power-off, port off, not draining);
+  // "worn" = off-rig via the wear toggle. Absence is "no claim", never a
+  // promise the watch is off — a raw port cut leaves an ambiguous state blank.
+  if(p.lifecycle==='down')return `<span class="cbadge life down" title="safely powered down — gracefully halted, port off, not draining">&#9211; down</span>`;
+  if(p.lifecycle==='worn')return `<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>`;
+  return '';
+}
 function batBand(v,lo,hi){return v==null?'':(v<lo?'low':v<=hi?'ok':'');}
 function batPill(p,cls,inner,title){
   // The battery cell as a pill: the charge percent, plus one line of appended
@@ -546,7 +560,7 @@ function render(data){
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +

@@ -181,3 +181,36 @@ def test_last_conn_state_is_not_erased_by_an_offline_poll(tmp_path):
     ls.record("S1", last_conn_state=None, battery=None)
     assert (ls.get("S1") or {}).get("last_conn_state") == "fastboot", (
         "an offline poll erased the state the warning depends on")
+
+
+def test_lifecycle_down_only_after_a_graceful_shutdown(monkeypatch):
+    """"down" is the one power-state we assert: a confirmed graceful shutdown
+    (safe_off_ts) with the watch not seen live since and its port off. A raw
+    port cut never stamps safe_off_ts, so it stays unmarked — absence is "no
+    claim", never a false "definitely off"."""
+    from asteroid_docking_bay import webstatus as ws
+    store = {}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+
+    # Gracefully powered off: safe_off stamped at/after it was last seen live
+    # (the real poweroff records both at the same "now").
+    store["S1"] = {"last_live_ts": 1000.0, "safe_off_ts": 1000.0}
+    assert ws._lifecycle("S1", present=False, power=False) == "down"
+    # Its port is powered again (booting) -> not "down" anymore.
+    assert ws._lifecycle("S1", present=False, power=True) is None
+    # It is back on the bus -> not "down".
+    assert ws._lifecycle("S1", present=True, power=True) is None
+    # A watch cut raw (seen live, no safe_off) is NOT claimed down.
+    store["S2"] = {"last_live_ts": 1000.0}
+    assert ws._lifecycle("S2", present=False, power=False) is None
+
+
+def test_lifecycle_self_clears_when_seen_live_again(monkeypatch):
+    """After the watch is seen live again, last_live_ts advances past
+    safe_off_ts and the claim drops with no explicit clear."""
+    from asteroid_docking_bay import webstatus as ws
+    store = {"S1": {"last_live_ts": 1000.0, "safe_off_ts": 1000.0}}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+    assert ws._lifecycle("S1", False, False) == "down"
+    store["S1"]["last_live_ts"] = 3000.0   # seen live again
+    assert ws._lifecycle("S1", False, False) is None

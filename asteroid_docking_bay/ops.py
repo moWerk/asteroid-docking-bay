@@ -19,6 +19,7 @@ from .usb import uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _switch_ssh_to_adb,
                        _wait_for_fastboot)
+from .lastseen import last_seen
 from .events import (_DRAIN_FLOOR_PCT, _DRAIN_MAX_BLIND_POLLS,
                      _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
@@ -114,6 +115,10 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
                 cn = find_codename_for_loc_port(load_config(), loc, port)
                 event_log.log(serial, cn, "power_off", pct=off_pct)
             _run(f"adb -s {serial} shell poweroff", check=False, timeout=10)
+            # Same graceful-shutdown marker as the manual Power-off — this ends
+            # an op the proven way, so the watch is safely down (the "down"
+            # pill), not ambiguously cut.
+            last_seen.record(serial, safe_off_ts=time.time())
     except Exception as exc:
         log.debug("graceful poweroff of %s failed: %s", serial, exc)
     finally:

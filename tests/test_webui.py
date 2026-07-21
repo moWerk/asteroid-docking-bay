@@ -390,3 +390,21 @@ def test_control_center_no_longer_carries_the_battery_section(tmp_path):
     html = json.loads(r.stdout.strip().splitlines()[-1])
     assert "System" in html, "Control Center lost its System section"
     assert "Cycles" not in html, "Control Center still carries the moved battery detail"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_lifecycle_pill_shows_down_only_when_asserted(tmp_path):
+    """The codename-adjacent pill appears only for an asserted state; a watch
+    with no lifecycle claim shows nothing (no false 'off')."""
+    import json
+    h = tmp_path / "life.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({down:mklife({lifecycle:'down'}),"
+                 "worn:mklife({lifecycle:'worn'}),none:mklife({})}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "down" in out["down"] and "life down" in out["down"]
+    assert "worn" in out["worn"] and "life worn" in out["worn"]
+    assert out["none"] == "", "an unclaimed watch must show no lifecycle pill"

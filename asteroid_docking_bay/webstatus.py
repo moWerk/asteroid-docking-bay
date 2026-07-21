@@ -154,6 +154,24 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "str | None":
+    """The one power-state we can positively assert: "down". A confirmed
+    graceful shutdown stamps safe_off_ts; if the watch has not been seen on the
+    bus since (so >= last_live_ts) and its port is off, it is safely down and
+    not draining. A raw port cut never stamps safe_off_ts, so its ambiguous
+    off-state stays unmarked — absence of the pill is "no claim", never
+    "definitely off". Self-clears: the next time the watch is seen live,
+    last_live_ts advances past safe_off_ts and this returns None."""
+    if not serial or present or power:
+        return None
+    ls = last_seen.get(serial) or {}
+    so = ls.get("safe_off_ts") or 0
+    llt = ls.get("last_live_ts") or 0
+    if so and so >= llt:
+        return "down"
+    return None
+
+
 def _battery_view(adb_state: "str | None", serial: "str | None",
                   battery: "int | None", screen_forced: bool,
                   watch_os: "str | None") -> "tuple[int | None, float | None]":
@@ -396,6 +414,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 # which watch holds which IP — most useful while it's in SSH
                 # mode, but shown whenever one has been allocated.
                 "ssh_ip": ssh_ip_for_serial(cfg, serial),
+                "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,
                 "charge_status": charge_status,
