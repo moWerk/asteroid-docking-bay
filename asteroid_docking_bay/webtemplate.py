@@ -260,6 +260,7 @@ _WEB_TEMPLATE = """\
   </div>
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
+  <div id="nc" class="cc" onmouseleave="ncLeave()" onmouseenter="ncEnter()"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -378,21 +379,23 @@ function mkport(p){
   return s;
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
-function mkadb(adb,fbprod,os,serial,sshIp){
+function mkadb(adb,fbprod,os,serial,sshIp,name){
+  const nm=esc(name||serial||'');
   if(adb==='device'){
-    // usb_moded (the SSH switch) is AsteroidOS-only, so the ADB pill is a live
-    // toggle to SSH for an AsteroidOS or not-yet-identified watch (a real
-    // <button>), and a plain status pill for a known other OS (e.g. WearOS).
+    // Clicking the badge opens the Network Center (addresses, links, the USB
+    // mode toggle) rather than switching mode inline — an inline toggle here
+    // was too easy to misclick. A real <button> for the pointer cursor; a
+    // known non-AsteroidOS watch (e.g. WearOS) stays a plain status span.
     // Shows the serial — the ADB address — mirroring the SSH pill's IP.
     const known=os&&os!=='asteroidos'&&os!=='unknown';
     const logo=os==='asteroidos'?AOSLOGO:'';
     const ser=serial?` <span class="dim">${esc(serial)}</span>`:'';
     const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(known?' — '+esc(os):'')}`;
     if(!known&&serial)
-      return `${logo}<button class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="${ttl} — click to switch this watch to SSH">ADB${ser}</button>`;
+      return `${logo}<button class="cbadge adb" onclick="openNC('${esc(serial)}','${nm}',event,'${esc(sshIp||'')}','device')" title="${ttl} — click for network details">ADB${ser}</button>`;
     return `${logo}<span class="cbadge adb" title="${ttl}">ADB${ser}</span>`;
   }
-  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<button class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click to switch this watch to ADB">SSH${ipl}</button>`;}
+  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<button class="cbadge ssh" onclick="openNC('${esc(serial||'')}','${nm}',event,'${esc(sshIp||'')}','ssh')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click for network details">SSH${ipl}</button>`;}
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -408,7 +411,7 @@ function mkadbrow(p){
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
     return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
-  return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip);
+  return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename);
 }
 function render(data){
   const tb=document.getElementById('tb');
@@ -550,6 +553,7 @@ function render(data){
 }
 // ── Control Center overlay ──────────────────────────────────────────────────
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
+let ncSerial=null, ncName=null, ncTimer=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
 let wimgAX=0, wimgAY=0;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
@@ -567,15 +571,17 @@ function sizeComposite(){
 }
 window.addEventListener('resize',sizeComposite);
 function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
-function ccPlace(){
+function placeOverlay(el,ax,ay){
   // Anchor to the click; flip ABOVE the anchor if the panel would run off the
   // bottom (its height only known after the async data renders). No page scroll.
-  const cc=document.getElementById('cc'), h=cc.offsetHeight, w=cc.offsetWidth;
-  let left=Math.min(ccAX, window.innerWidth-w-8);
-  let top=ccAY+10;
-  if(top+h>window.innerHeight-8) top=ccAY-h-10;
-  cc.style.left=Math.max(8,left)+'px'; cc.style.top=Math.max(8,top)+'px';
+  const h=el.offsetHeight, w=el.offsetWidth;
+  let left=Math.min(ax, window.innerWidth-w-8);
+  let top=ay+10;
+  if(top+h>window.innerHeight-8) top=ay-h-10;
+  el.style.left=Math.max(8,left)+'px'; el.style.top=Math.max(8,top)+'px';
 }
+function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
+function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
 function openCC(serial,name,ev){
   ev.stopPropagation();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
@@ -603,8 +609,6 @@ function renderCC(d){
   const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt),freq=num(d.cpufreq);
   const dfp=(d.df||'').trim().split(/[ \t]+/);
   const storage=dfp.length>=5?`${dfp[2]} / ${dfp[1]} (${dfp[4]})`:null;
-  const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
-  const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
   // Real unicode arrows, not entities: this value passes through esc(),
   // which would render an entity as literal "&#9660;" text.
   const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
@@ -614,7 +618,7 @@ function renderCC(d){
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
     kv('Load',d.load)+kv('Threads',d.threads)+
     kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
-    kv('Resolution',d.resolution)+
+    kv('Resolution',d.resolution)+kv('Timezone',d.tz)+kv('Clock',d.datetime)+
     kv('Machine (image)',d.geometry&&d.geometry.machine)+
     // The bootloader version string names the true hardware, which is the only
     // thing that distinguishes watches sharing an image (rover vs rubyfish).
@@ -628,18 +632,12 @@ function renderCC(d){
     kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
     kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
     kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
-  const net=sec('Network &amp; links',
-    kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('IP',d.ip)+
-    kv('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'))+
-    kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
-    kv('Timezone',d.tz)+kv('Clock',d.datetime)+kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
-  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ccToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
   cc.innerHTML=
     `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
       (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
-    `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
+    `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div></div>`+
+    `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
       `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
@@ -650,11 +648,6 @@ function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/buzz',{meth
 function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ccFetch();refresh();});}
 function releaseScreen(s){fetch('/api/watch/'+encodeURIComponent(s)+'/screen/off',{method:'POST'}).then(()=>{toast('screen released');refresh()});}
 function releaseAllScreens(){fetch('/api/screen/release-all',{method:'POST'}).then(r=>r.json()).then(d=>{toast('released '+((d.released||[]).length)+' screen(s)');refresh()});}
-function ccToggle(tech,on){
-  document.querySelectorAll('.cc-tgl').forEach(b=>b.classList.add('busy'));
-  fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
-    .then(()=>setTimeout(ccFetch,1600)).catch(()=>ccFetch());
-}
 function ccSyncTime(){
   const b=document.getElementById('cc-time');if(b)b.textContent='syncing…';
   fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
@@ -663,6 +656,67 @@ function ccSyncTime(){
 function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 function ccLeave(){ccTimer=setTimeout(closeCC,600);}
 function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+
+// ── Network Center ──────────────────────────────────────────────────────────
+// A second Control-Center-like overlay, opened by clicking the ADB/SSH badge.
+// It gathers the network detail that used to crowd the Control Center — links,
+// addresses, the WiFi/BT toggles — and adds the USB IP, which lives nowhere
+// else. The USB mode toggle lives here too, a deliberate click in an overlay
+// rather than the misclick-prone inline badge.
+function openNC(serial,name,ev,sshIp,mode){
+  ev.stopPropagation();
+  ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
+  ncSshIp=sshIp||''; ncMode=mode||'';
+  const nc=document.getElementById('nc');
+  nc.classList.remove('stale-cc');
+  nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;
+  nc.style.display='block'; ncPlace(); ncFetch();
+}
+function ncFetch(){
+  const s=ncSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(ncSerial===s)renderNC(d)}).catch(()=>{
+    const nc=document.getElementById('nc');nc.innerHTML=`<div class="cc-hd">${esc(ncName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeNC()">&times;</span></div>`;
+  });
+}
+function renderNC(d){
+  const nc=document.getElementById('nc');
+  const stale=!!(d&&d.stale);
+  nc.classList.toggle('stale-cc',stale);
+  d=d||{};
+  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
+  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
+  const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
+  const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
+  const usbip=ncSshIp||'192.168.2.15';
+  const net=sec('Addresses &amp; links',
+    kv('USB IP',usbip)+kv('USB mode',ncMode==='ssh'?'SSH (developer)':'ADB')+
+    kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('WiFi IP',d.ip)+
+    kv('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'))+
+    kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
+    kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
+  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
+  // The USB-mode toggle: the deliberate home for the switch the badge used to
+  // carry. Reaches the watch over whichever link it is currently on.
+  const modeToggle=ncMode==='ssh'
+    ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
+    : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
+  nc.innerHTML=
+    `<div class="cc-hd">${esc(ncName)} &middot; Network <span class="dim">${esc(d.os||'')}</span>`+
+      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeNC()">&times;</span></div>`+
+    `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+
+    `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}${modeToggle}</div>`;
+  ncPlace();
+}
+function ncToggle(tech,on){
+  document.querySelectorAll('#nc .cc-tgl').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(ncSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
+    .then(()=>setTimeout(ncFetch,1600)).catch(()=>ncFetch());
+}
+function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
+function ncLeave(){ncTimer=setTimeout(closeNC,600);}
+function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
 let _menuAnchor=null;
 function openMenu(ev,html){
@@ -921,6 +975,7 @@ function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOve
 function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
+  const nc=document.getElementById('nc');if(nc.style.display==='block'&&!nc.contains(e.target)&&!e.target.classList.contains('cbadge'))closeNC();
   const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
   const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
 });

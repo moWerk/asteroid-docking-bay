@@ -269,9 +269,10 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
         assert "cbadge" in out[k], f"{k} badge is not the pill style: {out[k]}"
         assert "<button" in out[k], f"{k} clickable badge is not a real button: {out[k]}"
         assert "<svg" in out[k], f"{k} badge is missing the AsteroidOS logo"
-    # Two-way toggle: adb → switch to ssh, ssh → switch to adb.
-    assert "switchSsh(" in out["adb"], f"ADB pill does not toggle to SSH: {out['adb']}"
-    assert "switchAdb(" in out["ssh"], f"SSH pill does not toggle to ADB: {out['ssh']}"
+    # Clicking a badge opens the Network Center (not an inline mode toggle,
+    # which was too easy to misclick).
+    assert "openNC(" in out["adb"], f"ADB pill does not open Network Center: {out['adb']}"
+    assert "openNC(" in out["ssh"], f"SSH pill does not open Network Center: {out['ssh']}"
     # The ADB pill shows the serial (its address), like SSH shows the IP.
     assert "S9" in out["adb"], f"ADB pill does not show the serial: {out['adb']}"
     # A known non-AsteroidOS OS is a status pill, not an SSH toggle (usb_moded
@@ -297,3 +298,41 @@ def test_workbench_menu_shows_the_usb_ip_banner(tmp_path):
     assert "menu-ip" in html and "192.168.13.37" in html, html
     # It must be a plain banner, not a clickable action.
     assert 'class="menu-ip"' in html and "onclick" not in html.split("menu-hd")[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_network_center_lists_usb_ip_and_mode_toggle(tmp_path):
+    """Clicking the badge opens the Network Center. It must carry the USB IP —
+    which lives nowhere else — and the deliberate USB-mode toggle that the
+    badge no longer does inline."""
+    import json
+    h = tmp_path / "nc.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nncSshIp='192.168.13.37';ncMode='ssh';ncSerial='S9';ncName='skipjack';"
+                 "renderNC({serial:'S9', os:'AsteroidOS', wifi:1, ip:'10.0.0.9', wlanmac:'aa:bb'});"
+                 "console.log(JSON.stringify(global.__els['nc'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "192.168.13.37" in html, f"Network Center is missing the USB IP: {html[:300]}"
+    assert "USB IP" in html
+    assert "switchAdb(" in html, "SSH-mode Network Center lacks the USB->ADB toggle"
+    assert "ncToggle('wifi'" in html, "Network Center lacks the WiFi toggle"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_control_center_no_longer_carries_the_network_section(tmp_path):
+    """The network detail moved to the Network Center, freeing the Control
+    Center. Its render must no longer emit the old WiFi/BT toggle wiring."""
+    import json
+    h = tmp_path / "ccnet.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nccName='skipjack';ccSerial='S9';"
+                 "renderCC({serial:'S9', kernel:'3.18', os:'AsteroidOS', wifi:1});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "ccToggle(" not in html, "Control Center still wires the moved WiFi/BT toggles"
