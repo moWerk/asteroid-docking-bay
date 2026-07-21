@@ -381,7 +381,7 @@ function mkadb(adb,fbprod,os,serial){
       return `${logo}<span class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="ADB mode${os==='asteroidos'?' — AsteroidOS':''} — click to switch this watch to SSH">ADB</span>`;
     return `${logo}<span class="cbadge adb" title="${known?esc(os)+' on ADB':'ADB mode'}">ADB${suffix}</span>`;
   }
-  if(adb==='ssh')return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
+  if(adb==='ssh')return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -841,7 +841,7 @@ function menuWorkbench(ev,slot,serial,wb,mode){
   // mode). Either switch re-enumerates the gadget and drops the current link.
   let usbToggle;
   if(mode==='ssh')
-    usbToggle=mi('info','Switch USB to ADB',`switchAdb()`);
+    usbToggle=mi('info','Switch USB to ADB',`switchAdb('${serial}')`);
   else
     usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
                  'watch must be on ADB to switch it to SSH mode');
@@ -881,7 +881,7 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000)});}
+function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000)});}
 function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,6000)});}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){

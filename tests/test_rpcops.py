@@ -382,17 +382,25 @@ def test_port_ops_work_normally_when_no_operation_is_running(monkeypatch):
     assert r == {"ok": True, "confirmed": True}, r
 
 
-def test_switch_ssh_targets_the_given_serial(monkeypatch):
-    """ADB->SSH is per-serial: only one watch can hold the fixed 192.168.2.15,
-    so the command must go to the named watch, not a global switch like the
-    ADB direction."""
+def _mock_switch_ssh_config(monkeypatch, ro, cfg=None):
+    cfg = cfg if cfg is not None else {}
+    monkeypatch.setattr(ro, "load_config", lambda: cfg)
+    monkeypatch.setattr(ro, "save_config", lambda c: None)
+    return cfg
+
+
+def test_switch_ssh_assigns_a_unique_ip_then_switches(monkeypatch):
+    """ADB->SSH gives the watch its own IP (so two watches never both grab the
+    default 192.168.2.15) and then switches it to developer mode. Both commands
+    must target the named serial, in that order."""
     import asteroid_docking_bay.rpcops as ro
-    seen = {}
-    monkeypatch.setattr(ro, "_run",
-                        lambda cmd, **k: (seen.setdefault("cmd", cmd), (0, "", ""))[1])
+    _mock_switch_ssh_config(monkeypatch, ro)
+    cmds = []
+    monkeypatch.setattr(ro, "_run", lambda cmd, **k: (cmds.append(cmd), (0, "", ""))[1])
     d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
-    assert d["ok"] is True
-    assert seen["cmd"] == "adb -s S9 shell usb_moded_util -s developer_mode", seen
+    assert d["ok"] is True and d["ip"] == "192.168.13.37", d
+    assert cmds == ["adb -s S9 shell usb_moded_util -n set:ip,192.168.13.37",
+                    "adb -s S9 shell usb_moded_util -s developer_mode"], cmds
 
 
 def test_switch_ssh_without_serial_is_rejected(monkeypatch):
@@ -408,6 +416,7 @@ def test_switch_ssh_reports_failure_when_usb_moded_refuses(monkeypatch):
     0, and the adb link stays up. That must surface as a failure, not a silent
     'ok' — the beluga case."""
     import asteroid_docking_bay.rpcops as ro
+    _mock_switch_ssh_config(monkeypatch, ro)
     monkeypatch.setattr(ro, "_run",
                         lambda cmd, **k: (0, "Trying to set the following mode "
                                           "developer_mode\nSorry an error occured, "
@@ -420,6 +429,7 @@ def test_switch_ssh_reports_ok_when_the_link_drops(monkeypatch):
     """A switch that took re-enumerates and drops the link, so the command
     comes back with no error text — that is success."""
     import asteroid_docking_bay.rpcops as ro
+    _mock_switch_ssh_config(monkeypatch, ro)
     monkeypatch.setattr(ro, "_run", lambda cmd, **k: (255, "", "closed by remote host"))
     d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
     assert d["ok"] is True, d

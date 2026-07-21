@@ -29,7 +29,8 @@ import time
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
-from .config import (_config_lock, _store_smart_verdict, charge_config,
+from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
+                     charge_config, ssh_ip_for_serial,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
@@ -189,10 +190,14 @@ def _watch_image(args):
 
 @DISPATCH.op("ssh.switch_adb")
 def _ssh_switch_adb(args):
-    """Switch a watch stuck in SSH/developer USB mode (reachable at 192.168.2.15)
-    over to ADB. ok=False means nothing was reachable, or the switch was
-    refused by a broken usb-moded on the watch."""
-    return _switch_ssh_to_adb()
+    """Switch a watch in SSH/developer USB mode back to ADB. Reaches it at its
+    assigned SSH address (per-watch, so each has a unique one), falling back to
+    the default 192.168.2.15 for a watch that predates IP assignment. ok=False
+    means nothing was reachable there, or a broken usb-moded refused it."""
+    serial = args.get("serial")
+    ip = (ssh_ip_for_serial(load_config(), serial) if serial else None) \
+        or "192.168.2.15"
+    return _switch_ssh_to_adb(ip)
 
 
 @DISPATCH.op("watch.switch_ssh")
@@ -206,13 +211,22 @@ def _watch_switch_ssh(args):
     serial = args.get("serial")
     if not serial:
         return {"ok": False, "error": "no serial for this port"}
+    # Give this watch its own SSH-mode IP before switching, so two watches sent
+    # to SSH on the same rig never both land on the default 192.168.2.15. The
+    # assignment is sticky and persisted, so the watch keeps this address.
+    with _config_lock:
+        cfg = load_config()
+        ip = allocate_ssh_ip(cfg, serial)
+        save_config(cfg)
+    _run(f"adb -s {serial} shell usb_moded_util -n set:ip,{ip}",
+         check=False, timeout=10)
     _, out, err = _run(f"adb -s {serial} shell usb_moded_util -s developer_mode",
                        check=False, timeout=15)
     if _usb_moded_switch_failed(out, err):
         return {"ok": False,
                 "error": "usb-moded did not switch mode — its service may be "
                          "down on this watch (a known device-specific issue)"}
-    return {"ok": True}
+    return {"ok": True, "ip": ip}
 
 
 @DISPATCH.op("watch.diagnostics")

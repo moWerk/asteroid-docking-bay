@@ -147,3 +147,37 @@ def test_record_exact_codename_is_change_gated():
     assert record_exact_codename(cfg, "S1", "rubyfish") is True  # changed
     assert record_exact_codename(cfg, None, "x") is False
     assert record_exact_codename(cfg, "S2", None) is False
+
+
+# ── SSH-mode IP allocation ──────────────────────────────────────────────────
+
+def test_ssh_ips_are_unique_and_start_at_leet():
+    from asteroid_docking_bay.config import allocate_ssh_ip, SSH_IP_BASE
+    cfg = {}
+    a = allocate_ssh_ip(cfg, "S1")
+    b = allocate_ssh_ip(cfg, "S2")
+    c = allocate_ssh_ip(cfg, "S3")
+    assert a == SSH_IP_BASE == "192.168.13.37"
+    assert (b, c) == ("192.168.13.38", "192.168.13.39")
+    assert len({a, b, c}) == 3, "two watches got the same SSH IP — the conflict"
+
+
+def test_ssh_ip_assignment_is_sticky():
+    from asteroid_docking_bay.config import allocate_ssh_ip, ssh_ip_for_serial
+    cfg = {}
+    first = allocate_ssh_ip(cfg, "S1")
+    allocate_ssh_ip(cfg, "S2")
+    assert allocate_ssh_ip(cfg, "S1") == first, "a watch's SSH IP must not drift"
+    assert ssh_ip_for_serial(cfg, "S1") == first
+    assert ssh_ip_for_serial(cfg, "unknown") is None
+
+
+def test_ssh_ip_fills_a_freed_gap():
+    """If a serial is removed, its address is reused rather than skipped."""
+    from asteroid_docking_bay.config import allocate_ssh_ip
+    cfg = {}
+    allocate_ssh_ip(cfg, "S1")            # .37
+    b = allocate_ssh_ip(cfg, "S2")        # .38
+    del cfg["ssh_ips"]["S1"]              # free .37
+    assert allocate_ssh_ip(cfg, "S3") == "192.168.13.37", "did not reuse the gap"
+    assert b == "192.168.13.38"

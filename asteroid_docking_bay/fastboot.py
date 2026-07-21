@@ -102,25 +102,26 @@ def _wait_for_fastboot(known_serials: set[str], timeout: int = 30) -> str | None
     return None
 
 
-def _detect_rndis() -> bool:
-    """Return True if a watch is reachable at 192.168.2.15 (SSH/RNDIS mode)."""
-    rc, _, _ = _run("ping -c1 -W2 192.168.2.15", check=False)
+def _detect_rndis(ip: str = "192.168.2.15") -> bool:
+    """Return True if a watch is reachable at `ip` (its SSH/RNDIS address)."""
+    rc, _, _ = _run(f"ping -c1 -W2 {ip}", check=False)
     return rc == 0
 
 
-def _switch_ssh_to_adb() -> dict:
+def _switch_ssh_to_adb(ip: str = "192.168.2.15") -> dict:
     """Switch a watch that enumerated in SSH/developer USB mode over to adb_mode.
-    A single such watch is directly reachable at 192.168.2.15. The switch
+    The watch is reachable at `ip` — its assigned SSH address (192.168.2.15 by
+    default, or the per-watch address handed out by allocate_ssh_ip). The switch
     re-enumerates the USB gadget and drops the ssh session, so a non-zero return
     is expected — success is the watch reappearing on adb, which the caller
     waits for. ok=False when nothing was reachable there, or when the watch's
     usb-moded refused the switch (printed an error while the link stayed up)."""
-    if not _detect_rndis():
-        return {"ok": False, "error": "no SSH watch reachable at 192.168.2.15"}
-    _clear_ssh_known_hosts()   # a fresh flash rotates the host key
+    if not _detect_rndis(ip):
+        return {"ok": False, "error": f"no SSH watch reachable at {ip}"}
+    _clear_ssh_known_hosts(ip)   # a fresh flash rotates the host key
     _, out, err = _run(
         "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "
-        "root@192.168.2.15 usb_moded_util -s adb_mode", check=False, timeout=15)
+        f"root@{ip} usb_moded_util -s adb_mode", check=False, timeout=15)
     if _usb_moded_switch_failed(out, err):
         return {"ok": False,
                 "error": "usb-moded refused the switch on this watch (its "
@@ -209,9 +210,9 @@ def _flash_watch(boot_file: Path, img_file: Path, fb_serial: str | None, dry_run
     fb("continue")
 
 
-def _clear_ssh_known_hosts():
+def _clear_ssh_known_hosts(ip: str = "192.168.2.15"):
     """Remove stale SSH host keys left by the previous AsteroidOS install."""
     _run("ssh-keygen -R watch", check=False)
-    _run("ssh-keygen -R 192.168.2.15", check=False)
+    _run(f"ssh-keygen -R {ip}", check=False)
 
 

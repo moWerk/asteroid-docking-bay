@@ -163,6 +163,43 @@ def exact_codename_for_serial(cfg: dict, serial: "str | None") -> "str | None":
     return cfg.get("exact_codenames", {}).get(serial) if serial else None
 
 
+# ── SSH-mode IP allocation ───────────────────────────────────────────────────
+# A watch in developer/SSH USB mode brings up an rndis link and, by default,
+# takes 192.168.2.15 — a fixed address inherited from SailfishOS. Every watch
+# uses the same one, so two watches switched to SSH in quick succession on the
+# same rig would both claim 192.168.2.15 on different host interfaces, and the
+# host could no longer tell them apart by address. We hand each watch a unique
+# IP instead (set via usb_moded_util -n before the switch), starting at
+# 192.168.13.37 — the "LEET" address, chosen to avoid the common 192.168.2.x
+# home-network clash too. Assignment is sticky per serial, so a watch keeps its
+# address across sessions.
+
+SSH_IP_BASE = "192.168.13.37"
+
+
+def ssh_ip_for_serial(cfg: dict, serial: "str | None") -> "str | None":
+    return cfg.get("ssh_ips", {}).get(serial) if serial else None
+
+
+def allocate_ssh_ip(cfg: dict, serial: str) -> str:
+    """The SSH-mode IP for a serial, assigning the next free one from the base
+    up on first use. Sticky: a serial always gets back the same address."""
+    import ipaddress
+    table = cfg.setdefault("ssh_ips", {})
+    if serial in table:
+        return table[serial]
+    used = set(table.values())
+    base = int(ipaddress.ip_address(SSH_IP_BASE))
+    for offset in range(0, 200):          # 192.168.13.37 .. .236
+        cand = str(ipaddress.ip_address(base + offset))
+        if cand not in used:
+            table[serial] = cand
+            return cand
+    # Pool exhausted (200 watches on one rig is not a real scenario); fall back
+    # to the base rather than raising, so a switch is never blocked by this.
+    return SSH_IP_BASE
+
+
 def record_exact_codename(cfg: dict, serial: "str | None",
                           exact: "str | None") -> bool:
     """Persist a detected exact codename for a serial. Returns True only when
