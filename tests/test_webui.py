@@ -243,3 +243,33 @@ def test_refreshing_row_pulse_survives_hover():
     assert "@keyframes rpulsehover" in _WEB_TEMPLATE, (
         "hovered refreshing rows need their own keyframe pulsing from the "
         "hover colour, else the pulse is invisible under the highlight")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
+    """Both USB-mode badges should read as one control: the same pill shape,
+    the AsteroidOS logo in front, and a click that toggles to the other mode.
+    The ADB pill switches an AsteroidOS watch to SSH; the SSH pill switches
+    back to ADB."""
+    import json
+    h = tmp_path / "badges.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({"
+                 "adb: mkadb('device','', 'asteroidos','S9'),"
+                 "ssh: mkadb('ssh','', null,'S9'),"
+                 "wear: mkadb('device','', 'WearOS','S9')}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    # Both are pills (cbadge) and carry the logo (an inline <svg>).
+    for k in ("adb", "ssh"):
+        assert "cbadge" in out[k], f"{k} badge is not the pill style: {out[k]}"
+        assert "<svg" in out[k], f"{k} badge is missing the AsteroidOS logo"
+    # Two-way toggle: adb → switch to ssh, ssh → switch to adb.
+    assert "switchSsh(" in out["adb"], f"ADB pill does not toggle to SSH: {out['adb']}"
+    assert "switchAdb(" in out["ssh"], f"SSH pill does not toggle to ADB: {out['ssh']}"
+    # A known non-AsteroidOS OS is a status pill, not an SSH toggle (usb_moded
+    # is AsteroidOS-only) and carries no asteroid logo.
+    assert "switchSsh(" not in out["wear"] and "<svg" not in out["wear"], out["wear"]

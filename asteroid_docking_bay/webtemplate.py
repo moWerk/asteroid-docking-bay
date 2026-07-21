@@ -147,6 +147,7 @@ _WEB_TEMPLATE = """\
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
     .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
+    .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922;cursor:pointer}
     .cbadge.ssh:hover{background:#2a2113}
     .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
@@ -367,13 +368,20 @@ function mkport(p){
   return s;
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
-function mkadb(adb,fbprod,os){
+function mkadb(adb,fbprod,os,serial){
   if(adb==='device'){
-    if(os==='asteroidos')return `${AOSLOGO}<span class="on" title="AsteroidOS on ADB">ADB</span>`;
-    if(os&&os!=='unknown')return `<span class="on" title="${esc(os)} on ADB">ADB <span class="dim">${esc(os)}</span></span>`;
-    return '<span class="on">ADB</span>';
+    // usb_moded (the SSH switch) is AsteroidOS-only, so the ADB pill is a live
+    // toggle to SSH for an AsteroidOS or not-yet-identified watch, and a plain
+    // status pill for a known other OS (e.g. WearOS). Matches the SSH pill's
+    // shape; green rather than amber, and the logo only when it's AsteroidOS.
+    const known=os&&os!=='asteroidos'&&os!=='unknown';
+    const logo=os==='asteroidos'?AOSLOGO:'';
+    const suffix=known?` <span class="dim">${esc(os)}</span>`:'';
+    if(!known&&serial)
+      return `${logo}<span class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="ADB mode${os==='asteroidos'?' — AsteroidOS':''} — click to switch this watch to SSH">ADB</span>`;
+    return `${logo}<span class="cbadge adb" title="${known?esc(os)+' on ADB':'ADB mode'}">ADB${suffix}</span>`;
   }
-  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
+  if(adb==='ssh')return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -389,7 +397,7 @@ function mkadbrow(p){
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
     return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
-  return mkadb(p.adb,null,p.os);
+  return mkadb(p.adb,null,p.os,p.serial);
 }
 function render(data){
   const tb=document.getElementById('tb');
