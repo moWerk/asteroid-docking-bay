@@ -12,6 +12,7 @@ import pytest
 
 from asteroid_docking_bay import rpcops
 from asteroid_docking_bay.rpc import RpcError
+from asteroid_docking_bay.lastseen import LastSeen
 
 WEBAPP_SRC = (Path(__file__).resolve().parent.parent
               / "asteroid_docking_bay" / "webapp.py").read_text()
@@ -40,10 +41,11 @@ def test_registered_ops_are_the_documented_contract():
     here and in docs/CONTAINERS.md — that is the point."""
     assert REGISTERED == {
         "status.get",
-        "watch.cc", "watch.toggle", "watch.settime", "watch.notify",
+        "watch.cc", "watch.timeline",
+        "watch.toggle", "watch.settime", "watch.notify",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics",
-        "ssh.switch_adb",
+        "watch.image", "ssh.switch_adb",
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
         "port.bootloader", "port.hide", "hub.hide",
         "charge.start", "charge.stop",
@@ -67,6 +69,32 @@ def test_port_set_ok(monkeypatch):
     monkeypatch.setattr(rpcops, "uhubctl_set_power", lambda l, p, o: True)
     d = rpcops.DISPATCH._data["port.set"]({"loc": "1-1", "port": 1, "on": True})
     assert d == {"ok": True, "confirmed": True}
+
+
+def test_port_cycle_records_smart_verdict(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    monkeypatch.setattr(rpcops, "test_port_power_switching",
+                        lambda l, p, s: (True, "VBUS cut confirmed"))
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"hubs": [{"location": "1-2", "port_smart": {}}]})
+    monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg=cfg))
+    d = rpcops.DISPATCH._data["port.cycle"]({"loc": "1-2", "port": 2})
+    assert d["ok"] is True and d["smart"] is True
+    assert saved["cfg"]["hubs"][0]["port_smart"]["2"] is True
+
+
+def test_port_cycle_inconclusive_does_not_save(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: None)
+    monkeypatch.setattr(rpcops, "test_port_power_switching",
+                        lambda l, p, s: (None, "unverified"))
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"hubs": [{"location": "1-2", "port_smart": {}}]})
+    monkeypatch.setattr(rpcops, "save_config",
+                        lambda cfg: calls.setdefault("saved", True))
+    d = rpcops.DISPATCH._data["port.cycle"]({"loc": "1-2", "port": 2})
+    assert d["ok"] is True and d["smart"] is None and "saved" not in calls
 
 
 def test_watch_toggle_rejects_unknown_tech():
@@ -98,6 +126,98 @@ def test_hide_on_unknown_hub(monkeypatch):
     monkeypatch.setattr(rpcops, "load_config", lambda: {"hubs": []})
     d = rpcops.DISPATCH._data["port.hide"]({"loc": "9-9", "port": 1})
     assert d == {"ok": False, "error": "hub not found"}
+
+
+class _FakeWatch:
+    def __init__(self, serial, data):
+        self._data = data
+    def cc_data(self):
+        return self._data
+
+
+def test_watch_cc_live_returns_and_caches(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "Watch",
+                        lambda s: _FakeWatch(s, {"kernel": "x", "serial": s}))
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["kernel"] == "x" and "stale" not in d
+    assert ls.get("S1")["cc"]["kernel"] == "x"
+
+
+def test_watch_cc_offline_serves_stale(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})       # seed while live
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))  # offline
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["kernel"] == "x" and d["stale"] is True and d["last_live_ts"] > 0
+
+
+def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "last_seen", LastSeen(tmp_path / "ls.json"))
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))
+    assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
+
+
+def test_watch_timeline_returns_battery_points(monkeypatch):
+    class _EL:
+        def read(self, serial, codename=None):
+            return [
+                {"event": "check_reading", "ts": 100, "pct": 80},
+                {"event": "charge_start", "ts": 150},
+                {"event": "drain_reading", "ts": 200, "pct": 70},
+                {"event": "flash", "ts": 250},          # no pct → excluded
+            ]
+        def standby_loss_rate(self, serial, codename, evs):
+            return 1.5
+    monkeypatch.setattr(rpcops, "event_log", _EL())
+    d = rpcops.DISPATCH._data["watch.timeline"]({"serial": "S1"})
+    assert d["rate"] == 1.5
+    assert d["points"] == [{"ts": 100, "pct": 80}, {"ts": 200, "pct": 70}]
+
+
+def test_watch_cc_attaches_cached_resolution(monkeypatch, tmp_path):
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    ls.record("S1", geometry={"round": True, "resolution": "360x360"})
+    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    assert d["resolution"] == "360x360" and d["geometry"]["round"] is True
+
+
+def _fake_watch_cls(shot_return, last_path):
+    class _W:
+        def __init__(self, serial):
+            pass
+        def screenshot(self):
+            return shot_return
+        def last_screenshot_path(self):
+            return last_path
+    return _W
+
+
+def test_watch_screenshot_stale_fallback(monkeypatch, tmp_path):
+    shot = tmp_path / "s.jpg"; shot.write_bytes(b"\xff\xd8jpg")
+    # Fresh capture fails (offline) but a last pull exists → serve it stale.
+    monkeypatch.setattr(rpcops, "Watch", _fake_watch_cls(None, shot))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] and d["stale"] is True and d["captured_ts"] > 0
+
+
+def test_watch_screenshot_fresh_is_not_stale(monkeypatch, tmp_path):
+    shot = tmp_path / "s.jpg"; shot.write_bytes(b"\xff\xd8jpg")
+    monkeypatch.setattr(rpcops, "Watch", _fake_watch_cls(shot, shot))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] and d["stale"] is False
+
+
+def test_watch_screenshot_fails_when_never_captured(monkeypatch, tmp_path):
+    monkeypatch.setattr(rpcops, "Watch",
+                        _fake_watch_cls(None, tmp_path / "nope.jpg"))
+    d = rpcops.DISPATCH._data["watch.screenshot"]({"serial": "S1"})
+    assert d["ok"] is False
 
 
 def test_flash_start_unmapped_port_streams_error(monkeypatch):

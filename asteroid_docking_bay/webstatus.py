@@ -18,9 +18,11 @@ from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   uhubctl_list)
 from .fastboot import _fastboot_getvar_product, _fastboot_list
 from .events import _latest_drain_summaries
+from .lastseen import last_seen
+from .variants import exact_codename
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
-from .watchctl import _watch_os, _watch_os_for
+from .watchctl import Watch, _watch_os, _watch_os_for
 
 
 # Serials that could not be identified via ADB — don't re-probe every refresh.
@@ -150,6 +152,46 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+def _battery_view(adb_state: "str | None", serial: "str | None",
+                  battery: "int | None", screen_forced: bool,
+                  watch_os: "str | None") -> "tuple[int | None, float | None]":
+    """Record a live reading, or fall back to the last-seen one when offline.
+
+    A watch on ADB has its current values stored (last_live_ts stamped now);
+    an offline watch returns the cached (battery, last_live_ts) so the UI can
+    show a stale value instead of a blank. The live `battery` contract is left
+    untouched — the caller keeps it None when offline and prefers cached only
+    for display, so nothing mistakes a cached number for a fresh one."""
+    if adb_state == "device":
+        last_seen.record(serial, battery=battery,
+                         screen_forced=screen_forced, os=watch_os)
+        return None, None
+    cached = last_seen.get(serial) if serial else None
+    if not cached:
+        return None, None
+    return cached.get("battery"), cached.get("last_live_ts")
+
+
+def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | None":
+    """The watch's screen geometry, probed once and cached forever.
+
+    Geometry is static per watch, so probe it lazily — only when the watch is
+    live and we've never stored it — and read it back from the cache on every
+    later refresh (including while offline, for the screenshot mask). A watch
+    never seen live has None until it appears."""
+    if not serial:
+        return None
+    geo = (last_seen.get(serial) or {}).get("geometry")
+    if geo:
+        return geo
+    if adb_state == "device":
+        geo = Watch(serial).geometry()
+        if geo:
+            last_seen.record(serial, geometry=geo)
+            return geo
+    return None
+
+
 def _web_status_data(cfg: dict) -> list[dict]:
     """
     Return hub-structured status including unmapped (empty) ports.
@@ -228,10 +270,25 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 bool(serial and serial in fb_devices),
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             if adb_state == "device":
-                battery, screen_forced = battery_and_screen(serial)
+                battery, screen_forced, charge_status = battery_and_screen(serial)
             else:
-                battery, screen_forced = None, False
+                battery, screen_forced, charge_status = None, False, None
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None
+            # Store the live reading, or fall back to the last-seen one when
+            # the watch is off the bus, so the row shows a stale value + age
+            # rather than a blank cell.
+            battery_cached, last_live_ts = _battery_view(
+                adb_state, serial, battery, screen_forced, watch_os)
+            geometry = _geometry_view(adb_state, serial)
+            # Show the exact hardware codename (tunny, belugaxl) rather than the
+            # shared MACHINE/image name — resolved from the watch's resolution
+            # where a family shares one image. Cosmetic: config + ops still key
+            # on the machine name (the local `codename`); only the display name
+            # changes. Falls back to the machine name when it can't refine.
+            machine = (geometry.get("machine") if geometry else None) or codename
+            observed = ({"resolution": geometry.get("resolution")}
+                        if geometry else {})
+            display_codename = exact_codename(machine, observed)
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -286,10 +343,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
                           or (workbench and workbench["active"]))
             _maybe_self_heal_fake_power(slot, loc, port_num, wedged, busy, cfg)
             hub_ports.append({
-                "port": port_num, "codename": codename, "serial": serial,
+                "port": port_num, "codename": display_codename,
+                "machine": machine, "serial": serial,
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
+                "battery_cached": battery_cached, "last_live_ts": last_live_ts,
+                "geometry": geometry,
+                "charge_status": charge_status,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
                 "flashing": flashing, "empty": False,

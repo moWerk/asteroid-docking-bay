@@ -1,0 +1,55 @@
+{
+  "_meta": {
+    "purpose": "Ground-truth exceptions list: hardware variants that share ONE AsteroidOS system image (and thus one machine.conf MACHINE= name). a-d-b shows the exact hardware codename in the UI (matching asteroidos.org), resolving it from whatever attributes it can currently read; the MACHINE image is what actually gets flashed. Purely cosmetic — behind the scenes the MACHINE name is authoritative. See docs/ADDING-A-WATCH.md.",
+    "detectable_now": ["resolution"],
+    "ground_truth_factors": ["resolution", "gps", "lte", "ram_mb", "case_mm"],
+    "note": "Every variant's distinguishing factors are recorded as ground truth even when a-d-b cannot yet read them (LTE is unsupported by AsteroidOS entirely; GPS/RAM/case size have no detector yet). When a detector is added, add its factor to variants.DETECTABLE and this table applies with no re-survey. Variants are ORDERED base-first; the resolver returns the first whose detectable factors match, else the base.",
+    "updated": "2026-07-17"
+  },
+  "shared_images": {
+    "skipjack": {
+      "base": "skipjack",
+      "variants": [
+        {"codename": "skipjack", "model": "TicWatch C2", "resolution": "360x360"},
+        {"codename": "tunny", "model": "TicWatch E2/S2", "resolution": "400x400"}
+      ]
+    },
+    "beluga": {
+      "base": "beluga",
+      "variants": [
+        {"codename": "beluga", "model": "OPPO Watch 41mm", "resolution": "320x360"},
+        {"codename": "belugaxl", "model": "OPPO Watch 46mm", "resolution": "402x476", "_note": "resolution mo-stated 2026-07-17, not yet confirmed live from fb0/modes"},
+        {"codename": "orca", "model": "OPPO Watch 46mm LTE", "resolution": "402x476", "lte": true, "_note": "same panel as belugaxl; LTE is not detectable, so a 402x476 OPPO shows as belugaxl until LTE detection exists"}
+      ]
+    },
+    "catfish": {
+      "base": "catfish",
+      "variants": [
+        {"codename": "catfish", "gps": false, "lte": false, "ram_mb": 512},
+        {"codename": "catshark", "gps": true, "lte": true},
+        {"codename": "catfish_ext", "gps": false, "lte": false, "ram_mb": 1024}
+      ]
+    },
+    "smelt": {
+      "base": "smelt",
+      "variants": [
+        {"codename": "smelt", "case_mm": 46},
+        {"codename": "carp", "case_mm": 42, "_note": "device DB shows a ~5px height delta (smelt 360x330 vs carp 360x325); unconfirmed as a reliable signal, so treated as case/dpi only for now"}
+      ]
+    },
+    "sawfish": {
+      "base": "sawfish",
+      "variants": [
+        {"codename": "sawfish", "lte": false},
+        {"codename": "sawshark", "lte": true}
+      ]
+    },
+    "rubyfish": {
+      "base": "rubyfish",
+      "variants": [
+        {"codename": "rubyfish", "gps": true, "lte": false},
+        {"codename": "rover", "gps": true, "lte": true}
+      ]
+    }
+  }
+}

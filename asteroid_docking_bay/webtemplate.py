@@ -62,18 +62,62 @@ _WEB_TEMPLATE = """\
     .cc-act:hover{background:#0d1f3a}
     .cc-act.done{border-color:#3fb950;color:#3fb950}
     /* Row action floating menus */
-    .btn.pw{border-color:#f0883e;color:#f0883e}
+    .btn.pw{border-color:#f0883e;color:#fff}
     .btn.pw:hover{background:#2a1a0e}
     .menu{position:fixed;z-index:110;display:none;min-width:172px;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
     .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
-    .menu-item:hover:not(:disabled){background:#0d1117;border-color:#30363d}
+    .menu-item:hover:not(:disabled){filter:brightness(1.4);border-color:#30363d}
     .menu-item:disabled{opacity:.38;cursor:default}
-    .menu-item.ch{color:#3fb950}.menu-item.dr{color:#58a6ff}.menu-item.ht{color:#f0883e}
-    .menu-item.wbx{color:#a371f7}.menu-item.dng{color:#f85149}
+    /* Per-action accent: coloured label on a faint band of the same hue, to
+       keep the colourful feel the flat buttons had. */
+    .menu-item.ch{color:#3fb950;background:rgba(63,185,80,.07)}
+    .menu-item.dr{color:#d29922;background:rgba(210,153,34,.07)}
+    .menu-item.po{color:#f85149;background:rgba(248,81,73,.07)}
+    .menu-item.rb{color:#f0883e;background:rgba(240,136,62,.07)}
+    .menu-item.bl{color:#d2a8ff;background:rgba(210,168,255,.07)}
+    .menu-item.wbx{color:#a371f7;background:rgba(163,113,247,.07)}
+    .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    /* Watch product-photo thumbnail + click-to-enlarge overlay */
+    td.thumb{width:34px;padding:2px 2px 2px 0}
+    .thumbwrap{position:relative;display:inline-block;line-height:0;vertical-align:middle}
+    .thumbfill{position:absolute;z-index:0;background:#000}
+    .wthumb{width:30px;height:30px;object-fit:contain;cursor:pointer;vertical-align:middle;border-radius:4px;transition:transform .1s;position:relative;z-index:1}
+    .wthumb:hover{transform:scale(1.12)}
+    .svgi{width:15px;height:15px;fill:currentColor;vertical-align:-2px}
+    td.stats{min-width:52px;white-space:nowrap}   /* >=2 icons wide so the base pair never wraps to two rows */
+    td.stats .strip{margin-left:0}
+    .strip{margin-left:8px;display:inline-flex;gap:7px;align-items:center;vertical-align:middle}
+    .strip .svgw{cursor:default;line-height:0}
+    .strip .ib{font-size:12px;line-height:1;font-weight:700}
+    .strip .chgop{color:#f2cc60;background:#238636;border-radius:50%;padding:2px}
+    .strip .drainop{color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
+    @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
+    .strip .svgw.spark{cursor:pointer}
+    .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+    .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
+    .wimg{position:fixed;z-index:120;display:none;
+          background:#161b22;border:1px solid #30363d;border-radius:10px;
+          box-shadow:0 12px 40px rgba(0,0,0,.6);padding:14px;max-width:94vw;max-height:92vh;overflow:auto}
+    .wimg-hd{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:10px;
+             color:#58a6ff;font-weight:700}
+    .wimg-hd .dim{font-weight:400;font-size:11px}
+    .wimg-x{cursor:pointer;color:#6e7681;font-size:18px;line-height:1}
+    .wimg-x:hover{color:#fff}
+    /* Product photo (left) and live screenshot (right) side by side at one
+       shared height, so both read as the same size whatever the screen aspect. */
+    .wimg-body{display:flex;gap:18px;align-items:flex-start;flex-wrap:nowrap;justify-content:center}
+    .device{display:inline-block}
+    .dev-frame{position:relative;display:inline-block;line-height:0}
+    .dev-prod{display:block;height:230px;width:auto;max-width:44vw;position:relative;z-index:2}
+    .device.cut .dev-prod{max-width:none;height:auto}   /* JS (sizeComposite) sets the width, aspect-safe */
+    .dev-shot{position:absolute;z-index:1;object-fit:contain}   /* preserve aspect (no squish) and never over-scale past the cutout */
+    .dev-fill{position:absolute;z-index:0;background:#000}
+    .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
+    .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
        positions may shift slightly with string length — that's fine. */
@@ -90,6 +134,13 @@ _WEB_TEMPLATE = """\
     tr.empty td{color:#6e7681}
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
+    .stale{color:#a1793a}.stale .agec{opacity:.7;font-size:10px}
+    .shot-stale{opacity:.55;filter:grayscale(.3)}
+    tr.justplugged>td{animation:plug 2s ease-out}
+    @keyframes plug{0%{background:rgba(31,111,235,.4)}100%{background:transparent}}
+    .wimg-shot.shape-round{border-radius:50%}.wimg-shot.shape-rect{border-radius:4px}
+    .cc.stale-cc{border-color:#7a5b1e}.cc.stale-cc .cc-hd{background:#241d0e}
+    .cc.stale-cc .cc-tgl,.cc.stale-cc .cc-act{opacity:.4;pointer-events:none}   /* offline: controls do nothing, so block + dim them */
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
@@ -102,14 +153,14 @@ _WEB_TEMPLATE = """\
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .ico{background:none;border:1px solid #30363d;color:#6e7681;padding:2px 6px;border-radius:4px;cursor:pointer;font:13px monospace;vertical-align:middle;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .ico:hover{background:#21262d;color:#c9d1d9}
     .ico:active{transform:scale(.88);transition:transform 55ms ease-out}
     .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .fl{border-color:#58a6ff;color:#58a6ff}.fl:hover{background:#111d2e}
+    .fl{border-color:#58a6ff;color:#fff}.fl:hover{background:#111d2e}
     .ch{border-color:#3fb950;color:#3fb950}.ch:hover{background:#0f2a18}
     .ht{border-color:#6e7681;color:#6e7681}.ht:hover{background:#1c1c1c}
     .hcut{border-color:#f85149;color:#f85149}.hcut:hover{background:#2a0d0b}
@@ -117,7 +168,7 @@ _WEB_TEMPLATE = """\
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn.dr{border-color:#388bfd;color:#388bfd}
-    .btn.wb{border-color:#bc8cff;color:#bc8cff}.btn.wb:hover{background:#1d1430}
+    .btn.wb{border-color:#bc8cff;color:#fff}.btn.wb:hover{background:#1d1430}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -149,18 +200,24 @@ _WEB_TEMPLATE = """\
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
       .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(2){font-weight:700;font-size:20px;justify-content:flex-start;
-                          padding:10px 0;border-bottom:1px solid #161b22}
-      .wr td:nth-child(3)::before{content:"Port"}
-      .wr td:nth-child(4)::before{content:"Power"}
-      .wr td:nth-child(5)::before{content:"Smart"}
-      .wr td:nth-child(6)::before{content:"Connection"}
-      .wr td:nth-child(7)::before{content:"Battery"}
+      .wr td:nth-child(2){display:block;float:left;margin:8px 12px 0 0;padding:0;border:none}
+      .wr td:nth-child(2) .wthumb{width:44px;height:44px}       /* thumb beside the title */
+      .wr td:nth-child(3){display:block;text-align:left;font-weight:700;font-size:20px;
+                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}
+      .wr td:nth-child(4){clear:both}                            /* fields start below the thumb */
+      .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
+      .wr td:nth-child(4)::before{content:"Stats"}
+      .wr td:nth-child(5)::before{content:"Port"}
+      .wr td:nth-child(6)::before{content:"Power"}
+      .wr td:nth-child(7)::before{content:"Smart"}
+      .wr td:nth-child(8)::before{content:"Connection"}
+      .wr td:nth-child(9)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(8){display:block;text-align:left;padding-top:10px}  /* actions span the card */
+      .wr td:nth-child(10){display:block;text-align:left;padding-top:10px}  /* actions span the card */
       /* Bigger, tappable controls */
-      .wr .btn,.wr .tgl,.wr .ico{font-size:15px;padding:9px 13px;margin:3px 6px 3px 0}
+      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
+      .wr .ico{font-size:15px;width:2.6em;height:2.6em;padding:0;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
       .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
@@ -178,7 +235,7 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th>Watch</th><th>Port</th><th>Power</th><th>Smart</th>
+      <th></th><th></th><th>Watch</th><th>Stats</th><th>Port</th><th>Power</th><th>Smart</th>
       <th>Connection</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -186,13 +243,18 @@ _WEB_TEMPLATE = """\
   </div>
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
-  <div id="menu" class="menu" onmouseleave="menuLeave()" onmouseenter="menuEnter()"></div>
+  <div id="menu" class="menu"></div>
+  <div id="wimg" class="wimg"></div>
 <script>
 const srcs={};
 const chargeEnd={};
 let countdownRunning=false;
 let showHidden=false;
 const refreshing=new Set();
+// Serials seen enumerated on the last render, to flash a row when a watch is
+// freshly plugged in. firstStatus suppresses the flash on the initial load.
+let seenSerials=new Set();
+let firstStatus=true;
 function mkhide(slot,excluded){
   return `<a href="#" class="hidebtn" onclick="doHidePort('${slot}');return false" title="${excluded?'un-hide this row':'hide this row'}">${excluded?'&#x2295;':'&#x2296;'}</a>`;
 }
@@ -203,6 +265,93 @@ function mkbat(v,lo,hi){
   if(v==null)return '<span class="dim">&mdash;</span>';
   const cls=v<lo?'err':v<=hi?'on':'dim';
   return `<span class="${cls}">${v}%</span>`;
+}
+function fmtAge(ts){
+  // Compact "how long ago" for a last-live timestamp (seconds since epoch).
+  if(!ts)return '';
+  const s=Math.max(0,Math.floor(Date.now()/1000-ts));
+  if(s<3600)return Math.floor(s/60)+'m';
+  if(s<86400)return Math.floor(s/3600)+'h';
+  return Math.floor(s/86400)+'d';
+}
+function mkbatCell(p,lo,hi){
+  // Prefer the live reading; when the watch is off the bus fall back to the
+  // last-seen value shown stale (amber) with its age, not a blank cell.
+  if(p.battery!=null)return mkbat(p.battery,lo,hi);
+  if(p.battery_cached!=null){
+    const age=fmtAge(p.last_live_ts);
+    return `<span class="stale" title="watch off the bus — last reading${age?' '+age+' ago':''}">${p.battery_cached}%<span class="agec">${age?' '+age:''}</span></span>`;
+  }
+  return '<span class="dim">&mdash;</span>';
+}
+function mkthumb(p){
+  // Product photo thumbnail; removes itself if the watch has no image (404).
+  if(!p.codename)return '';
+  const g=p.geometry||{};
+  const oc=`openWatchImg('${esc(p.codename)}','${esc(p.serial||'')}',event,${g.round?1:0},'${g.resolution?esc(g.resolution):''}')`;
+  // Wrapped so a cut-out product image gets a black fill behind its
+  // transparent screen — otherwise the row would shine through the hole.
+  return `<span class="thumbwrap"><img class="wthumb" loading="lazy" alt="" onload="onThumbLoad(this,'${esc(p.codename)}',${g.round?1:0})" onerror="this.closest('.thumbwrap').remove()" src="/api/watch-image/${encodeURIComponent(p.codename)}" onclick="${oc}"></span>`;
+}
+function onThumbLoad(img,codename,round){
+  // Fill the transparent screen with black in the row thumbnail (once cut),
+  // clipped to a circle for round screens so no black corners leak.
+  const box=holeFor(codename,img), wrap=img.closest('.thumbwrap');
+  if(!box||!wrap)return;
+  const f=document.createElement('div'); f.className='thumbfill';
+  const pct=v=>(v*100).toFixed(2)+'%';
+  f.style.cssText=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}`+(round?';border-radius:50%':'');
+  wrap.insertBefore(f,img);
+}
+const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
+function svgicon(n){return `<svg class="svgi" viewBox="0 0 512 512">${ICONS[n]}</svg>`;}
+function mkstrip(p,wearH){
+  let out='';
+  // 1. wearable verdict from the last drain test, or a "?" if never tested.
+  const dl=p.drain_last;
+  if(dl&&dl.est_h!=null){
+    const ok=dl.est_h>=wearH;
+    const when=new Date(dl.ts*1000).toLocaleDateString();
+    const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`);
+    out+=`<span class="svgw ${ok?'on':'err'}" title="${tip}">${svgicon(ok?'watch':'batterydead')}</span>`;
+  }else if(p.codename){
+    out+=`<span class="ib dim" title="never drain-tested — run a drain test to rate standby life">?</span>`;
+  }
+  // 2. active dock op first (charging = yellow bolt on a green disc; drain
+  //    test = a dim pulse), else the watch-side charge state (ground truth).
+  if(p.charging_active){
+    out+=`<span class="svgw chgop" title="charging to target">${svgicon('flash')}</span>`;
+  }else if(p.drain&&p.drain.active){
+    out+=`<span class="svgw drainop" title="drain test running">${svgicon('batterydead')}</span>`;
+  }else if(p.adb==='device'&&p.charge_status){
+    const cs=p.charge_status;
+    if(cs==='Charging')out+=`<span class="svgw on" title="charging (delivered power confirmed)">${svgicon('flash')}</span>`;
+    else if(cs==='Full')out+=`<span class="ib on" title="battery full">&#10003;</span>`;
+    else if(cs==='Discharging')out+=`<span class="ib err" title="DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)">&#8595;</span>`;
+  }
+  // 3. sparkline launcher — click for the battery timeline (click, not hover).
+  if(p.serial)out+=`<span class="svgw dim spark" title="battery history — click for the timeline" onclick="openSpark('${p.serial}','${esc(p.codename||'')}',event)">${svgicon('trend')}</span>`;
+  // 4. last-seen age when the watch is off the bus.
+  if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="ib dim" title="last live ${fmtAge(p.last_live_ts)} ago">&#8226;${fmtAge(p.last_live_ts)}</span>`;
+  return out?`<span class="strip">${out}</span>`:'';
+}
+function sparkSvg(pts){
+  const W=260,H=90,pad=6;
+  const ts=pts.map(p=>p.ts),t0=Math.min(...ts),t1=Math.max(...ts),tr=(t1-t0)||1;
+  const x=t=>pad+(t-t0)/tr*(W-2*pad),y=v=>pad+(100-v)/100*(H-2*pad);
+  const d=pts.map((p,i)=>(i?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.pct).toFixed(1)).join(' ');
+  return `<svg class="spark-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><path d="${d}" fill="none" stroke="#58a6ff" stroke-width="1.5"/></svg>`;
+}
+function openSpark(serial,name,ev){
+  ev.stopPropagation();
+  openMenu(ev,`<div class="spark-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`);
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/timeline').then(r=>r.json()).then(d=>{
+    const m=document.getElementById('menu');
+    const pts=(d&&d.points)||[];
+    if(pts.length<2){m.innerHTML=`<div class="spark-hd">${esc(name)} <span class="dim">no history yet — readings accrue as it's checked/drained</span></div>`;placeMenu();return;}
+    m.innerHTML=`<div class="spark-hd">${esc(name)} battery history`+(d.rate?` <span class="dim">~${(+d.rate).toFixed(2)}%/h standby</span>`:'')+`</div>`+sparkSvg(pts);
+    placeMenu();   // reposition now the real (larger) chart size is known
+  }).catch(()=>{});
 }
 function mkport(p){
   let s = p.socket!=null
@@ -243,12 +392,13 @@ function render(data){
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
   const wearH=(data&&data.wearable_min_hours)||24;
-  if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="10" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
+  const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
-    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
+    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="10"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
       const tree=i===visPorts.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
@@ -269,7 +419,9 @@ function render(data){
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
+          `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -277,10 +429,14 @@ function render(data){
           `<td class="dim">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
+        // A watch that just enumerated (absent last render) flashes its row.
+        const enumd=p.serial&&p.adb==='device';
+        if(enumd)present.add(p.serial);
+        const isNew=enumd&&!firstStatus&&!seenSerials.has(p.serial);
         // Only a FUTURE end time is a countdown: accepting a stale/past one
         // creates a tick->expire->refresh->re-add loop that hammers the API.
         if(p.charge_end_ts&&p.charge_end_ts*1000>Date.now()&&!chargeEnd[slot])chargeEnd[slot]=p.charge_end_ts*1000;
@@ -320,26 +476,20 @@ function render(data){
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
           bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
         }else{
-          bat=mkbat(p.battery,lo,hi);
-          if(p.drain_last&&p.drain_last.est_h!=null){
-            const ok=p.drain_last.est_h>=wearH;
-            const when=new Date(p.drain_last.ts*1000).toLocaleDateString();
-            const tip=ok
-              ?`holds ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — wearable`
-              :`holds only ~${fmtDur(p.drain_last.est_h)} standby (100&rarr;15%, drain test ${when}) — below ${wearH}h wearable threshold: battery swap candidate / dev watch`;
-            bat+=` <span class="${ok?'dim':'err'}" style="font-size:10px" title="${tip}">~${fmtDur(p.drain_last.est_h)}</span>`;
-          }
+          bat=mkbatCell(p,lo,hi);
         }
         const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
         rows.push(
-          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}" id="wr-${slot}">` +
+          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
-          `<td>`+(p.adb==='device'
-            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center">${esc(p.codename)}</b>`
+          `<td class="thumb">${mkthumb(p)}</td>` +
+          `<td>`+(p.serial
+            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
             :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
@@ -348,20 +498,37 @@ function render(data){
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
           (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
+          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `</td></tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }
     });
   });
   tb.innerHTML=rows.join('');
+  seenSerials=present; firstStatus=false;
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
 // ── Control Center overlay ──────────────────────────────────────────────────
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
+let wimgAX=0, wimgAY=0;
+let _compo=null;   // {boxW, target, aspect} for an open composite, else null
+function sizeComposite(){
+  // Set the product width so the screen hole shows the screenshot at `target`
+  // px (2/3 of native — the screenshot is heavily JPEG-compressed, so full
+  // size shows artefacts). Only width is set (height:auto), so the aspect
+  // ratio is always kept; the width is bounded by BOTH viewport dimensions so
+  // a small/squished window can't stretch or overflow it. Re-run on resize.
+  const prod=document.getElementById('prodimg');
+  if(!prod||!_compo)return;
+  let w=_compo.target/_compo.boxW;
+  w=Math.min(w, window.innerWidth*0.9, window.innerHeight*0.82*_compo.aspect);
+  prod.style.width=Math.round(w)+'px'; prod.style.height='auto';
+  wimgPlace();
+}
+window.addEventListener('resize',sizeComposite);
 function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
 function ccPlace(){
   // Anchor to the click; flip ABOVE the anchor if the panel would run off the
@@ -376,6 +543,7 @@ function openCC(serial,name,ev){
   ev.stopPropagation();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
+  cc.classList.remove('stale-cc');
   cc.innerHTML=`<div class="cc-hd">${name} <span class="dim">loading&hellip;</span></div>`;
   cc.style.display='block'; ccPlace();
   ccFetch();
@@ -388,6 +556,8 @@ function ccFetch(){
 }
 function renderCC(d){
   const cc=document.getElementById('cc');
+  const stale=!!(d&&d.stale);
+  cc.classList.toggle('stale-cc',stale);
   if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;ccPlace();return;}
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
@@ -406,7 +576,9 @@ function renderCC(d){
     kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
     kv('Load',d.load)+kv('Threads',d.threads)+
-    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage));
+    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
+    kv('Resolution',d.resolution)+
+    kv('Machine (image)',d.geometry&&d.geometry.machine));
   const bat=sec('Battery',
     kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
@@ -420,7 +592,9 @@ function renderCC(d){
     kv('Timezone',d.tz)+kv('Clock',d.datetime)+kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ccToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
   cc.innerHTML=
-    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`+
+    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
+      (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
@@ -447,39 +621,171 @@ function closeCC(){const cc=document.getElementById('cc');cc.style.display='none
 function ccLeave(){ccTimer=setTimeout(closeCC,600);}
 function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
-let menuTimer=null;
+let _menuAnchor=null;
 function openMenu(ev,html){
   ev.stopPropagation();
-  const m=document.getElementById('menu');
-  m.innerHTML=html; m.style.left='-9999px'; m.style.top='0px'; m.style.display='block';
-  const r=ev.currentTarget.getBoundingClientRect(), mw=m.offsetWidth, mh=m.offsetHeight;
+  _menuAnchor=ev.currentTarget.getBoundingClientRect();
+  document.getElementById('menu').innerHTML=html;
+  placeMenu();
+}
+// Position the menu against its anchor, flipping above/below and clamping to
+// the viewport. Kept separate from openMenu so async content (the sparkline,
+// which loads after the box opens) can re-place once its real size is known.
+function placeMenu(){
+  const m=document.getElementById('menu'); if(!_menuAnchor)return;
+  m.style.left='-9999px'; m.style.top='0px'; m.style.display='block';
+  const r=_menuAnchor, mw=m.offsetWidth, mh=m.offsetHeight;
   let left=r.left, top=r.bottom+3;
   if(left+mw>window.innerWidth-8)left=window.innerWidth-8-mw;
   if(top+mh>window.innerHeight-8)top=Math.max(8,r.top-mh-3);
   m.style.left=Math.max(8,left)+'px'; m.style.top=top+'px';
 }
 function closeMenu(){document.getElementById('menu').style.display='none';}
-function menuLeave(){menuTimer=setTimeout(closeMenu,450);}
-function menuEnter(){if(menuTimer){clearTimeout(menuTimer);menuTimer=null;}}
+// ── Transparent-screen cutout detection ─────────────────────────────────────
+// A product PNG whose screen is cut to transparent alpha lets us composite the
+// live screenshot behind it (bezel + hands occlude). We only need the bounding
+// box of the ENCLOSED transparent region: flood-fill transparency inward from
+// the border (that is the render's transparent background) and take whatever
+// transparency is left — the screen hole. Robust to the hole being split by
+// opaque foreground (narwhal's hands): we union all interior-transparent px.
+function holeBoxFromAlpha(alpha,w,h,thr){
+  thr=thr||128;
+  const isT=i=>alpha[i]<thr;
+  const bg=new Uint8Array(w*h), stack=[];
+  const seed=(x,y)=>{if(x<0||x>=w||y<0||y>=h)return;const i=y*w+x;if(!bg[i]&&isT(i)){bg[i]=1;stack.push(i);}};
+  for(let x=0;x<w;x++){seed(x,0);seed(x,h-1);}
+  for(let y=0;y<h;y++){seed(0,y);seed(w-1,y);}
+  while(stack.length){const i=stack.pop(),x=i%w,y=(i/w)|0;seed(x-1,y);seed(x+1,y);seed(x,y-1);seed(x,y+1);}
+  let x0=w,y0=h,x1=-1,y1=-1;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;if(isT(i)&&!bg[i]){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}}
+  if(x1<0)return null;
+  return {x:x0/w,y:y0/h,w:(x1-x0+1)/w,h:(y1-y0+1)/h};
+}
+function detectHole(img){
+  const w=img.naturalWidth,h=img.naturalHeight;
+  if(!w||!h)return null;
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const ctx=c.getContext('2d');ctx.drawImage(img,0,0);
+  let d;try{d=ctx.getImageData(0,0,w,h).data;}catch(e){return null;}  // taint guard (same-origin, shouldn't fire)
+  const a=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++)a[i]=d[i*4+3];
+  return holeBoxFromAlpha(a,w,h);
+}
+const _holeCache={};
+function holeFor(codename,img){
+  if(codename in _holeCache)return _holeCache[codename];
+  return (_holeCache[codename]=detectHole(img));
+}
+function openWatchImg(codename,serial,ev,isRound,res){
+  if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
+  // Load the product photo in a device frame; onProdLoad then decides the
+  // layout once we can inspect the image for a transparent screen cutout.
+  const o=document.getElementById('wimg');
+  o.innerHTML=
+    `<div class="wimg-hd"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
+    `<div class="wimg-body" id="wimg-body">`+
+      `<div class="device" id="device"><div class="dev-frame" id="devframe">`+
+        `<img class="dev-prod" id="prodimg" alt="" onerror="closeWatchImg()" `+
+          `onload="onProdLoad('${esc(codename)}','${esc(serial||'')}',${isRound?1:0},'${res?esc(res):''}')" `+
+          `src="/api/watch-image/${encodeURIComponent(codename)}"></div></div>`+
+    `</div>`;
+  o.style.display='block';
+  wimgPlace();
+}
+function onProdLoad(codename,serial,isRound,res){
+  const prod=document.getElementById('prodimg'); if(!prod)return;
+  const dev=document.getElementById('device'), frame=document.getElementById('devframe');
+  const box=holeFor(codename,prod);
+  if(box){
+    // Cutout present → composite: the product's transparent screen reveals the
+    // screenshot behind it (bezel + hands occlude); a black fill under that so
+    // an off / not-yet-loaded screen reads as an off panel. Positions are % of
+    // the frame, which is exactly the image (caption lives outside it).
+    dev.classList.add('cut');
+    // Remember what sizeComposite() needs so it can re-fit on window resize.
+    const nw=parseInt((res||'').split('x')[0],10);
+    _compo=(nw&&box.w>0)?{boxW:box.w,target:nw*2/3,aspect:prod.naturalWidth/prod.naturalHeight}:null;
+    const pct=v=>(v*100).toFixed(3)+'%';
+    // Round screens: clip the fill+screenshot to a circle so the square hole
+    // bounding box can't shine black corners past the bezel.
+    const clip=isRound?';border-radius:50%':'';
+    const css=`left:${pct(box.x)};top:${pct(box.y)};width:${pct(box.w)};height:${pct(box.h)}${clip}`;
+    const fill=document.createElement('div'); fill.className='dev-fill'; fill.style.cssText=css;
+    frame.insertBefore(fill,prod);
+    if(serial){
+      const shot=document.createElement('img'); shot.className='dev-shot'; shot.id='shotimg';
+      shot.style.cssText=css; frame.insertBefore(shot,prod);
+    }
+    const cap=document.createElement('div'); cap.className='wimg-cap'; cap.id='shotcap';
+    cap.textContent=serial?'loading…':('screen off'+(res?' · '+res:''));
+    dev.appendChild(cap);
+    if(serial)loadShot(serial,res);
+    sizeComposite();
+  }else{
+    // No cutout yet → product beside a shape-masked screenshot (prior look).
+    const cap=document.createElement('div'); cap.className='wimg-cap'; cap.textContent='product';
+    dev.appendChild(cap);
+    if(serial){
+      const sb=document.createElement('div'); sb.id='shotbox';
+      sb.innerHTML=`<img class="wimg-shot ${isRound?'shape-round':'shape-rect'}" id="shotimg" alt="" onload="wimgPlace()"><div class="wimg-cap" id="shotcap">loading&hellip;</div>`;
+      document.getElementById('wimg-body').appendChild(sb);
+      loadShot(serial,res);
+    }
+  }
+  wimgPlace();
+}
+function wimgPlace(){
+  // Anchor to the click and flip above if it would run off the bottom, like
+  // the Control Center — images load async, so this is called again on each
+  // image's onload once the real panel size is known.
+  const o=document.getElementById('wimg');
+  if(o.style.display!=='block')return;
+  const h=o.offsetHeight, w=o.offsetWidth;
+  let left=Math.min(wimgAX, window.innerWidth-w-8);
+  let top=wimgAY+10;
+  if(top+h>window.innerHeight-8) top=wimgAY-h-10;
+  o.style.left=Math.max(8,left)+'px'; o.style.top=Math.max(8,top)+'px';
+}
+function loadShot(serial,res){
+  const suffix=res?' · '+res:'';
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/screenshot.jpg?t='+Date.now())
+    .then(r=>{if(!r.ok)throw 0;const st=r.headers.get('X-Screenshot-Stale');
+      const ts=+r.headers.get('X-Screenshot-Ts')||0;
+      return r.blob().then(b=>({b,st,ts}));})
+    .then(({b,st,ts})=>{const img=document.getElementById('shotimg'),
+      cap=document.getElementById('shotcap'); if(!img)return;
+      img.onload=wimgPlace; img.src=URL.createObjectURL(b);
+      if(st){img.classList.add('shot-stale');cap.className='wimg-cap warn';
+        cap.textContent='stale screen'+(ts?' · '+fmtAge(ts)+' ago':'')+suffix;}
+      else{cap.textContent='live screen'+suffix;}})
+    .catch(()=>{
+      const box=document.getElementById('shotbox');
+      if(box){box.remove();return;}                      // side-by-side: drop the box
+      const s=document.getElementById('shotimg');if(s)s.remove();   // composite: keep black fill
+      const c=document.getElementById('shotcap');if(c){c.className='wimg-cap';c.textContent='screen off';}
+    });
+}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 function menuPower(ev,slot,charging,draining,powered,noSw){
   openMenu(ev,
     (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
     (draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`,noSw))+
     '<div class="menu-sep"></div>'+
-    (powered?mi('ht','Power off',`doPoweroff('${slot}')`):'')+
-    mi('ht','Reboot',`doReboot('${slot}')`)+
-    mi('dng','Bootloader',`doBootloader('${slot}')`));
+    (powered?mi('po','Power off',`doPoweroff('${slot}')`):'')+
+    mi('rb','Reboot',`doReboot('${slot}')`)+
+    mi('bl','Bootloader',`doBootloader('${slot}')`));
 }
 function menuWorkbench(ev,slot,serial,wb,online){
   openMenu(ev,
     '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+
-    mi('','Set time from host',`doSetTime('${serial}')`,!online)+
-    mi('','Screenshot',`doScreenshot('${serial}')`,!online)+
-    mi('','Test notification',`doNotify('${serial}')`,!online)+
-    mi('','Collect diagnostics',`doDiag('${slot}')`,!online));
+    mi('info','Set time from host',`doSetTime('${serial}')`,!online)+
+    mi('info','Screenshot',`doScreenshot('${serial}')`,!online)+
+    mi('info','Test notification',`doNotify('${serial}')`,!online)+
+    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online));
 }
 function menuFlash(ev,slot){
   openMenu(ev,
@@ -506,13 +812,20 @@ function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
 function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
-function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'diagnostics saved on host':'diagnostics partial — see log')).catch(()=>toast('diagnostics failed'));}
+function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
+  if(d.name){
+    toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');
+    const a=document.createElement('a');a.href='/api/diagnostics/download/'+encodeURIComponent(d.name);
+    a.download=d.name;document.body.appendChild(a);a.click();a.remove();
+  }else{toast(d.error||'diagnostics failed');}
+}).catch(()=>toast('diagnostics failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
 document.addEventListener('click',e=>{
   const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
   const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
+  const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
 });
 function showBackendError(msg){
   // Split mode: the page is served but the backend RPC failed, so status.get
@@ -568,7 +881,14 @@ function doBootloader(c){
 function doCy(c){
   const r=document.getElementById('wr-'+c);
   if(r)r.querySelectorAll('button').forEach(b=>b.disabled=true);
-  fetch('/api/cycle/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,7000));
+  toast('power-cycling — testing port switching…');
+  fetch('/api/cycle/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
+    if(d.smart===true)toast('port switches power (smart ✓)');
+    else if(d.smart===false)toast('port does NOT cut power (not smart)');
+    else if(d.ok)toast('power-cycled — smart still unverified');
+    else toast(d.error||'cycle failed');
+    setTimeout(refresh,2500);
+  }).catch(()=>setTimeout(refresh,2500));
 }
 function doCharge(c){
   const r=document.getElementById('wr-'+c);

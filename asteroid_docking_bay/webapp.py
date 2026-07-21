@@ -35,6 +35,7 @@ from .webtemplate import _WEB_TEMPLATE
 _JSON_ROUTES = [
     # method, path,                                op,                static args,    bust
     ("GET",  "/api/watch/<serial>",                "watch.cc",        {},             False),
+    ("GET",  "/api/watch/<serial>/timeline",       "watch.timeline",  {},             False),
     ("POST", "/api/watch/<serial>/settime",        "watch.settime",   {},             False),
     ("POST", "/api/watch/<serial>/notify",         "watch.notify",    {},             False),
     ("POST", "/api/watch/<serial>/buzz",           "watch.buzz",      {},             False),
@@ -161,7 +162,38 @@ def serve(args, cfg: dict):
             resp.content_type = "text/plain"
             return d.get("error", "screenshot failed")
         resp.content_type = "image/jpeg"
+        if d.get("stale"):
+            resp.set_header("X-Screenshot-Stale", "1")
+        if d.get("captured_ts"):
+            resp.set_header("X-Screenshot-Ts", str(int(d["captured_ts"])))
         return base64.b64decode(d["jpeg_b64"])
+
+    @app.get("/api/diagnostics/download/<name>")
+    def api_diag_download(name):
+        # Serve a diagnostics bundle for download. Basename-only + a .tar.gz
+        # gate keeps this scoped to the diagnostics dir (no path traversal).
+        from pathlib import Path
+        from .watchctl import DIAG_ROOT
+        safe = Path(name).name
+        f = DIAG_ROOT / safe
+        if not (safe.endswith(".tar.gz") and f.is_file()):
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return b""
+        resp.content_type = "application/gzip"
+        resp.set_header("Content-Disposition", f'attachment; filename="{safe}"')
+        return f.read_bytes()
+
+    @app.get("/api/watch-image/<codename>")
+    def api_watch_image(codename):
+        d = _call("watch.image", {"codename": codename})
+        if not (isinstance(d, dict) and d.get("ok")):
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return b""
+        resp.content_type = "image/png"
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+        return base64.b64decode(d["png_b64"])
 
     @app.post("/api/watch/<serial>/screen/<state>")
     def api_watch_screen(serial, state):

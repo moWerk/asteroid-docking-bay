@@ -37,8 +37,10 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
 from .watchctl import Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .fastboot import _switch_ssh_to_adb
-from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR
+from .watchimg import watch_image_bytes
+from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
+from .lastseen import last_seen
 from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
 from .rpc import Dispatcher
 from . import __version__
@@ -67,7 +69,33 @@ def _status_get(args):
 
 @DISPATCH.op("watch.cc")
 def _watch_cc(args):
-    return Watch(args["serial"]).cc_data()
+    """Live Control Center stats, or the last-seen ones marked stale.
+
+    A reachable watch answers fresh and its stats are cached with the moment
+    they were captured. An unreachable one gets served the cached blob (if we
+    ever saw it) stamped stale + last_live_ts, so the CC shows dimmed old
+    values with an age rather than a bare 'no data'."""
+    serial = args["serial"]
+    data = Watch(serial).cc_data()
+    if data:
+        last_seen.record(serial, cc=data, cc_ts=time.time())
+        # Screen geometry/resolution is cached separately (probed by the status
+        # path); fold it in so the CC shows the real resolution + can mask the
+        # screen correctly.
+        geo = (last_seen.get(serial) or {}).get("geometry")
+        if geo:
+            data = {**data, "geometry": geo, "resolution": geo.get("resolution")}
+        return data
+    cached = last_seen.get(serial)
+    if cached and cached.get("cc"):
+        blob = dict(cached["cc"])
+        blob["stale"] = True
+        blob["last_live_ts"] = cached.get("cc_ts")
+        if cached.get("geometry"):
+            blob["geometry"] = cached["geometry"]
+            blob["resolution"] = cached["geometry"].get("resolution")
+        return blob
+    return {}
 
 
 @DISPATCH.op("watch.toggle")
@@ -129,6 +157,16 @@ def _watch_restore(args):
     return Watch(serial).restore()
 
 
+@DISPATCH.op("watch.image")
+def _watch_image(args):
+    """The watch's product photo (cached from asteroidos.org) as base64 PNG.
+    ok=False means no image for this codename."""
+    data = watch_image_bytes(args.get("codename"))
+    if not data:
+        return {"ok": False}
+    return {"ok": True, "png_b64": base64.b64encode(data).decode()}
+
+
 @DISPATCH.op("ssh.switch_adb")
 def _ssh_switch_adb(args):
     """Switch a watch stuck in SSH/developer USB mode (reachable at 192.168.2.15)
@@ -141,17 +179,33 @@ def _watch_diagnostics(args):
     serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))
     if not serial:
         return {"ok": False, "error": "no watch mapped to this port"}
-    return Watch(serial).collect_diagnostics()
+    res = Watch(serial).collect_diagnostics()
+    # Expose the bundle's basename so the browser can pull it down (it lives on
+    # the host by default, out of reach of a remote operator).
+    if res.get("path"):
+        res["name"] = res["path"].rsplit("/", 1)[-1]
+    return res
 
 
 @DISPATCH.op("watch.screenshot")
 def _watch_screenshot(args):
     """JPEG as base64 in the response — keeps the protocol single-channel
-    (a screenshot is ~60 KB, the overhead is irrelevant)."""
-    local = Watch(args["serial"]).screenshot()
+    (a screenshot is ~60 KB, the overhead is irrelevant).
+
+    A fresh capture needs the watch on the bus; when it fails, fall back to
+    the last pulled screenshot (if any) marked stale, so the overlay shows
+    the last screen instead of an empty box."""
+    w = Watch(args["serial"])
+    local = w.screenshot()
+    stale = False
+    if not local:
+        last = w.last_screenshot_path()
+        if last.exists() and last.stat().st_size > 0:
+            local, stale = last, True
     if not local:
         return {"ok": False, "error": "screenshot failed"}
-    return {"ok": True, "jpeg_b64": base64.b64encode(local.read_bytes()).decode()}
+    return {"ok": True, "stale": stale, "captured_ts": local.stat().st_mtime,
+            "jpeg_b64": base64.b64encode(local.read_bytes()).decode()}
 
 
 # ── port power ──────────────────────────────────────────────────────────────
@@ -168,13 +222,25 @@ def _port_set(args):
 @DISPATCH.op("port.cycle")
 def _port_cycle(args):
     loc, port = args["loc"], args["port"]
+    serial = find_serial_for_loc_port(load_config(), loc, port)
+    # A power-cycle IS a PPPS test — it cuts VBUS and restores it while checking
+    # whether the device dropped — so use it to (re)assess and record the port's
+    # smart verdict. This is the way to resolve a '?' without a full re-onboard,
+    # matching the common workflow of just powering a port up rather than
+    # onboarding it. test_port_power_switching restores the port's prior state.
     try:
-        uhubctl_set_power(loc, port, False)
-        time.sleep(5)
-        uhubctl_set_power(loc, port, True)
+        smart, reason = test_port_power_switching(loc, port, serial)
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
-    return {"ok": True}
+    if smart is not None:
+        with _config_lock:
+            cfg = load_config()
+            for hub in cfg.get("hubs", []):
+                if hub["location"] == loc:
+                    _store_smart_verdict(hub, port, smart)
+                    save_config(cfg)
+                    break
+    return {"ok": True, "smart": smart, "reason": reason}
 
 
 @DISPATCH.op("port.poweroff")
@@ -301,6 +367,22 @@ def _register_lifecycle(op_cls, name, stop_error):
 _register_lifecycle(ChargeOp, "charge", "no charge running")
 _register_lifecycle(WorkbenchOp, "workbench", "no workbench active")
 _register_lifecycle(DrainOp, "drain", "no drain test running")
+
+
+@DISPATCH.op("watch.timeline")
+def _watch_timeline(args):
+    """The watch's battery-over-time points for the row sparkline, plus its
+    standby loss rate. Serial keys the per-watch event log (codename is the
+    fallback key)."""
+    serial = args.get("serial")
+    codename = args.get("codename")
+    evs = event_log.read(serial, codename)
+    points = [{"ts": e["ts"], "pct": e["pct"]}
+              for e in evs
+              if e.get("event") in ("check_reading", "drain_reading")
+              and e.get("pct") is not None and e.get("ts") is not None]
+    return {"points": points,
+            "rate": event_log.standby_loss_rate(serial, codename, evs)}
 
 
 @DISPATCH.op("drain.history")

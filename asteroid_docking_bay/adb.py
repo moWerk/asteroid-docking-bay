@@ -149,28 +149,40 @@ def get_battery_level(serial: str) -> int | None:
     return None
 
 
-def battery_and_screen(serial: str) -> "tuple[int | None, bool]":
-    """One adb round-trip for the status path: (battery_pct, screen_forced).
+def battery_and_screen(serial: str) -> "tuple[int | None, bool, str | None]":
+    """One adb round-trip for the status path: (battery_pct, screen_forced,
+    charge_status).
     screen_forced = mce is holding the display on (a `mcetool -D on` demo mode
     that was never released), which drains the watch on battery. Detected via
     mce's Blank inhibit != 'disabled' — the anchored grep excludes the
     unrelated 'Kbd slide blank inhibit' line. Safe on non-mce watches (grep
-    empty -> not forced)."""
+    empty -> not forced).
+    charge_status = the watch's own power_supply status (Charging/Discharging/
+    Full/…) — delivered-power ground truth: a docked watch that reads
+    Discharging is on ADB but not actually taking charge (dirty contact)."""
     paths = " ".join(_BATTERY_SYSFS_PATHS)
     # The whole pipeline must run on the *watch*: _run uses shell=True, so an
     # unquoted `; mcetool | grep` would be parsed by the host shell (where
     # mcetool doesn't exist) instead of the device. Double-quoting keeps the
     # embedded `grep '^Blank inhibit'` single-quotes intact for the watch shell.
     remote = (f"cat {paths} 2>/dev/null | head -1; echo ---SCR---; "
-              f"mcetool 2>/dev/null | grep '^Blank inhibit'")
+              f"mcetool 2>/dev/null | grep '^Blank inhibit'; echo ---CHG---; "
+              f"cat /sys/class/power_supply/*/status 2>/dev/null")
     rc, out, _ = adb_shell(serial, f'"{remote}"')
     if rc != 0:
-        return None, False
-    bat_part, _, scr_part = out.partition("---SCR---")
+        return None, False, None
+    bat_part, _, rest = out.partition("---SCR---")
+    scr_part, _, chg_part = rest.partition("---CHG---")
     battery = int(bat_part.strip()) if bat_part.strip().isdigit() else None
     scr = scr_part.strip().lower()
     forced = bool(scr) and "disabled" not in scr
-    return battery, forced
+    # Several supplies may report a status (battery + USB); prefer a definite
+    # battery verdict over an "Unknown"/"Not charging" USB line.
+    statuses = [s.strip() for s in chg_part.splitlines() if s.strip()]
+    charge_status = next((s for s in statuses
+                          if s in ("Charging", "Discharging", "Full")),
+                         statuses[0] if statuses else None)
+    return battery, forced, charge_status
 
 
 def _wait_adb_state(serial: str, present: bool, timeout: float) -> bool:
