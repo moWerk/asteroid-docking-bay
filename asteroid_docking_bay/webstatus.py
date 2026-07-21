@@ -306,12 +306,17 @@ def _web_status_data(cfg: dict) -> list[dict]:
                          "bootloader": geometry.get("bootloader")}
                         if geometry else {})
             display_codename = exact_codename(machine, observed)
-            # Once the bootloader has named the true device, remember it so the
-            # CLI — which has no live detection — can address the watch by that
-            # exact name. Only worth persisting when it actually refines the
-            # image name; collected here, flushed once at the end so a shared
-            # machine name stops being a coin-flip as soon as a watch is seen.
-            if serial and display_codename and display_codename != machine:
+            # Remember the exact codename so the CLI — which has no live
+            # detection — can address the watch by it. Record whenever the
+            # identity is TRUSTWORTHY: the bootloader named it (authoritative,
+            # even when it confirms the base name, so a real `skipjack` is
+            # addressable as itself and not lumped with the tunnys sharing its
+            # image), or resolution actively refined the image name. A bare
+            # base name with no bootloader is just "not yet refined" — low
+            # confidence, so it is not written as identity. Flushed once at end.
+            trustworthy = bool(geometry and geometry.get("bootloader")) \
+                or (display_codename and display_codename != machine)
+            if serial and display_codename and trustworthy:
                 _detected_exact[serial] = display_codename
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.

@@ -185,13 +185,17 @@ class AmbiguousTargetError(ValueError):
     def __init__(self, target: str, candidates: "list[dict]"):
         self.target = target
         self.candidates = candidates
+        # Always show the serial: two watches can share an exact codename (two
+        # tunnys), so the serial is the only guaranteed disambiguator. Lead
+        # with the exact codename when it adds anything over the target name.
         lines = "\n".join(
-            f"    {c.get('exact') or c.get('serial') or '?'}"
+            f"    {c['serial'] or '(no serial)'}"
+            f"{'' if not c.get('exact') or c['exact'].lower() == target.lower() else '  (' + c['exact'] + ')'}"
             f"  at {c['loc']}:p{c['port']}"
             for c in candidates)
         super().__init__(
-            f"'{target}' is a shared image name for {len(candidates)} watches "
-            f"— name one by its exact codename or serial:\n{lines}")
+            f"'{target}' matches {len(candidates)} watches — name one by its "
+            f"serial (or exact codename where it differs):\n{lines}")
 
 
 def _port_descriptors(cfg: dict) -> "list[dict]":

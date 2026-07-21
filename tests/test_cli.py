@@ -87,3 +87,80 @@ def test_status_json_does_not_touch_hardware(monkeypatch, capsys):
     monkeypatch.setitem(rpcops.DISPATCH._data, "status.get", lambda args: {"ok": 1})
     cli.cmd_status(argparse.Namespace(json=True), _status_cfg())
     assert "ok" in capsys.readouterr().out
+
+
+# ── exact-codename addressing in power commands ─────────────────────────────
+
+def _addr_cfg():
+    # Two ports share the rubyfish image; one is a real rubyfish, one a rover
+    # (exact codenames recorded, so each is uniquely addressable). Two more
+    # share the skipjack image and are BOTH tunnys — genuinely ambiguous by
+    # any name except the serial.
+    return {
+        "hubs": [{"location": "1-2", "ports": {"1": "rubyfish", "2": "skipjack"},
+                  "port_serials": {"1": "RUBY1", "2": "TUNNYA"},
+                  "port_smart": {"1": True, "2": True}},
+                 {"location": "1-2.4", "ports": {"1": "rubyfish", "2": "skipjack"},
+                  "port_serials": {"1": "ROVER1", "2": "TUNNYB"},
+                  "port_smart": {"1": True, "2": True}}],
+        "exact_codenames": {"ROVER1": "rover", "RUBY1": "rubyfish",
+                            "TUNNYA": "tunny", "TUNNYB": "tunny"},
+    }
+
+
+def test_on_addresses_the_exact_watch_not_the_first_match(monkeypatch):
+    """`on rover` must power rover's port (1-2.4:1), not the first 'rubyfish'
+    image port (1-2:1). This is the whole point — a shared image name used to
+    hit an arbitrary one."""
+    import argparse
+    from asteroid_docking_bay import cli
+    powered = []
+    monkeypatch.setattr(cli, "uhubctl_set_power",
+                        lambda loc, port, on: powered.append((loc, port, on)))
+    monkeypatch.setattr(cli, "active_op_on_slot", lambda slot: None)
+    cli.cmd_on(argparse.Namespace(codename="rover"), _addr_cfg())
+    assert powered == [("1-2.4", 1, True)], powered
+
+
+def test_ambiguous_target_refuses_and_names_the_serials(monkeypatch):
+    """`on tunny` matches two physically distinct tunnys — same exact codename,
+    different watches. Only the serial can disambiguate, so it must raise and
+    name both serials rather than silently pick one."""
+    import argparse, pytest
+    from asteroid_docking_bay import cli
+    from asteroid_docking_bay.config import AmbiguousTargetError
+    touched = []
+    monkeypatch.setattr(cli, "uhubctl_set_power",
+                        lambda *a, **k: touched.append(a))
+    monkeypatch.setattr(cli, "active_op_on_slot", lambda slot: None)
+    with pytest.raises(AmbiguousTargetError) as ei:
+        cli.cmd_on(argparse.Namespace(codename="tunny"), _addr_cfg())
+    assert not touched, "powered a port despite ambiguity"
+    assert "TUNNYA" in str(ei.value) and "TUNNYB" in str(ei.value)
+
+
+def test_rubyfish_and_rover_are_each_unique_addresses(monkeypatch):
+    """The two watches sharing the rubyfish image are individually addressable
+    by their exact codenames — the core win over first-match."""
+    import argparse
+    from asteroid_docking_bay import cli
+    powered = []
+    monkeypatch.setattr(cli, "uhubctl_set_power",
+                        lambda loc, port, on: powered.append((loc, port)))
+    monkeypatch.setattr(cli, "active_op_on_slot", lambda slot: None)
+    cli.cmd_on(argparse.Namespace(codename="rubyfish"), _addr_cfg())
+    cli.cmd_on(argparse.Namespace(codename="rover"), _addr_cfg())
+    assert powered == [("1-2", 1), ("1-2.4", 1)], powered
+
+
+def test_unique_image_name_and_serial_both_work(monkeypatch):
+    import argparse
+    from asteroid_docking_bay import cli
+    powered = []
+    monkeypatch.setattr(cli, "uhubctl_set_power",
+                        lambda loc, port, on: powered.append((loc, port)))
+    monkeypatch.setattr(cli, "active_op_on_slot", lambda slot: None)
+    # addressing by raw serial always works, even for the ambiguous tunnys.
+    cli.cmd_on(argparse.Namespace(codename="TUNNYA"), _addr_cfg())
+    cli.cmd_on(argparse.Namespace(codename="ROVER1"), _addr_cfg())
+    assert powered == [("1-2", 2), ("1-2.4", 1)], powered

@@ -16,9 +16,11 @@ from .util import log, setup_logging
 from .adb import (_adb_state, _wait_for_new_adb_device, adb_devices,
                   get_battery_level, get_watch_codename)
 from .config import (CONFIG_FILE, ChargeConfig, charge_config, flash_config,
-                     _resolve_targets, _store_smart_verdict,
-                     find_port_for_codename, find_serial_for_codename,
-                     find_serial_for_loc_port, is_port_smart, load_config,
+                     _resolve_targets, _store_smart_verdict, AmbiguousTargetError,
+                     find_port_for_codename, find_ports_for_target,
+                     find_serial_for_codename, resolve_single_port,
+                     find_serial_for_loc_port, is_port_smart, is_slot_smart,
+                     exact_codename_for_serial, load_config,
                      save_config)
 from .usb import (port_foreign_device, test_port_power_switching,
                   uhubctl_get_power, uhubctl_list, uhubctl_set_power)
@@ -151,7 +153,9 @@ def cmd_status(args, cfg: dict):
                 level = get_battery_level(serial)
                 battery_str = f"{level}%" if level is not None else "err"
 
-            rows.append((codename, f"{loc}:p{port}", power_str, smart_str, adb_state, battery_str))
+            exact = exact_codename_for_serial(cfg, serial)
+            shown = exact or codename
+            rows.append((shown, f"{loc}:p{port}", power_str, smart_str, adb_state, battery_str))
 
     # Show ADB-visible watches not yet mapped to a hub port.
     for serial, state in devices.items():
@@ -199,26 +203,45 @@ def _busy_guard(codename: str, loc: str, port: int) -> bool:
     return True
 
 
+def _label(d: dict) -> str:
+    """How to name a resolved port in output: the exact codename if known,
+    else the image name, else the serial."""
+    return d.get("exact") or d.get("machine") or d.get("serial") or "?"
+
+
+def _target_ports(codename_arg: str, cfg: dict) -> "list[dict]":
+    """Port descriptors for a CLI target. 'all' expands to every configured
+    port; anything else resolves to exactly one, addressed by serial, exact
+    codename, or a unique image name. A shared image name raises
+    AmbiguousTargetError (caught in main and shown as a pick-one message) —
+    never a silent first-match, which on a power command is a foot-gun."""
+    if codename_arg == "all":
+        return find_ports_for_target(cfg, "all")
+    d = resolve_single_port(cfg, codename_arg)
+    if d is None:
+        log.error("%s: no watch by that serial, exact codename, or image name",
+                  codename_arg)
+        return []
+    return [d]
+
+
 def cmd_on(args, cfg: dict):
-    for codename in _resolve_targets(args.codename, cfg):
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port (run: asteroid-docking-bay map)", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in _target_ports(args.codename, cfg):
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
-            log.warning("%s: port is NOT power-switchable — command will have no effect", codename)
+            log.warning("%s: port is NOT power-switchable — command will have no effect", label)
         elif smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify", codename)
-        if _busy_guard(codename, loc, port):
+            log.warning("%s: port switching not tested — run 'test-ports' to verify", label)
+        if _busy_guard(label, loc, port):
             continue
-        log.info("%s: powering on hub %s port %d", codename, loc, port)
+        log.info("%s: powering on hub %s port %d", label, loc, port)
         uhubctl_set_power(loc, port, True)
-        print(f"{codename}: hub {loc} port {port} → ON")
+        print(f"{label}: hub {loc} port {port} → ON")
 
 
 def cmd_off(args, cfg: dict):
-    targets = _resolve_targets(args.codename, cfg)
+    targets = _target_ports(args.codename, cfg)
 
     if args.codename == "all" and not args.force:
         ans = input(f"Power off ALL {len(targets)} configured watches? [y/N] ").strip().lower()
@@ -226,54 +249,48 @@ def cmd_off(args, cfg: dict):
             print("Aborted.")
             return
 
-    for codename in targets:
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in targets:
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
             # Aborting here is important: silently failing to power off a port
             # would leave the user thinking the watch is off when it is still on.
             log.error(
                 "%s: port is NOT power-switchable — refusing 'off' to avoid confusion.\n"
                 "  The watch would remain powered on. Move it to a smart hub port.",
-                codename,
+                label,
             )
             continue
         if smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
-        if _busy_guard(codename, loc, port):
+            log.warning("%s: port switching not tested — run 'test-ports' to verify first", label)
+        if _busy_guard(label, loc, port):
             continue
-        log.info("%s: powering off hub %s port %d", codename, loc, port)
+        log.info("%s: powering off hub %s port %d", label, loc, port)
         uhubctl_set_power(loc, port, False)
-        print(f"{codename}: hub {loc} port {port} → OFF")
+        print(f"{label}: hub {loc} port {port} → OFF")
 
 
 def cmd_cycle(args, cfg: dict):
     wait = args.wait
-    for codename in _resolve_targets(args.codename, cfg):
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in _target_ports(args.codename, cfg):
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
             log.error(
                 "%s: port is NOT power-switchable — cycle has no effect. Skipping.",
-                codename,
+                label,
             )
             continue
         if smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
-        if _busy_guard(codename, loc, port):
+            log.warning("%s: port switching not tested — run 'test-ports' to verify first", label)
+        if _busy_guard(label, loc, port):
             continue
-        log.info("%s: cycling hub %s port %d (off for %ds)", codename, loc, port, wait)
+        log.info("%s: cycling hub %s port %d (off for %ds)", label, loc, port, wait)
         uhubctl_set_power(loc, port, False)
-        print(f"{codename}: OFF — waiting {wait}s…", flush=True)
+        print(f"{label}: OFF — waiting {wait}s…", flush=True)
         time.sleep(wait)
         uhubctl_set_power(loc, port, True)
-        print(f"{codename}: ON")
+        print(f"{label}: ON")
 
 
 def cmd_charge(args, cfg: dict):
@@ -943,6 +960,9 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(1)
+    except AmbiguousTargetError as e:
+        log.error("%s", e)
+        sys.exit(2)
     except RuntimeError as e:
         log.error("%s", e)
         sys.exit(1)

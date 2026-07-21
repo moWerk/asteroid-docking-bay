@@ -117,8 +117,9 @@ def test_shared_machine_name_raises_with_the_names_to_pick():
     with pytest.raises(AmbiguousTargetError) as ei:
         resolve_single_port(cfg, "skipjack")   # three ports
     msg = str(ei.value)
-    # The error must hand the user real, typeable disambiguators.
-    assert "tunny" in msg and "SKIP1" in msg
+    # The error must hand the user the serial (the only guaranteed unique
+    # disambiguator), plus the exact codename where it differs from the query.
+    assert "SKIP1" in msg and "TUNNYA" in msg and "tunny" in msg
     assert ei.value.candidates and len(ei.value.candidates) == 3
 
 
