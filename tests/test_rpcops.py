@@ -474,7 +474,7 @@ def test_wear_arm_powers_the_port_and_flags_it(monkeypatch):
     monkeypatch.setattr(ro, "find_codename_for_loc_port", lambda c, l, p: "skipjack")
     monkeypatch.setattr(ro, "uhubctl_set_power",
                         lambda l, p, on: powered.append((l, p, on)))
-    monkeypatch.setattr(ro.last_seen, "record",
+    monkeypatch.setattr(ro.last_seen, "mark",
                         lambda s, **k: recorded.update(k))
     monkeypatch.setattr(ro.event_log, "log", lambda *a, **k: events.append(a))
     d = ro.DISPATCH._data["wear.set"]({"loc": "1-2", "port": 1, "on": True})
@@ -490,7 +490,7 @@ def test_wear_release_frees_a_gone_watch_but_not_a_present_one(monkeypatch):
     monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
     monkeypatch.setattr(ro, "load_config", lambda: {})
     monkeypatch.setattr(ro, "last_seen",
-                        type("L", (), {"record": staticmethod(lambda s, **k: None)}))
+                        type("L", (), {"mark": staticmethod(lambda s, **k: None)}))
     monkeypatch.setattr(ro, "_fastboot_list", lambda: {})
 
     # Watch gone -> free the port.

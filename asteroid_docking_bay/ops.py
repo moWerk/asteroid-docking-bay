@@ -118,7 +118,7 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
             # Same graceful-shutdown marker as the manual Power-off — this ends
             # an op the proven way, so the watch is safely down (the "down"
             # pill), not ambiguously cut.
-            last_seen.record(serial, safe_off_ts=time.time())
+            last_seen.mark(serial, safe_off_ts=time.time())
     except Exception as exc:
         log.debug("graceful poweroff of %s failed: %s", serial, exc)
     finally:

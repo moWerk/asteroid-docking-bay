@@ -446,6 +446,12 @@ function mkadbrow(p){
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
     return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
+  // A safely-down or worn watch is offline on purpose — say so here rather than
+  // a bare dash, so the connection column reads as intentional, not a fault.
+  if(p.adb===null&&p.lifecycle==='down')
+    return '<span class="cbadge life down" title="safely powered down — gracefully halted, port off, not draining">powered down</span>';
+  if(p.adb===null&&p.lifecycle==='worn')
+    return '<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>';
   return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename);
 }
 function render(data){

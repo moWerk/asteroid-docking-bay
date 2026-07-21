@@ -181,11 +181,11 @@ def _wear_set(args):
             uhubctl_set_power(loc, port, True)
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
-        last_seen.record(serial, wear=True)
+        last_seen.mark(serial, wear=True)
         cn = find_codename_for_loc_port(load_config(), loc, port)
         event_log.log(serial, cn, "wear")
     else:
-        last_seen.record(serial, wear=False)
+        last_seen.mark(serial, wear=False)
         # Free the port only if the watch is actually gone (the normal worn
         # case). If it re-docked and is present, leave it powered — a raw cut
         # would strand a running watch on battery, the ambiguous-off hazard.
@@ -464,7 +464,7 @@ def _port_poweroff(args):
     # draining. A raw port toggle never reaches here, so its ambiguous off-state
     # stays unmarked. The status build turns this into the "down" pill.
     if serial and adb_ok:
-        last_seen.record(serial, safe_off_ts=time.time())
+        last_seen.mark(serial, safe_off_ts=time.time())
     return {"ok": True, "adb_shutdown": adb_ok, "confirmed": confirmed}
 
 
