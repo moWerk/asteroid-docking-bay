@@ -408,3 +408,22 @@ def test_lifecycle_pill_shows_down_only_when_asserted(tmp_path):
     assert "down" in out["down"] and "life down" in out["down"]
     assert "worn" in out["worn"] and "life worn" in out["worn"]
     assert out["none"] == "", "an unclaimed watch must show no lifecycle pill"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_reopening_a_panel_paints_instantly_from_cache(tmp_path):
+    """A previously-opened panel must repaint from the cached payload straight
+    away — no 'loading…' flash while the (possibly slow, over-SSH) fetch runs."""
+    import json
+    h = tmp_path / "cache.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"          # never resolves
+                 "\nccCache['S9']={kernel:'3.18',os:'AsteroidOS'};"  # seed a prior open
+                 "openCC('S9','skipjack',{stopPropagation(){},clientX:5,clientY:5});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "System" in html and "3.18" in html, f"did not paint from cache: {html[:200]}"
+    assert "loading" not in html, "showed a loading flash despite having a cache"

@@ -599,6 +599,12 @@ function render(data){
 let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
 let ncSerial=null, ncName=null, ncTimer=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
 let biSerial=null, biName=null, biTimer=null, biAX=0, biAY=0;
+// Last-fetched payload per serial, so re-opening a panel paints instantly from
+// the previous values while the fresh fetch is in flight — and a self-cancelling
+// poll keeps an open panel live (important over SSH, where a fetch is slow).
+const ccCache={}, ncCache={}, biCache={};
+let ccPoll=null, ncPoll=null, biPoll=null;
+const PANEL_POLL_MS=3500;
 let wimgAX=0, wimgAY=0;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
@@ -633,14 +639,20 @@ function openCC(serial,name,ev){
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
-  cc.innerHTML=`<div class="cc-hd">${name} <span class="dim">loading&hellip;</span></div>`;
-  cc.style.display='block'; ccPlace();
+  cc.style.display='block';
+  if(ccCache[serial])renderCC(ccCache[serial]);   // instant, from the last open
+  else{cc.innerHTML=`<div class="cc-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`;ccPlace();}
   ccFetch();
 }
 function ccFetch(){
   const s=ccSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(ccSerial===s)renderCC(d)}).catch(()=>{
-    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(ccSerial!==s)return;
+    ccCache[s]=d; renderCC(d);
+    clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,PANEL_POLL_MS);   // keep live while open
+  }).catch(()=>{
+    if(ccSerial!==s)return;
+    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${esc(ccName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
   });
 }
 function renderCC(d){
@@ -689,7 +701,7 @@ function ccSyncTime(){
   fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
     .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ccFetch();},700));
 }
-function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}if(ccPoll){clearTimeout(ccPoll);ccPoll=null;}}
 function ccLeave(){ccTimer=setTimeout(closeCC,600);}
 function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 
@@ -705,12 +717,19 @@ function openNC(serial,name,ev,sshIp,mode){
   ncSshIp=sshIp||''; ncMode=mode||'';
   const nc=document.getElementById('nc');
   nc.classList.remove('stale-cc');
-  nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;
-  nc.style.display='block'; ncPlace(); ncFetch();
+  nc.style.display='block';
+  if(ncCache[serial])renderNC(ncCache[serial]);
+  else{nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;ncPlace();}
+  ncFetch();
 }
 function ncFetch(){
   const s=ncSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(ncSerial===s)renderNC(d)}).catch(()=>{
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(ncSerial!==s)return;
+    ncCache[s]=d; renderNC(d);
+    clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,PANEL_POLL_MS);
+  }).catch(()=>{
+    if(ncSerial!==s)return;
     const nc=document.getElementById('nc');nc.innerHTML=`<div class="cc-hd">${esc(ncName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeNC()">&times;</span></div>`;
   });
 }
@@ -750,7 +769,7 @@ function ncToggle(tech,on){
   fetch('/api/watch/'+encodeURIComponent(ncSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
     .then(()=>setTimeout(ncFetch,1600)).catch(()=>ncFetch());
 }
-function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
+function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}if(ncPoll){clearTimeout(ncPoll);ncPoll=null;}}
 function ncLeave(){ncTimer=setTimeout(closeNC,600);}
 function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 
@@ -765,12 +784,19 @@ function openBI(serial,name,ev){
   biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
   const bi=document.getElementById('bi');
   bi.classList.remove('stale-cc');
-  bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;
-  bi.style.display='block'; biPlace(); biFetch();
+  bi.style.display='block';
+  if(biCache[serial])renderBI(biCache[serial]);
+  else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();}
+  biFetch();
 }
 function biFetch(){
   const s=biSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(biSerial===s)renderBI(d)}).catch(()=>{
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(biSerial!==s)return;
+    biCache[s]=d; renderBI(d);
+    clearTimeout(biPoll); biPoll=setTimeout(biFetch,PANEL_POLL_MS);
+  }).catch(()=>{
+    if(biSerial!==s)return;
     const bi=document.getElementById('bi');bi.innerHTML=`<div class="cc-hd">${esc(biName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeBI()">&times;</span></div>`;
   });
 }
@@ -798,7 +824,7 @@ function renderBI(d){
     `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`;
   biPlace();
 }
-function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biTimer){clearTimeout(biTimer);biTimer=null;}}
+function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biTimer){clearTimeout(biTimer);biTimer=null;}if(biPoll){clearTimeout(biPoll);biPoll=null;}}
 function biLeave(){biTimer=setTimeout(closeBI,600);}
 function biEnter(){if(biTimer){clearTimeout(biTimer);biTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
