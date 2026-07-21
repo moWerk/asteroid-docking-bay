@@ -430,42 +430,59 @@ def _port_poweroff(args):
     if busy:
         return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
-    adb_ok = False
+    graceful = False   # was a graceful shutdown actually delivered?
     if serial:
-        in_fb = serial in _fastboot_list()
-        cmd = (f"fastboot -s {serial} oem poweroff" if in_fb
-               else f"adb -s {serial} shell poweroff")
-        rc, _, err = _run(cmd, check=False, timeout=10)
-        adb_ok = (rc == 0)
-        if not adb_ok:
-            log.warning("poweroff %s:%s (%s): %s shutdown failed: %s",
-                        loc, port, serial, "fastboot" if in_fb else "adb",
-                        err.strip() or f"rc={rc}")
-            if in_fb:
+        ip = ssh_ip_for_serial(load_config(), serial)
+        if serial in _fastboot_list():
+            rc, _, err = _run(f"fastboot -s {serial} oem poweroff",
+                              check=False, timeout=10)
+            graceful = (rc == 0)
+            if not graceful:
                 # `oem poweroff` is NOT universal — rover's bootloader has no
-                # such command (verified by extracting the oem table from its
-                # aboot partition). Cutting VBUS after a failed shutdown would
+                # such command. Cutting VBUS after a failed shutdown would
                 # strand the watch running on battery in the bootloader,
-                # invisible to the host. Leaving it powered is the safe
-                # failure: it stays reachable and keeps charging.
+                # invisible to the host. Leaving it powered is the safe failure.
+                log.warning("poweroff %s:%s (%s): fastboot shutdown failed: %s",
+                            loc, port, serial, err.strip() or f"rc={rc}")
                 return {"ok": False, "adb_shutdown": False,
                         "error": "this bootloader has no 'oem poweroff' — "
                                  "power left on so the watch is not stranded "
                                  "running on battery"}
+        elif _adb_state(adb_devices(), serial) == "device":
+            rc, _, err = _run(f"adb -s {serial} shell poweroff",
+                              check=False, timeout=10)
+            graceful = (rc == 0)
+            if not graceful:
+                log.warning("poweroff %s:%s (%s): adb shutdown failed: %s",
+                            loc, port, serial, err.strip() or f"rc={rc}")
+        elif ip and _detect_rndis(ip):
+            # SSH/developer mode: reach it over SSH like every other watch op.
+            # The halt drops the ssh session, so a non-zero return is expected —
+            # delivery to a reachable watch is the success signal, as for the
+            # mode switch.
+            SshTransport(ip).shell("poweroff", timeout=12)
+            graceful = True
+        else:
+            # Known serial but reachable on no transport (already off, or a
+            # wedged/booting watch). Fall through to the raw VBUS cut, as
+            # before — no graceful marker, so no "down" claim.
+            log.warning("poweroff %s:%s (%s): not on adb/ssh/fastboot — "
+                        "cutting power only", loc, port, serial)
     else:
         log.warning("poweroff %s:%s: no serial known — cutting power only",
                     loc, port)
     try:
         confirmed = uhubctl_set_power(loc, port, False)
     except RuntimeError as e:
-        return {"ok": False, "error": str(e), "adb_shutdown": adb_ok}
-    # Mark a *confirmed graceful* shutdown as the one off-state we can vouch
-    # for: the watch was told to halt and it went, so it is safely down and not
-    # draining. A raw port toggle never reaches here, so its ambiguous off-state
-    # stays unmarked. The status build turns this into the "down" pill.
-    if serial and adb_ok:
+        return {"ok": False, "error": str(e), "adb_shutdown": graceful}
+    # Mark a *confirmed graceful* shutdown — over adb, ssh, or fastboot — as the
+    # one off-state we can vouch for: the watch was told to halt and it went, so
+    # it is safely down and not draining. A raw port toggle never reaches here,
+    # so its ambiguous off-state stays unmarked; the status build turns this
+    # into the "down" pill.
+    if serial and graceful:
         last_seen.mark(serial, safe_off_ts=time.time())
-    return {"ok": True, "adb_shutdown": adb_ok, "confirmed": confirmed}
+    return {"ok": True, "adb_shutdown": graceful, "confirmed": confirmed}
 
 
 def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):

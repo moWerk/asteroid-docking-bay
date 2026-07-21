@@ -509,3 +509,33 @@ def test_wear_release_frees_a_gone_watch_but_not_a_present_one(monkeypatch):
                         lambda l, p, on: powered2.append((l, p, on)))
     ro.DISPATCH._data["wear.set"]({"loc": "1-2", "port": 1, "on": False})
     assert powered2 == [], "release raw-cut a present watch — stranding hazard"
+
+
+def test_poweroff_over_ssh_marks_down_and_does_not_strand(monkeypatch):
+    """An SSH-mode watch must be powered off over SSH (not a failed adb command
+    followed by a raw VBUS cut that strands it running). Delivery over ssh is
+    graceful, so it stamps safe_off and the "down" pill can show."""
+    import asteroid_docking_bay.rpcops as ro
+    calls, marked, powered = [], {}, []
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
+    monkeypatch.setattr(ro, "load_config", lambda: {})
+    monkeypatch.setattr(ro, "ssh_ip_for_serial", lambda c, s: "192.168.13.37")
+    monkeypatch.setattr(ro, "_refuse_if_busy", lambda l, p: None)
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {})              # not fastboot
+    monkeypatch.setattr(ro, "_adb_state", lambda d, s: None)          # not on adb
+    monkeypatch.setattr(ro, "adb_devices", lambda: {})
+    monkeypatch.setattr(ro, "_detect_rndis", lambda ip: True)         # reachable over ssh
+
+    class _T:
+        def __init__(self, ip): self.ip = ip
+        def shell(self, cmd, timeout=8): calls.append((self.ip, cmd)); return (255, "", "closed")
+    monkeypatch.setattr(ro, "SshTransport", _T)
+    monkeypatch.setattr(ro, "uhubctl_set_power",
+                        lambda l, p, on: powered.append(on) or True)
+    monkeypatch.setattr(ro.last_seen, "mark", lambda s, **k: marked.update(k))
+
+    d = ro.DISPATCH._data["port.poweroff"]({"loc": "1-2", "port": 1})
+    assert d["ok"] and d["adb_shutdown"] is True, d
+    assert calls == [("192.168.13.37", "poweroff")], "did not power off over ssh"
+    assert powered == [False], "port not cut after the ssh halt"
+    assert marked.get("safe_off_ts"), "ssh poweroff did not stamp the down marker"
