@@ -12,7 +12,7 @@ from .util import log
 from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
 from .config import (_config_lock, charge_config, find_codename_for_serial,
-                     load_config, save_config)
+                     load_config, record_exact_codename, save_config)
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
@@ -207,6 +207,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
     webapp's background warmer.
     """
     _t0 = time.perf_counter()
+    # serial -> exact codename learned this pass (flushed to config at the end).
+    _detected_exact: dict[str, str] = {}
     devices = adb_devices()
     fb_devices = _fastboot_list()   # {serial: sysfs_path | None}
     # Reverse maps for empty-port detection: sysfs_path → serial
@@ -304,6 +306,13 @@ def _web_status_data(cfg: dict) -> list[dict]:
                          "bootloader": geometry.get("bootloader")}
                         if geometry else {})
             display_codename = exact_codename(machine, observed)
+            # Once the bootloader has named the true device, remember it so the
+            # CLI — which has no live detection — can address the watch by that
+            # exact name. Only worth persisting when it actually refines the
+            # image name; collected here, flushed once at the end so a shared
+            # machine name stops being a coin-flip as soon as a watch is seen.
+            if serial and display_codename and display_codename != machine:
+                _detected_exact[serial] = display_codename
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -445,9 +454,26 @@ def _web_status_data(cfg: dict) -> list[dict]:
         socks = [p["socket"] for p in h["ports"] if p.get("socket") is not None]
         return (h["location"].split(".")[0], min(socks) if socks else 9999)
     result.sort(key=_hub_key)
+    _persist_exact_codenames(_detected_exact)
     elapsed = time.perf_counter() - _t0
     if elapsed > 1.0:     # quiet when fast; flag only the occasional slow refresh
         log.info("slow status refresh: %.2fs", elapsed)
     return result
+
+
+def _persist_exact_codenames(detected: dict) -> None:
+    """Store newly-learned exact codenames in the config, once, under the lock.
+    record_exact_codename is change-gated, so a fleet whose identities are all
+    known writes nothing — the save happens only when something actually
+    changed this pass."""
+    if not detected:
+        return
+    with _config_lock:
+        cfg = load_config()
+        changed = False
+        for serial, exact in detected.items():
+            changed = record_exact_codename(cfg, serial, exact) or changed
+        if changed:
+            save_config(cfg)
 
 
