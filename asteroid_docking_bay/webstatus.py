@@ -12,7 +12,8 @@ from .util import log
 from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
 from .config import (_config_lock, charge_config, find_codename_for_serial,
-                     load_config, record_exact_codename, save_config)
+                     load_config, record_exact_codename, save_config,
+                     ssh_ip_for_serial)
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
@@ -391,6 +392,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
+                # The watch's assigned SSH-mode address, so the row can show
+                # which watch holds which IP — most useful while it's in SSH
+                # mode, but shown whenever one has been allocated.
+                "ssh_ip": ssh_ip_for_serial(cfg, serial),
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,
                 "charge_status": charge_status,

@@ -368,7 +368,7 @@ function mkport(p){
   return s;
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
-function mkadb(adb,fbprod,os,serial){
+function mkadb(adb,fbprod,os,serial,sshIp){
   if(adb==='device'){
     // usb_moded (the SSH switch) is AsteroidOS-only, so the ADB pill is a live
     // toggle to SSH for an AsteroidOS or not-yet-identified watch, and a plain
@@ -381,7 +381,7 @@ function mkadb(adb,fbprod,os,serial){
       return `${logo}<span class="cbadge adb" onclick="switchSsh('${esc(serial)}')" title="ADB mode${os==='asteroidos'?' — AsteroidOS':''} — click to switch this watch to SSH">ADB</span>`;
     return `${logo}<span class="cbadge adb" title="${known?esc(os)+' on ADB':'ADB mode'}">ADB${suffix}</span>`;
   }
-  if(adb==='ssh')return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode — click to switch this watch to ADB">SSH</span>`;
+  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<span class="cbadge ssh" onclick="switchAdb('${esc(serial||'')}')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click to switch this watch to ADB">SSH${ipl}</span>`;}
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
@@ -397,7 +397,7 @@ function mkadbrow(p){
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
     return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
-  return mkadb(p.adb,null,p.os,p.serial);
+  return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip);
 }
 function render(data){
   const tb=document.getElementById('tb');
