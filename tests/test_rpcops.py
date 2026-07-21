@@ -139,8 +139,9 @@ class _FakeWatch:
 def test_watch_cc_live_returns_and_caches(monkeypatch, tmp_path):
     ls = LastSeen(tmp_path / "ls.json")
     monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
     monkeypatch.setattr(rpcops, "Watch",
-                        lambda s: _FakeWatch(s, {"kernel": "x", "serial": s}))
+                        lambda s, transport=None: _FakeWatch(s, {"kernel": "x", "serial": s}))
     d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
     assert d["kernel"] == "x" and "stale" not in d
     assert ls.get("S1")["cc"]["kernel"] == "x"
@@ -149,16 +150,18 @@ def test_watch_cc_live_returns_and_caches(monkeypatch, tmp_path):
 def test_watch_cc_offline_serves_stale(monkeypatch, tmp_path):
     ls = LastSeen(tmp_path / "ls.json")
     monkeypatch.setattr(rpcops, "last_seen", ls)
-    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    monkeypatch.setattr(rpcops, "Watch", lambda s, transport=None: _FakeWatch(s, {"kernel": "x"}))
     rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})       # seed while live
-    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))  # offline
+    monkeypatch.setattr(rpcops, "Watch", lambda s, transport=None: _FakeWatch(s, {}))  # offline
     d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
     assert d["kernel"] == "x" and d["stale"] is True and d["last_live_ts"] > 0
 
 
 def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(rpcops, "last_seen", LastSeen(tmp_path / "ls.json"))
-    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {}))
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    monkeypatch.setattr(rpcops, "Watch", lambda s, transport=None: _FakeWatch(s, {}))
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
 
 
@@ -205,7 +208,8 @@ def test_watch_cc_attaches_cached_resolution(monkeypatch, tmp_path):
     ls = LastSeen(tmp_path / "ls.json")
     monkeypatch.setattr(rpcops, "last_seen", ls)
     ls.record("S1", geometry={"round": True, "resolution": "360x360"})
-    monkeypatch.setattr(rpcops, "Watch", lambda s: _FakeWatch(s, {"kernel": "x"}))
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    monkeypatch.setattr(rpcops, "Watch", lambda s, transport=None: _FakeWatch(s, {"kernel": "x"}))
     d = rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
     assert d["resolution"] == "360x360" and d["geometry"]["round"] is True
 
@@ -433,3 +437,27 @@ def test_switch_ssh_reports_ok_when_the_link_drops(monkeypatch):
     monkeypatch.setattr(ro, "_run", lambda cmd, **k: (255, "", "closed by remote host"))
     d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
     assert d["ok"] is True, d
+
+
+def test_reachable_transport_prefers_adb_then_ssh(monkeypatch):
+    """The Control Center and other watch ops must work over whichever link is
+    up: adb when the watch is on adb, else SSH at its assigned address when it
+    is in SSH mode there. This is what makes SSH a full adb replacement."""
+    import asteroid_docking_bay.rpcops as ro
+    from asteroid_docking_bay.transport import SshTransport
+
+    # On adb → default transport (None → AdbTransport).
+    monkeypatch.setattr(ro, "adb_devices", lambda: {"S1": {"status": "device"}})
+    monkeypatch.setattr(ro, "_adb_state", lambda devs, s: "device")
+    assert ro._reachable_transport("S1") is None
+
+    # Not on adb, but reachable over SSH at its assigned IP → SshTransport there.
+    monkeypatch.setattr(ro, "_adb_state", lambda devs, s: None)
+    monkeypatch.setattr(ro, "load_config", lambda: {"ssh_ips": {"S1": "192.168.13.37"}})
+    monkeypatch.setattr(ro, "_detect_rndis", lambda ip: ip == "192.168.13.37")
+    t = ro._reachable_transport("S1")
+    assert isinstance(t, SshTransport) and t.ip == "192.168.13.37", t
+
+    # Neither adb nor reachable SSH → default (offline handled downstream).
+    monkeypatch.setattr(ro, "_detect_rndis", lambda ip: False)
+    assert ro._reachable_transport("S1") is None

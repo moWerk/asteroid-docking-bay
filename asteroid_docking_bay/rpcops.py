@@ -38,7 +38,8 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
 from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
 from .fastboot import (_switch_ssh_to_adb, _usb_moded_switch_failed,
-                       _fastboot_list, fastboot_getvar_all)
+                       _detect_rndis, _fastboot_list, fastboot_getvar_all)
+from .transport import SshTransport
 from .watchimg import watch_image_bytes
 from .variants import image_of
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
@@ -50,6 +51,28 @@ from .rpc import Dispatcher
 from . import __version__
 
 DISPATCH = Dispatcher()
+
+
+def _reachable_transport(serial: str):
+    """How to reach a watch right now: adb when it is on adb, else SSH at its
+    assigned address when it is in SSH/developer mode there. Returns None to
+    mean "the default AdbTransport", which is also the right fallback for an
+    offline watch — the op then returns empty/stale as before.
+
+    This is what lets SSH be a full replacement for adb: the Control Center
+    and the other per-watch ops read and toggle over whichever link is up,
+    with no change at the call site beyond going through _watch()."""
+    if _adb_state(adb_devices(), serial) == "device":
+        return None
+    ip = ssh_ip_for_serial(load_config(), serial)
+    if ip and _detect_rndis(ip):
+        return SshTransport(ip)
+    return None
+
+
+def _watch(serial: str) -> Watch:
+    """A Watch bound to whichever transport currently reaches it."""
+    return Watch(serial, transport=_reachable_transport(serial))
 
 
 # ── status ──────────────────────────────────────────────────────────────────
@@ -83,7 +106,7 @@ def _watch_cc(args):
     # Passive standby drain measured across power-off→boot (event log), honest
     # because it carries no charge-bump. Always current, so fold into either path.
     standby = event_log.standby_off_to_on_rate(serial, None)
-    data = Watch(serial).cc_data()
+    data = _watch(serial).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
         # Screen geometry/resolution is cached separately (probed by the status
@@ -115,27 +138,27 @@ def _watch_toggle(args):
     tech = args["tech"]
     if tech not in ("wifi", "bluetooth"):
         return {"ok": False, "error": f"unknown toggle {tech}"}
-    return {"ok": Watch(args["serial"]).toggle(tech, bool(args["on"]))}
+    return {"ok": _watch(args["serial"]).toggle(tech, bool(args["on"]))}
 
 
 @DISPATCH.op("watch.settime")
 def _watch_settime(args):
-    return {"ok": True, "timezone": Watch(args["serial"]).set_time_from_host()}
+    return {"ok": True, "timezone": _watch(args["serial"]).set_time_from_host()}
 
 
 @DISPATCH.op("watch.notify")
 def _watch_notify(args):
-    return {"ok": Watch(args["serial"]).notify()}
+    return {"ok": _watch(args["serial"]).notify()}
 
 
 @DISPATCH.op("watch.buzz")
 def _watch_buzz(args):
-    return {"ok": Watch(args["serial"]).buzz()}
+    return {"ok": _watch(args["serial"]).buzz()}
 
 
 @DISPATCH.op("watch.screen")
 def _watch_screen(args):
-    return {"ok": Watch(args["serial"]).screen(bool(args["on"]))}
+    return {"ok": _watch(args["serial"]).screen(bool(args["on"]))}
 
 
 @DISPATCH.op("screen.release_all")
