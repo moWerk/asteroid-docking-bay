@@ -45,7 +45,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.toggle", "watch.settime", "watch.notify",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
-        "watch.image", "ssh.switch_adb",
+        "watch.image", "ssh.switch_adb", "watch.switch_ssh",
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
         "port.bootloader", "port.recovery", "port.continue",
         "port.hide", "hub.hide",
@@ -380,3 +380,24 @@ def test_port_ops_work_normally_when_no_operation_is_running(monkeypatch):
     monkeypatch.setattr(ro, "uhubctl_set_power", lambda *a, **k: True)
     r = ro.DISPATCH._data["port.set"]({"loc": "1-2.3", "port": 1, "on": True})
     assert r == {"ok": True, "confirmed": True}, r
+
+
+def test_switch_ssh_targets_the_given_serial(monkeypatch):
+    """ADB->SSH is per-serial: only one watch can hold the fixed 192.168.2.15,
+    so the command must go to the named watch, not a global switch like the
+    ADB direction."""
+    import asteroid_docking_bay.rpcops as ro
+    seen = {}
+    monkeypatch.setattr(ro, "_run",
+                        lambda cmd, **k: (seen.setdefault("cmd", cmd), (0, "", ""))[1])
+    d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
+    assert d["ok"] is True
+    assert seen["cmd"] == "adb -s S9 shell usb_moded_util -s developer_mode", seen
+
+
+def test_switch_ssh_without_serial_is_rejected(monkeypatch):
+    import asteroid_docking_bay.rpcops as ro
+    ran = []
+    monkeypatch.setattr(ro, "_run", lambda *a, **k: ran.append(a) or (0, "", ""))
+    d = ro.DISPATCH._data["watch.switch_ssh"]({})
+    assert d["ok"] is False and not ran

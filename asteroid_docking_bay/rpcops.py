@@ -193,6 +193,22 @@ def _ssh_switch_adb(args):
     return {"ok": _switch_ssh_to_adb()}
 
 
+@DISPATCH.op("watch.switch_ssh")
+def _watch_switch_ssh(args):
+    """The reverse of ssh.switch_adb: put an adb watch into SSH/developer USB
+    mode. usb_moded re-enumerates the gadget as rndis reachable at
+    192.168.2.15, which drops the adb connection — so a non-zero return from
+    the command is expected; success is the command being delivered before the
+    link goes. Per serial, because only one watch can hold the fixed
+    192.168.2.15, so exactly one may be in SSH mode at a time."""
+    serial = args.get("serial")
+    if not serial:
+        return {"ok": False, "error": "no serial for this port"}
+    _run(f"adb -s {serial} shell usb_moded_util -s developer_mode",
+         check=False, timeout=15)
+    return {"ok": True}
+
+
 @DISPATCH.op("watch.diagnostics")
 def _watch_diagnostics(args):
     serial = find_serial_for_loc_port(load_config(), args["loc"], int(args["port"]))

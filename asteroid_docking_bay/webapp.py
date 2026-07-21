@@ -60,6 +60,7 @@ _JSON_ROUTES = [
     ("POST", "/api/diagnostics/<loc>/<port:int>",  "watch.diagnostics", {},           False),
     ("POST", "/api/fbreport/<loc>/<port:int>",     "watch.fbreport",  {},             False),
     ("POST", "/api/switch-adb",                    "ssh.switch_adb",  {},             True),
+    ("POST", "/api/switch-ssh/<serial>",          "watch.switch_ssh", {},            True),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
 ]

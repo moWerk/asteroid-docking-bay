@@ -517,7 +517,7 @@ function render(data){
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
           `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
+          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -823,10 +823,25 @@ function menuPowerFb(ev,slot,powered){
     (powered?'<div class="menu-sep"></div>'+mi('po','Power off',null,true,
       'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):''));
 }
-function menuWorkbench(ev,slot,serial,wb,online){
+function menuWorkbench(ev,slot,serial,wb,mode){
+  const online=mode==='device';
+  // USB-mode toggle. Workbench work happens over WiFi/SSH, so switching the
+  // watch's USB gadget between adb and SSH/developer mode belongs here. The
+  // item flips with the current mode: on adb it offers SSH (delivered over
+  // adb, needs the watch online); in SSH mode it offers ADB (delivered over
+  // the rndis link at 192.168.2.15, which is up precisely because it's in SSH
+  // mode). Either switch re-enumerates the gadget and drops the current link.
+  let usbToggle;
+  if(mode==='ssh')
+    usbToggle=mi('info','Switch USB to ADB',`switchAdb()`);
+  else
+    usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
+                 'watch must be on ADB to switch it to SSH mode');
   openMenu(ev,
     '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
+    '<div class="menu-sep"></div>'+
+    usbToggle+
     '<div class="menu-sep"></div>'+
     mi('info','Set time from host',`doSetTime('${serial}')`,!online)+
     mi('info','Screenshot',`doScreenshot('${serial}')`,!online)+
@@ -859,6 +874,7 @@ function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
 function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH (192.168.2.15)…':'switch failed');setTimeout(refresh,6000)});}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
     toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');

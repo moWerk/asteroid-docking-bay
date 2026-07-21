@@ -92,6 +92,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `watch.poweroff / reboot / bootloader` | existing endpoints |
 | `port.recovery / port.continue` | boot recovery / resume boot chain (fastboot) |
 | `watch.cc / toggle / settime / notify / buzz / screen / screenshot` | Watch methods |
+| `ssh.switch_adb / watch.switch_ssh` | toggle a watch between adb and SSH/developer USB mode |
 | `op.charge.start / stop` (same for drain, workbench) | Operation classes |
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
