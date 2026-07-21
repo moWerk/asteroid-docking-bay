@@ -79,6 +79,12 @@ _WEB_TEMPLATE = """\
     .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
+    /* Prominent, non-clickable IP banner at the top of the workbench menu —
+       the address you actually need to reach the watch over SSH/WiFi. */
+    .menu-ip{display:block;width:100%;text-align:center;padding:7px 10px;margin:1px 0 3px;
+      border-radius:5px;border:1px solid #d29922;background:rgba(210,153,34,.1);
+      color:#d29922;font:inherit;font-size:13px;letter-spacing:.3px;cursor:default}
+    .menu-ip b{font-weight:700}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     /* Watch product-photo thumbnail + click-to-enlarge overlay */
@@ -525,7 +531,7 @@ function render(data){
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
           `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
+          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}','${p.ssh_ip||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -831,14 +837,21 @@ function menuPowerFb(ev,slot,powered){
     (powered?'<div class="menu-sep"></div>'+mi('po','Power off',null,true,
       'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):''));
 }
-function menuWorkbench(ev,slot,serial,wb,mode){
+function menuWorkbench(ev,slot,serial,wb,mode,sshIp){
   const online=mode==='device';
+  // The address to reach this watch over SSH/WiFi — the single most useful
+  // thing to have while working on it. Shown as a prominent non-clickable
+  // banner at the top, deliberately redundant with the row badge. It is this
+  // watch's assigned SSH IP when in SSH mode, otherwise the address it will
+  // take on the next switch (the default until one has been assigned).
+  const ip=sshIp||'192.168.2.15';
+  const ipBanner=`<div class="menu-ip" title="reach this watch over SSH at this address">USB IP <b>${esc(ip)}</b></div>`;
   // USB-mode toggle. Workbench work happens over WiFi/SSH, so switching the
   // watch's USB gadget between adb and SSH/developer mode belongs here. The
   // item flips with the current mode: on adb it offers SSH (delivered over
   // adb, needs the watch online); in SSH mode it offers ADB (delivered over
-  // the rndis link at 192.168.2.15, which is up precisely because it's in SSH
-  // mode). Either switch re-enumerates the gadget and drops the current link.
+  // the watch's rndis link, which is up precisely because it's in SSH mode).
+  // Either switch re-enumerates the gadget and drops the current link.
   let usbToggle;
   if(mode==='ssh')
     usbToggle=mi('info','Switch USB to ADB',`switchAdb('${serial}')`);
@@ -846,6 +859,7 @@ function menuWorkbench(ev,slot,serial,wb,mode){
     usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
                  'watch must be on ADB to switch it to SSH mode');
   openMenu(ev,
+    ipBanner+
     '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+

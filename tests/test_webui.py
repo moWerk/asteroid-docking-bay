@@ -273,3 +273,23 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
     # A known non-AsteroidOS OS is a status pill, not an SSH toggle (usb_moded
     # is AsteroidOS-only) and carries no asteroid logo.
     assert "switchSsh(" not in out["wear"] and "<svg" not in out["wear"], out["wear"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_workbench_menu_shows_the_usb_ip_banner(tmp_path):
+    """The watch's SSH address is the most useful thing to have while working
+    on it, so the workbench menu leads with a prominent non-clickable IP
+    banner — deliberately redundant with the row badge."""
+    import json
+    h = tmp_path / "wb.js"
+    # Stub openMenu to capture the HTML it is handed.
+    h.write_text(_DOM_STUBS + JS +
+                 "\nlet CAP='';openMenu=function(ev,html){CAP=html;};"
+                 "menuWorkbench({}, '1-2:1','S9', false,'ssh','192.168.13.37');"
+                 "console.log(JSON.stringify(CAP));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "menu-ip" in html and "192.168.13.37" in html, html
+    # It must be a plain banner, not a clickable action.
+    assert 'class="menu-ip"' in html and "onclick" not in html.split("menu-hd")[0]
