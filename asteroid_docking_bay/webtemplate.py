@@ -881,8 +881,8 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
-function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH (192.168.2.15)…':'switch failed');setTimeout(refresh,6000)});}
+function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000)});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,6000)});}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
     toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');

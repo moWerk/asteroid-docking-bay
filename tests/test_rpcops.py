@@ -401,3 +401,25 @@ def test_switch_ssh_without_serial_is_rejected(monkeypatch):
     monkeypatch.setattr(ro, "_run", lambda *a, **k: ran.append(a) or (0, "", ""))
     d = ro.DISPATCH._data["watch.switch_ssh"]({})
     assert d["ok"] is False and not ran
+
+
+def test_switch_ssh_reports_failure_when_usb_moded_refuses(monkeypatch):
+    """A watch whose usb-moded service is down prints an error but still exits
+    0, and the adb link stays up. That must surface as a failure, not a silent
+    'ok' — the beluga case."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "_run",
+                        lambda cmd, **k: (0, "Trying to set the following mode "
+                                          "developer_mode\nSorry an error occured, "
+                                          "your request was not processed.", ""))
+    d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
+    assert d["ok"] is False and "usb-moded" in d["error"], d
+
+
+def test_switch_ssh_reports_ok_when_the_link_drops(monkeypatch):
+    """A switch that took re-enumerates and drops the link, so the command
+    comes back with no error text — that is success."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "_run", lambda cmd, **k: (255, "", "closed by remote host"))
+    d = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S9"})
+    assert d["ok"] is True, d

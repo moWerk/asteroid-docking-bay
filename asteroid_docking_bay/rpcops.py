@@ -36,7 +36,8 @@ from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
-from .fastboot import _switch_ssh_to_adb, _fastboot_list, fastboot_getvar_all
+from .fastboot import (_switch_ssh_to_adb, _usb_moded_switch_failed,
+                       _fastboot_list, fastboot_getvar_all)
 from .watchimg import watch_image_bytes
 from .variants import image_of
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
@@ -189,8 +190,9 @@ def _watch_image(args):
 @DISPATCH.op("ssh.switch_adb")
 def _ssh_switch_adb(args):
     """Switch a watch stuck in SSH/developer USB mode (reachable at 192.168.2.15)
-    over to ADB. ok=False means nothing was reachable there to switch."""
-    return {"ok": _switch_ssh_to_adb()}
+    over to ADB. ok=False means nothing was reachable, or the switch was
+    refused by a broken usb-moded on the watch."""
+    return _switch_ssh_to_adb()
 
 
 @DISPATCH.op("watch.switch_ssh")
@@ -204,8 +206,12 @@ def _watch_switch_ssh(args):
     serial = args.get("serial")
     if not serial:
         return {"ok": False, "error": "no serial for this port"}
-    _run(f"adb -s {serial} shell usb_moded_util -s developer_mode",
-         check=False, timeout=15)
+    _, out, err = _run(f"adb -s {serial} shell usb_moded_util -s developer_mode",
+                       check=False, timeout=15)
+    if _usb_moded_switch_failed(out, err):
+        return {"ok": False,
+                "error": "usb-moded did not switch mode — its service may be "
+                         "down on this watch (a known device-specific issue)"}
     return {"ok": True}
 
 

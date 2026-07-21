@@ -108,18 +108,33 @@ def _detect_rndis() -> bool:
     return rc == 0
 
 
-def _switch_ssh_to_adb() -> bool:
+def _switch_ssh_to_adb() -> dict:
     """Switch a watch that enumerated in SSH/developer USB mode over to adb_mode.
     A single such watch is directly reachable at 192.168.2.15. The switch
     re-enumerates the USB gadget and drops the ssh session, so a non-zero return
     is expected — success is the watch reappearing on adb, which the caller
-    waits for. Returns False only if no watch is reachable there to switch."""
+    waits for. ok=False when nothing was reachable there, or when the watch's
+    usb-moded refused the switch (printed an error while the link stayed up)."""
     if not _detect_rndis():
-        return False
+        return {"ok": False, "error": "no SSH watch reachable at 192.168.2.15"}
     _clear_ssh_known_hosts()   # a fresh flash rotates the host key
-    _run("ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "
-         "root@192.168.2.15 usb_moded_util -s adb_mode", check=False, timeout=15)
-    return True
+    _, out, err = _run(
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "
+        "root@192.168.2.15 usb_moded_util -s adb_mode", check=False, timeout=15)
+    if _usb_moded_switch_failed(out, err):
+        return {"ok": False,
+                "error": "usb-moded refused the switch on this watch (its "
+                         "service may be down)"}
+    return {"ok": True}
+
+
+def _usb_moded_switch_failed(out: str, err: str) -> bool:
+    """usb_moded_util prints its failure on stdout while still exiting 0; a
+    switch that took would have dropped the link before any reply. So the error
+    text, not the return code, is the signal that the mode did not change."""
+    blob = f"{out} {err}".lower()
+    return "not processed" in blob or "an error occured" in blob \
+        or "an error occurred" in blob
 
 
 def _download_nightly(codename: str, download_dir: Path, nightly_url: str, force: bool = False) -> tuple[Path, Path]:
