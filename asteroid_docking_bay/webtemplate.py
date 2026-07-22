@@ -171,6 +171,12 @@ _WEB_TEMPLATE = """\
     .lifedot.on{border-color:#3fb950;color:#3fb950}
     .lifedot.down{border-color:#3d4756;color:#8b98a5}
     .lifedot.amb{border-color:#d29922;color:#d29922}
+    .smt{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11px;border:1px solid;background:transparent;font-family:inherit;line-height:1.5;vertical-align:middle}
+    .smt.yes{border-color:#3fb950;color:#3fb950}
+    .smt.no{border-color:#f85149;color:#f85149}
+    .smt.unk{border-color:#d29922;color:#d29922;cursor:pointer}
+    .smt.unk:hover:not(:disabled){background:#2a2113}
+    .smt.unk:disabled{opacity:.35;cursor:default}
     .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
@@ -191,10 +197,7 @@ _WEB_TEMPLATE = """\
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
-    .ico:hover{background:#21262d;color:#c9d1d9}
-    .ico:active{transform:scale(.88);transition:transform 55ms ease-out}
-    .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
+    .tgl:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
@@ -273,7 +276,6 @@ _WEB_TEMPLATE = """\
       .wr td:nth-child(10){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
       /* Bigger, tappable controls */
       .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
-      .wr .ico{font-size:15px;width:2.6em;height:2.6em;padding:0;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
       .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
@@ -318,7 +320,15 @@ function mkhide(slot,excluded){
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
-function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
+function mksmart(p,slot,dis){
+  // Smart = can the port switch VBUS. A known verdict is a pill (green yes /
+  // red NO!). Untested shows the power-cycle in its place, because the cycle
+  // IS the test — one click cuts and restores power and records the verdict —
+  // so the control lives exactly where its result will land.
+  if(p.smart===true)return '<span class="smt yes" title="port can switch power (smart)">yes</span>';
+  if(p.smart===false)return '<span class="smt no" title="port cannot switch its own power (not smart)">NO!</span>';
+  return `<button class="smt unk"${dis} onclick="pulseSelf(this);doCy('${slot}')" title="smart capability not tested — click to power-cycle the port and detect it">&#x21BA;</button>`;
+}
 function pulseSelf(el){
   // Give a clicked action button instant feedback while the command is in
   // flight. The status refresh that reflects the new state rebuilds the row
@@ -593,8 +603,8 @@ function render(data){
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
-          `<td>${mksmt(p.smart)}</td>` +
+          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td>${mksmart(p,slot,d)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
@@ -666,8 +676,8 @@ function render(data){
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
-          `<td>${mksmt(p.smart)}</td>` +
+          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td>${mksmart(p,slot,dp)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+mklife(p)+(p.serial

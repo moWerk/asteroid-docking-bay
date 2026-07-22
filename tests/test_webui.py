@@ -287,6 +287,31 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
     assert "switchSsh(" not in out["wear"] and "<svg" not in out["wear"], out["wear"]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_smart_column_is_pills_with_the_cycle_as_the_untested_state(tmp_path):
+    """Smart is a pill — green 'yes' when the port can switch power, red 'NO!'
+    when it can't. Untested shows the power-cycle button in place of a bare '?',
+    because the cycle IS the test. The Power column keeps only the on/off
+    toggle; the standalone cycle icon is gone from it."""
+    import json
+    h = tmp_path / "smt.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({"
+                 "yes:mksmart({smart:true},'1-2:1',''),"
+                 "no:mksmart({smart:false},'1-2:1',''),"
+                 "unk:mksmart({smart:null},'1-2:1','')}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'class="smt yes"' in out["yes"] and ">yes<" in out["yes"]
+    assert 'class="smt no"' in out["no"] and "NO!" in out["no"]
+    assert 'class="smt unk"' in out["unk"] and "doCy('1-2:1')" in out["unk"], out["unk"]
+    assert "&#x21BA;" in out["unk"], "untested state must show the cycle glyph"
+    # The cycle lives only in the smart cell now — not as a power-column icon.
+    assert JS.count("doCy('") == 1, "doCy wired in more than one place — cycle not consolidated"
+
+
 def test_execute_trigger_is_a_markerless_pill():
     """Execute spawns a panel like the badges/battery do, so it reads as one of
     them: a pill, and no dropdown ▾ marker (which also stopped it wrapping to
