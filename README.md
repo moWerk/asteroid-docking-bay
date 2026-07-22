@@ -424,7 +424,7 @@ asteroid-docking-bay flash [codename|all] [--local DIR] [--dry-run]
 Flash AsteroidOS nightlies to all configured watches (or a single codename) in
 sequence, fully automated:
 
-1. Downloads `zImage-dtb-{codename}.fastboot` and
+1. Downloads `asteroid-{codename}-boot.img` and
    `asteroid-image-{codename}.rootfs.ext4` from
    `release.asteroidos.org/nightlies/{codename}/` and verifies SHA512. Already-
    downloaded files that pass the checksum are reused without re-downloading.

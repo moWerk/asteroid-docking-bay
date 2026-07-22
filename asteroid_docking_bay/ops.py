@@ -739,7 +739,7 @@ def _flash_one_watch(
         dl_dir = dl_dir / channel
 
     if local_dir:
-        boot_file = local_dir / f"zImage-dtb-{codename}.fastboot"
+        boot_file = local_dir / f"asteroid-{codename}-boot.img"
         img_file  = local_dir / f"asteroid-image-{codename}.rootfs.ext4"
         missing = [f for f in (boot_file, img_file) if not f.exists()]
         if missing:

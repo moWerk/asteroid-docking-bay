@@ -145,7 +145,11 @@ def _download_nightly(codename: str, download_dir: Path, nightly_url: str, force
     Returns (boot_file, img_file).
     """
     download_dir.mkdir(parents=True, exist_ok=True)
-    boot_name = f"zImage-dtb-{codename}.fastboot"
+    # AsteroidOS renamed the fastboot boot image from zImage-dtb-<codename>.fastboot
+    # to asteroid-<codename>-boot.img (2026-07; both names still ship during the
+    # transition, verified against release.asteroidos.org). The rootfs name is
+    # unchanged. Flashed to the `boot` partition below.
+    boot_name = f"asteroid-{codename}-boot.img"
     img_name  = f"asteroid-image-{codename}.rootfs.ext4"
     sha_name  = "SHA512SUMS"
     boot_file = download_dir / boot_name
