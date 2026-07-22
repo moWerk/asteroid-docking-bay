@@ -338,6 +338,15 @@ def test_stats_items_are_dots_and_the_age_is_a_pill(tmp_path):
         assert "svgw" not in html and 'class="ib' not in html, f"legacy icon span left: {html}"
 
 
+def test_pills_and_dots_share_one_height_token():
+    """Every in-row pill and glyph-dot draws its height from one --pill-h token
+    so they line up; change it once and all follow (widths stay content-driven)."""
+    assert "--pill-h:" in _WEB_TEMPLATE, "no shared pill-height token"
+    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{", ".lifedot{"):
+        block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
+        assert "var(--pill-h)" in block, f"{cls} does not use the shared height token"
+
+
 def test_execute_trigger_is_a_markerless_pill():
     """Execute spawns a panel like the badges/battery do, so it reads as one of
     them: a pill, and no dropdown ▾ marker (which also stopped it wrapping to

@@ -108,9 +108,9 @@ _WEB_TEMPLATE = """\
        the power dot and the charging circle. The last-seen age, being text, is
        a matching pill rather than a dot. */
     .sdot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
-      width:18px;height:18px;border-radius:50%;border:1px solid;font-size:11px;line-height:1;
-      vertical-align:middle;flex:none}
-    .sdot .svgi{width:11px;height:11px;vertical-align:0}
+      width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
+      line-height:1;vertical-align:middle;flex:none}
+    .sdot .svgi{width:12px;height:12px;vertical-align:0}
     .sdot.on{border-color:#3fb950;color:#3fb950}
     .sdot.err{border-color:#f85149;color:#f85149}
     .sdot.warn{border-color:#d29922;color:#d29922}
@@ -119,8 +119,9 @@ _WEB_TEMPLATE = """\
     .sdot.drain{border-color:#3d4756;color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
     .sdot.spark{cursor:pointer}.sdot.spark:hover{background:rgba(88,166,255,.12)}
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
-    .spill{display:inline-block;padding:0 8px;border-radius:9px;border:1px solid #3d4756;
-      color:#8b949e;font-size:10px;line-height:1.7;vertical-align:middle}
+    .spill{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);
+      padding:0 var(--pill-px);border-radius:var(--pill-r);border:1px solid #3d4756;
+      color:#8b949e;font-size:10px;vertical-align:middle}
     .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
     .wimg{position:fixed;z-index:120;display:none;
@@ -167,9 +168,13 @@ _WEB_TEMPLATE = """\
     .cc.stale-cc .cc-tgl,.cc.stale-cc .cc-act{opacity:.4;pointer-events:none}   /* offline: controls do nothing, so block + dim them */
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
+    /* One set of tokens for every in-row pill and glyph-dot, so they all share
+       a height (widths stay content-driven) and a look. Change them here, not
+       per class. */
+    :root{--pill-h:20px;--pill-r:10px;--pill-px:9px;--pill-fs:11px}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
-    .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle;background:transparent;font-family:inherit;line-height:1.5}
+    .cbadge{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;vertical-align:middle;background:transparent;font-family:inherit}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922}
@@ -177,12 +182,12 @@ _WEB_TEMPLATE = """\
     /* Lifecycle pill by the codename — the one power-state we can assert:
        "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
     .lifedot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
-      width:16px;height:16px;border-radius:50%;border:1px solid;font-size:10px;line-height:1;
-      vertical-align:middle;margin-right:6px;flex:none}
+      width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
+      line-height:1;vertical-align:middle;margin-right:6px;flex:none}
     .lifedot.on{border-color:#3fb950;color:#3fb950}
     .lifedot.down{border-color:#3d4756;color:#8b98a5}
     .lifedot.amb{border-color:#d29922;color:#d29922}
-    .smt{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11px;border:1px solid;background:transparent;font-family:inherit;line-height:1.5;vertical-align:middle}
+    .smt{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
     .smt.yes{border-color:#3fb950;color:#3fb950}
     .smt.no{border-color:#f85149;color:#f85149}
     .smt.unk{border-color:#d29922;color:#d29922;cursor:pointer}
