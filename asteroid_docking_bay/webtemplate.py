@@ -38,6 +38,9 @@ _WEB_TEMPLATE = """\
     /* Control Center overlay */
     .cn{cursor:pointer;border-bottom:1px dotted #4d5561}
     .cn:hover{color:#58a6ff;border-bottom-color:#58a6ff}
+    /* A disconnected watch's name dims, so the connected (full-white) ones
+       stand out at a glance. */
+    .offname{opacity:.8}
     .cc{position:fixed;z-index:100;display:none;width:auto;min-width:340px;max-width:94vw;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 10px 34px rgba(0,0,0,.6);font-size:12px;overflow:hidden}
     .cc-cols{display:flex;flex-wrap:wrap}
     .cc-col{flex:1 1 210px;min-width:200px}
@@ -419,8 +422,9 @@ function mkbatCell(p,lo,hi){
   // Prefer the live reading; when the watch is off the bus fall back to the
   // last-seen value shown stale (amber) with its age, not a blank cell.
   if(p.battery!=null){
+    // "Full" is redundant with 100% and the Stats full-charge dot — drop it.
     const cs=p.charge_status;
-    const det=cs?` <span class="dim">${esc(cs)}</span>`:'';
+    const det=(cs&&cs!=='Full')?` <span class="dim">${esc(cs)}</span>`:'';
     return batPill(p,batBand(p.battery,lo,hi),`${p.battery}%${det}`,'battery — click for details');
   }
   if(p.battery_cached!=null){
@@ -716,8 +720,8 @@ function render(data){
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
-            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            ?`<b class="cn${p.adb?'':' offname'}" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
+            :`<b class="${p.adb?'':'offname'}">${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td class="batc" id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
