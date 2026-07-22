@@ -570,10 +570,12 @@ def test_status_get_reports_the_usb_mode_preference(monkeypatch):
     assert d["usb_mode_preference"] == "ssh"
 
 
-def test_power_on_stamps_the_boot_marker_but_power_off_does_not(monkeypatch):
+def test_power_on_boots_and_raw_power_off_clears_the_shelved_marker(monkeypatch):
     """Powering a docked watch's port on boots it, so it stamps booting_since
-    for the "booting up" pill. Powering off is not a boot and must stamp
-    nothing (the graceful poweroff op owns the "down" marker instead)."""
+    for the "booting up" pill. A raw power-off (the toggle) is NOT a graceful
+    shutdown, so it stamps no boot AND clears any (possibly stale) safe_off
+    marker — otherwise the watch would falsely read "shelved" after a failed
+    manual boot. Only port.poweroff sets the shelved marker."""
     import asteroid_docking_bay.rpcops as ro
     marked = {}
     monkeypatch.setattr(ro, "_refuse_if_busy", lambda l, p: None)
@@ -589,7 +591,8 @@ def test_power_on_stamps_the_boot_marker_but_power_off_does_not(monkeypatch):
 
     marked.clear()
     ro.DISPATCH._data["port.set"]({"loc": "1-2", "port": 1, "on": False})
-    assert marked == {}, "power-off must not claim a boot"
+    assert "booting_since" not in marked, "power-off must not claim a boot"
+    assert marked.get("safe_off_ts") == 0, "raw power-off did not clear the shelved marker"
 
 
 def test_reboot_and_continue_track_the_boot_but_bootloader_does_not(monkeypatch):

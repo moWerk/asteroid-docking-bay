@@ -417,10 +417,18 @@ def _port_set(args):
         confirmed = uhubctl_set_power(args["loc"], args["port"], bool(args["on"]))
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
-    if args["on"] and confirmed:
-        # Powering a docked watch's port on boots it; a watch already up just
-        # re-asserts and the marker self-clears on its next live sighting.
-        _mark_booting(find_serial_for_loc_port(load_config(), args["loc"], args["port"]))
+    if confirmed:
+        serial = find_serial_for_loc_port(load_config(), args["loc"], args["port"])
+        if args["on"]:
+            # Powering a docked watch's port on boots it; a watch already up just
+            # re-asserts and the marker self-clears on its next live sighting.
+            _mark_booting(serial)
+        elif serial:
+            # A raw power cut via the toggle is NOT a graceful shutdown, so it
+            # must not read as "shelved": clear any (possibly stale) safe_off
+            # marker so the watch reads ambiguous, not down. Only port.poweroff
+            # (which delivers a real shutdown) sets that marker.
+            last_seen.mark(serial, safe_off_ts=0)
     return {"ok": True, "confirmed": confirmed}
 
 
