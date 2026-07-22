@@ -391,16 +391,15 @@ def test_pills_and_dots_share_one_height_token():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
-    """The power toggle renders in the orbit-eclipse markup: a .tgl with the
-    confirmed on/off class and the lbl/dot spans (label text comes from CSS).
-    Clicking an OFF toggle adds .pending (the in-flight spinner) and POSTs the
-    on op for the port."""
+    """The power toggle is the flat dot pill (tgl-on/tgl-off with a coloured
+    dot + ON/OFF). Clicking an OFF toggle adds the animated .pending exec state
+    and POSTs the on op for the port."""
     import json
     h = tmp_path / "tgl.js"
     h.write_text(_DOM_CAPTURE + JS + global_simple() +
                  f"\nconst S={json.dumps(_SAMPLE)};render(S);"
                  "const html=global.__els['tb'].innerHTML;"
-                 # simulate a click on an OFF toggle (no 'on' class -> switch on)
+                 # simulate a click on an OFF toggle (no 'tgl-on' class -> switch on)
                  "let url=null;global.fetch=(u,o)=>{url=u;return new Promise(()=>{});};"
                  "const tel={classList:{_s:new Set(),add(c){this._s.add(c);},remove(){},"
                  "toggle(){},contains(c){return this._s.has(c);}}};"
@@ -410,10 +409,11 @@ def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert 'class="tgl on"' in out["html"] or 'class="tgl off"' in out["html"], "not the orbit toggle"
-    assert 'class="lbl"' in out["html"] and 'class="dot"' in out["html"], "toggle spans missing"
-    assert "tgl-on" not in out["html"] and ">ON<" not in out["html"], "old toggle markup survives"
-    assert out["pending"] is True, "click did not add the .pending spinner"
+    assert 'class="tgl tgl-off"' in out["html"] or 'class="tgl tgl-on"' in out["html"], "not the flat toggle"
+    assert "dot doff" in out["html"] or "dot don" in out["html"], "toggle dot missing"
+    assert "tgl-spin" not in _WEB_TEMPLATE and 'content:"EXEC"' not in _WEB_TEMPLATE, "orbit toggle bits survive"
+    assert "@keyframes tgldot" in _WEB_TEMPLATE, "no animated exec state"
+    assert out["pending"] is True, "click did not add the exec state"
     assert out["url"] == "/api/on/1-2/2", f"click did not POST the on op: {out['url']}"
 
 

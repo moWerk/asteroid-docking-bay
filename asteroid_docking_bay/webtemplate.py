@@ -222,7 +222,7 @@ _WEB_TEMPLATE = """\
     /* Battery gauge: fixed width (~the column title), grey outline, a fill that
        grows left→right. The fill is coloured only when connected; grey when off. */
     .batw{position:relative;display:inline-block;box-sizing:border-box;width:68px;height:var(--pill-h);
-      border-radius:var(--pill-r);border:1px solid #3d4756;background:none;overflow:hidden;
+      border-radius:var(--pill-r);border:1px solid rgba(240,246,252,.55);background:none;overflow:hidden;
       cursor:pointer;font:var(--pill-fs) monospace;color:#c9d1d9;vertical-align:middle;padding:0}
     .batw:hover{filter:brightness(1.18)}
     .batfill{position:absolute;top:0;left:0;bottom:0;width:0;background:rgba(120,130,145,.28);transition:width .4s ease}
@@ -236,38 +236,20 @@ _WEB_TEMPLATE = """\
     button.cbadge{cursor:pointer}
     button.cbadge.ssh:hover{background:#2a2113}
     button.cbadge.adb:hover{background:#122117}
-    /* orbit-eclipse port toggle (moWerk design). State API: keep the confirmed
-       .on/.off class and ADD .pending while a command is in flight; on confirm,
-       remove .pending and swap on/off — the eclipse fill + dot glide animate
-       themselves. */
-    .tgl{--h:var(--pill-h);--w:calc(var(--pill-h)*3);--pad:3px;--green:#3fb950;--grey:#565f6e;--amber:#d29922;
-      --travel:calc(var(--w) - var(--h));
-      position:relative;display:inline-block;overflow:hidden;width:var(--w);height:var(--h);
-      box-sizing:border-box;border-radius:var(--pill-r);border:1px solid #30363d;background:transparent;
-      cursor:pointer;user-select:none;vertical-align:middle;
-      font:var(--pill-fs)/1 'Cascadia Code','Fira Mono',monospace;letter-spacing:.5px;
-      transition:border-color .3s,background .3s}
-    .tgl::before{content:"";position:absolute;inset:0;border-radius:999px;background:rgba(63,185,80,.12);transform-origin:left center;transform:scaleX(0);transition:transform .5s ease}
-    .tgl .lbl{position:absolute;inset:0;display:flex;align-items:center;padding:0 9px;color:#8b949e;transition:color .3s}
-    .tgl .lbl::after{content:"OFF"}
-    .tgl .dot{position:absolute;top:var(--pad);left:var(--pad);width:calc(var(--h) - 2*var(--pad));height:calc(var(--h) - 2*var(--pad));box-sizing:border-box;border-radius:50%;background:var(--grey);border:2px dashed transparent;transform:translateX(var(--travel));transition:transform .5s ease,background .3s,border-color .3s}
-    .tgl.on{border-color:var(--green)}
-    .tgl.on::before{transform:scaleX(1)}
-    .tgl.on .lbl{justify-content:flex-end;color:var(--green)}
-    .tgl.on .lbl::after{content:"ON"}
-    .tgl.on .dot{background:var(--green);transform:translateX(0)}
-    .tgl.pending{border-color:rgba(210,153,34,.55);background:rgba(210,153,34,.07)}
-    .tgl.pending::before{transition:none}
-    .tgl.on.pending::before{transform:scaleX(1)}
-    .tgl.off.pending::before{transform:scaleX(0)}
-    .tgl.pending .lbl{color:var(--amber)}
-    .tgl.pending .lbl::after{content:"EXEC"}
-    .tgl.pending .dot{background:transparent;border-color:var(--amber);animation:tgl-spin 1s linear infinite}
-    @keyframes tgl-spin{to{transform:translateX(var(--x,0)) rotate(360deg)}}
-    .tgl.on.pending .dot{--x:0px;transform:translateX(0)}
-    .tgl.off.pending .dot{--x:var(--travel);transform:translateX(var(--travel))}
-    .tgl:hover{filter:brightness(1.18)}
+    /* The flat dot-toggle: a coloured dot + ON/OFF, in the page's language. The
+       in-flight EXEC state (added on click, cleared when the row rebuilds
+       confirmed) dim-phases the whole toggle amber and grows/shrinks the dot —
+       a livelier version of the plain cmd-pulse. */
+    .tgl{display:inline-flex;align-items:center;justify-content:center;gap:4px;box-sizing:border-box;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;transition:background .12s,transform .12s}
+    .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
+    .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
+    .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
     .tgl:disabled{opacity:.35;cursor:default;pointer-events:none}
+    .tgl .dot{transition:transform .2s}
+    .tgl.pending{border-color:#d29922;color:#d29922;animation:tglexec .9s ease-in-out infinite}
+    .tgl.pending .dot{background:#d29922!important;animation:tgldot .9s ease-in-out infinite}
+    @keyframes tglexec{0%,100%{opacity:1}50%{opacity:.4}}
+    @keyframes tgldot{0%,100%{transform:scale(1)}50%{transform:scale(2)}}
     .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
@@ -342,9 +324,8 @@ _WEB_TEMPLATE = """\
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
       .wr td:nth-child(8){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
-      /* Bigger, tappable controls (the orbit-eclipse .tgl keeps its own fixed
-         geometry — no phone override). */
-      .wr .btn{font-size:15px;padding:9px 13px;margin:3px .3em}
+      /* Bigger, tappable controls */
+      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
       .lr td{padding:0}
     }
@@ -418,23 +399,25 @@ function flashFail(el){
   setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
 }
 // Port-toggle click: switch to the opposite of the current state. Add the
-// orbit-eclipse .pending spinner while the command is in flight, then on confirm
-// drop .pending and swap on/off ON THE SAME ELEMENT so the eclipse fill + dot
-// glide play the hand-off transition — only THEN refresh (the rebuilt row lands
-// in the same state, so there is no visible jump). A refused switch flashes red.
+// animated EXEC state while the command is in flight; on confirm, refresh so
+// the row rebuilds into the new state (a brief delay lets the exec animation be
+// seen). A refused switch flashes the toggle red.
 function pwrGo(el,slot){
   if(el.classList.contains('pending'))return;
-  const on=!el.classList.contains('on');
+  const on=!el.classList.contains('tgl-on');
   el.classList.add('pending');
   fetch((on?'/api/on/':'/api/off/')+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.confirmed===false){flashFail(el);_pwrFlash(slot);return;}
-    el.classList.remove('pending');
-    el.classList.toggle('on',on); el.classList.toggle('off',!on);
-    setTimeout(refresh,600);   // let the .5s hand-off transition settle first
+    setTimeout(refresh,700);
   }).catch(()=>flashFail(el));
   setTimeout(()=>{try{el.classList.remove('pending');}catch(e){}},8000);
 }
-function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
+function connPill(serial){
+  // The connection cell carries the id; flash the badge INSIDE it, not the whole
+  // cell, so a failed switch reddens only the pill.
+  const td=serial?document.getElementById('conn-'+serial):null;
+  return td?(td.querySelector('.cbadge')||td):null;
+}
 // The power symbol as a stroked ionicon (the same style AsteroidOS uses), not
 // the ⏻ Unicode glyph — thinner, crisp at any scale, and centred by its viewBox.
 const POWERSVG='<svg class="pwri" viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"><path d="M378.09 92.42a201.31 201.31 0 11-244.18 0"/><path d="M256 32v192"/></svg>';
@@ -705,8 +688,8 @@ function render(data){
           :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>');
         const adbCell=p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`
           :mkadbrow(p);
-        const pwrCls=p.power===true?'tgl on':'tgl off';
-        const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
+        const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
+        const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const pwrFn=`pwrGo(this,'${slot}')`;
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
@@ -777,8 +760,8 @@ function render(data){
           bat=mkbatCell(p,lo,hi);
         }
         const pwrFn=`pwrGo(this,'${slot}')`;
-        const pwrCls=p.power===true?'tgl on':'tgl off';
-        const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
+        const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
+        const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
