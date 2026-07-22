@@ -152,13 +152,15 @@ _WEB_TEMPLATE = """\
     .tblwrap{overflow-x:auto}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
-    th:first-child,td.tc{width:22px;padding-right:0}
     td{padding:7px 8px;border-bottom:1px solid #161b22;vertical-align:middle}
+    /* Port folds into the Power cell: the informative s#/p# label, then the
+       toggle — kept on one line. */
+    .pcell{white-space:nowrap}
+    .pcell .tgl{margin-left:8px}
     .wr:hover td{background:#161b22}
     .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
     .hub-hdr:first-child td{border-top:none;padding-top:0}
     .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
-    td.tc{color:#30363d;font-size:12px;user-select:none}
     tr.empty td{color:#6e7681}
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
@@ -282,21 +284,19 @@ _WEB_TEMPLATE = """\
       .wr:hover td{background:transparent}
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
-      .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(6){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
-      .wr td:nth-child(6) .wthumb{width:44px;height:44px}
-      .wr td:nth-child(7){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
+      .wr td:nth-child(4){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
+      .wr td:nth-child(4) .wthumb{width:44px;height:44px}
+      .wr td:nth-child(5){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
                           padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}  /* codename title */
       .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
-      .wr td:nth-child(2)::before{content:"Port"}
-      .wr td:nth-child(3)::before{content:"Power"}
-      .wr td:nth-child(4)::before{content:"Smart"}
-      .wr td:nth-child(5)::before{content:"Connection"}
-      .wr td:nth-child(8)::before{content:"Stats"}
-      .wr td:nth-child(9)::before{content:"Battery"}
+      .wr td:nth-child(1)::before{content:"Port"}
+      .wr td:nth-child(2)::before{content:"Smart"}
+      .wr td:nth-child(3)::before{content:"Connection"}
+      .wr td:nth-child(6)::before{content:"Stats"}
+      .wr td:nth-child(7)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(10){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
+      .wr td:nth-child(8){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
       /* Bigger, tappable controls */
       .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
@@ -316,7 +316,7 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th>Port</th><th>Power</th><th>Smart</th><th>Connection</th>
+      <th>Port</th><th>Smart</th><th>Connection</th>
       <th></th><th>Watch</th><th>Stats</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -605,16 +605,15 @@ function render(data){
   usbPref=(data&&data.usb_mode_preference)==='ssh'?'ssh':'adb';
   const upl=document.getElementById('usbpreflink');
   if(upl)upl.textContent=usbPref==='ssh'?'prefer SSH':'prefer ADB';
-  if(!hubs.length){tb.innerHTML='<tr><td colspan="10" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide/show this hub'}">${hub.hidden?'&#x2295;':'&#x2296;'}</a>`;
-    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="10"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
+    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
-      const tree=i===visPorts.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
       if(p.empty){
         const slot=p.slot_loc+':'+p.port;
         const busy=!!(srcs[slot]||p.flashing);
@@ -631,9 +630,7 @@ function render(data){
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
-          `<td class="tc">${tree}</td>` +
-          `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td class="pcell">${mkport(p)}<button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
           `<td>${mksmart(p,slot,d)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
@@ -642,7 +639,7 @@ function render(data){
           `<td class="dim">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
@@ -704,9 +701,7 @@ function render(data){
         const isRef=refreshing.has(slot);
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
-          `<td class="tc">${tree}</td>` +
-          `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td class="pcell">${mkport(p)}<button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
           `<td>${mksmart(p,slot,dp)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
@@ -718,7 +713,7 @@ function render(data){
           `<td id="act-${slot}">` +
           `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute</button>` +
           `</td></tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }
     });

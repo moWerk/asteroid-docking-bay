@@ -344,12 +344,19 @@ def test_pills_dots_and_toggle_share_one_height_token():
     change it once and all follow. Pills stay inline-block so long content wraps
     to a second inner line instead of forcing the table wider than the viewport."""
     assert "--pill-h:" in _WEB_TEMPLATE, "no shared pill-height token"
-    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{", ".tgl{"):
-        block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
-        assert "var(--pill-h)" in block, f"{cls} does not use the shared height token"
-    for cls in (".cbadge{", ".smt{", ".spill{"):
-        block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
-        assert "inline-block" in block, f"{cls} is not inline-block — long content won't wrap"
+
+    def rule(sel):
+        # The declaration block where `sel` starts a rule — not where it appears
+        # inside a descendant selector like ".pcell .tgl".
+        m = re.search(r"(?:^|[\n;}])\s*" + re.escape(sel) + r"\s*\{([^}]*)\}",
+                      _WEB_TEMPLATE)
+        assert m, f"no standalone rule for {sel}"
+        return m.group(1)
+
+    for sel in (".cbadge", ".sdot", ".smt", ".spill", ".tgl"):
+        assert "var(--pill-h)" in rule(sel), f"{sel} does not use the shared height token"
+    for sel in (".cbadge", ".smt", ".spill"):
+        assert "inline-block" in rule(sel), f"{sel} is not inline-block — long content won't wrap"
 
 
 def test_execute_trigger_is_a_markerless_pill():
@@ -571,7 +578,9 @@ def test_column_order_is_the_ground_truth_order():
     thumbnail."""
     m = re.search(r"<thead>.*?</thead>", _WEB_TEMPLATE, re.S)
     labels = [t for t in re.findall(r"<th>([^<]*)</th>", m.group(0)) if t.strip()]
-    assert labels == ["Port", "Power", "Smart", "Connection",
+    # Port folds into the Power cell, so there is no separate Power header; the
+    # blank header is the thumbnail.
+    assert labels == ["Port", "Smart", "Connection",
                       "Watch", "Stats", "Battery", "Actions"], labels
 
 
