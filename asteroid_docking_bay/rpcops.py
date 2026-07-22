@@ -131,6 +131,26 @@ def _stale_cc(serial, standby):
     return blob
 
 
+# A live CC/battery read (over adb OR ssh) should feed the battery-history chart
+# too, not just the live gauge — otherwise watching a watch charge over SSH left
+# the history flat (mo), since only charge/drain ops logged points. Throttled per
+# serial so a brisk poll can't flood the log, and logged as 'live_reading' so the
+# standby-rate math (check/drain readings only) stays uncontaminated.
+_LIVE_READING_GAP = 120.0
+_live_reading_ts: dict = {}
+
+
+def _log_live_battery(serial, bat_cap):
+    try:
+        pct = int(bat_cap)
+    except (TypeError, ValueError):
+        return
+    now = time.time()
+    if now - _live_reading_ts.get(serial, 0) >= _LIVE_READING_GAP:
+        event_log.log(serial, None, "live_reading", pct=pct)
+        _live_reading_ts[serial] = now
+
+
 @DISPATCH.op("watch.cc")
 def _watch_cc(args):
     """Live Control Center stats, or the last-seen ones marked stale.
@@ -155,6 +175,7 @@ def _watch_cc(args):
     data = Watch(serial, transport=tr).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
+        _log_live_battery(serial, data.get("bat_cap"))
         # Screen geometry/resolution is cached separately (probed by the status
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
@@ -745,7 +766,7 @@ def _watch_timeline(args):
     evs = event_log.read(serial, codename)
     points = [{"ts": e["ts"], "pct": e["pct"]}
               for e in evs
-              if e.get("event") in ("check_reading", "drain_reading")
+              if e.get("event") in ("check_reading", "drain_reading", "live_reading")
               and e.get("pct") is not None and e.get("ts") is not None]
     return {"points": points,
             "rate": event_log.standby_loss_rate(serial, codename, evs)}

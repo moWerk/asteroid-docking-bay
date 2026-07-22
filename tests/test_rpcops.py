@@ -666,3 +666,42 @@ def test_watch_cc_stale_returns_cached_without_device_io(monkeypatch):
     monkeypatch.setattr(ro, "last_seen",
                         type("L", (), {"get": staticmethod(lambda s: None)})())
     assert ro.DISPATCH._data["watch.cc"]({"serial": "X", "stale": True}) == {}
+
+
+# ── live battery readings feed the history over any transport ─────────────────
+
+def test_timeline_includes_live_readings(monkeypatch, tmp_path):
+    """A live CC read (over adb or ssh) is logged as 'live_reading' and must show
+    in the battery-history points — watching a watch charge over SSH left the
+    history flat before, since only charge/drain ops logged."""
+    from asteroid_docking_bay.events import EventLog
+    el = EventLog(tmp_path)
+    el.log("S1", None, "check_reading", pct=80)
+    el.log("S1", None, "live_reading", pct=73)
+    monkeypatch.setattr(rpcops, "event_log", el)
+    d = rpcops.DISPATCH._data["watch.timeline"]({"serial": "S1"})
+    pcts = {p["pct"] for p in d["points"]}
+    assert 80 in pcts and 73 in pcts, "live_reading missing from the battery history"
+
+
+def test_live_readings_do_not_pollute_the_standby_rate(tmp_path):
+    """Live readings carry a charge bump (the port is on for the read) and are
+    logged while charging, so they must NOT count toward the honest standby rate
+    — that math is check/drain readings only."""
+    from asteroid_docking_bay.events import EventLog
+    el = EventLog(tmp_path)
+    el.log("S1", None, "live_reading", pct=90)
+    el.log("S1", None, "live_reading", pct=50)
+    assert el.standby_loss_rate("S1", None) is None, \
+        "live_readings leaked into the standby rate"
+
+
+def test_log_live_battery_throttles_and_ignores_unreadable(monkeypatch):
+    logged = []
+    monkeypatch.setattr(rpcops.event_log, "log", lambda *a, **k: logged.append(k))
+    rpcops._live_reading_ts.clear()
+    rpcops._log_live_battery("S1", 73)
+    rpcops._log_live_battery("S1", 74)      # immediately after — throttled out
+    assert len(logged) == 1 and logged[0]["pct"] == 73, "live reading not throttled"
+    rpcops._log_live_battery("S1", None)    # unreadable — nothing logged
+    assert len(logged) == 1
