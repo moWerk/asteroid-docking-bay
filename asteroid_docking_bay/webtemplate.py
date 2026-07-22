@@ -488,10 +488,10 @@ function mkadb(adb,fbprod,os,serial,sshIp,name){
     const ser=serial?` <span class="dim">${esc(serial)}</span>`:'';
     const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(known?' — '+esc(os):'')}`;
     if(!known&&serial)
-      return `${logo}<button class="cbadge adb" onclick="openNC('${esc(serial)}','${nm}',event,'${esc(sshIp||'')}','device')" title="${ttl} — click for network details">ADB${ser}</button>`;
-    return `${logo}<span class="cbadge adb" title="${ttl}">ADB${ser}</span>`;
+      return `<button class="cbadge adb" onclick="openNC('${esc(serial)}','${nm}',event,'${esc(sshIp||'')}','device')" title="${ttl} — click for network details">${logo}ADB${ser}</button>`;
+    return `<span class="cbadge adb" title="${ttl}">${logo}ADB${ser}</span>`;
   }
-  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `${AOSLOGO}<button class="cbadge ssh" onclick="openNC('${esc(serial||'')}','${nm}',event,'${esc(sshIp||'')}','ssh')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click for network details">SSH${ipl}</button>`;}
+  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `<button class="cbadge ssh" onclick="openNC('${esc(serial||'')}','${nm}',event,'${esc(sshIp||'')}','ssh')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click for network details">${AOSLOGO}SSH${ipl}</button>`;}
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
