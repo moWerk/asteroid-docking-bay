@@ -452,3 +452,29 @@ def test_reconcile_keys_rows_by_slot_and_hubs_by_location(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert out["row"] == "row:1-2.3:4", out
     assert out["hub"] == "hub:1-2.3", out
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_spark_bars_scale_and_colour_by_metric_direction(tmp_path):
+    """The live graph draws fixed-scale filled bars, coloured green→red toward
+    the metric's bad end: a full battery (bad='low') is green, a high load
+    (bad='high') is red. Newest sample is right-aligned."""
+    import json
+    h = tmp_path / "spark.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\ngraphData={bcap:[95],load:[3.9]};"
+                 "const bat=spark('bcap',0,100,'low');"      # 95% battery -> green
+                 "const load=spark('load',0,4,'high');"      # near-max load -> red
+                 "const empty=spark('nope',0,100,'low');"
+                 "console.log(JSON.stringify({bat,load,empty}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "<svg" in o["bat"] and "<rect" in o["bat"], o["bat"]
+    # hue: 120=green, 0=red. Full battery (bad=low, n=0.95) -> mostly green (hue>90).
+    bhue = int(o["bat"].split("hsl(")[1].split(",")[0])
+    lhue = int(o["load"].split("hsl(")[1].split(",")[0])
+    assert bhue > 90, f"full battery should be green, hue={bhue}"
+    assert lhue < 30, f"high load should be red, hue={lhue}"
+    assert o["empty"] == "", "no samples yet must draw nothing"

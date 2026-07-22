@@ -45,6 +45,9 @@ _WEB_TEMPLATE = """\
     .cc-x{position:absolute;right:10px;top:6px;cursor:pointer;color:#6e7681;font-weight:400;font-size:16px;line-height:1}
     .cc-x:hover{color:#fff}
     .cc-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
+    /* Rows a touch taller to seat the inline live graph beside the value. */
+    .cc-grid .cc-v{min-height:15px;display:flex;align-items:center;justify-content:flex-end;gap:7px}
+    .spark{flex:0 0 auto;vertical-align:middle}
     .cc-act.mini{width:auto;flex:1;padding:6px}
     .cc-k{color:#6e7681}
     .cc-v{color:#c9d1d9;text-align:right;font-variant-numeric:tabular-nums;word-break:break-all}
@@ -641,6 +644,46 @@ let biSerial=null, biName=null, biTimer=null, biAX=0, biAY=0;
 const ccCache={}, ncCache={}, biCache={};
 let ccPoll=null, ncPoll=null, biPoll=null;
 const PANEL_POLL_MS=3500;
+
+// ── live btop-style graphs ──────────────────────────────────────────────────
+// A temporary history that lives only while a panel is open — one shared store
+// (only one panel is ever open), reset on every open so each graph starts empty
+// and fills from the right. Each poll appends one sample per metric; we keep the
+// last GRAPH_N. Bars are filled blocks, height = the value on a FIXED per-metric
+// scale, colour green→red toward the metric's "bad" end (high battery is green,
+// high load/temp is red). Newest bar sits at the right by the value, rolling left.
+const GRAPH_N=20;
+let graphData={}, graphPrev={};
+function graphReset(){graphData={}; graphPrev={};}
+function graphPush(id,v){
+  if(v==null||isNaN(v))return;
+  (graphData[id]=graphData[id]||[]).push(+v);
+  if(graphData[id].length>GRAPH_N)graphData[id].shift();
+}
+function graphPushRate(id,cumulative){        // for counters (rx/tx bytes) → per-second rate
+  const v=+cumulative, now=Date.now();
+  const p=graphPrev[id];
+  if(p&&now>p.t&&v>=p.v)graphPush(id,(v-p.v)/((now-p.t)/1000));
+  graphPrev[id]={v:v,t:now};
+}
+function spark(id,min,max,bad){
+  const a=graphData[id]||[];
+  if(!a.length)return '';
+  const bw=3,gap=1,H=13,W=GRAPH_N*(bw+gap);
+  let bars='';
+  for(let i=0;i<a.length;i++){
+    let n=(a[i]-min)/(max-min); n=n<0?0:n>1?1:n;
+    const h=Math.max(1,Math.round(n*H));
+    const red=bad==='low'?1-n:n;            // fraction of the way to "bad"
+    const hue=Math.round(120*(1-red));      // 120=green … 0=red, through amber
+    const x=(GRAPH_N-a.length+i)*(bw+gap);  // right-aligned; newest at the far right
+    bars+=`<rect x="${x}" y="${H-h}" width="${bw}" height="${h}" fill="hsl(${hue},68%,48%)"/>`;
+  }
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bars}</svg>`;
+}
+function _ncpu(d){const m=(d.cores||'').match(/([0-9]+) *$/);return m?(+m[1]+1):1;}
+function _memPct(d){const t=+d.memtotal;return t?Math.round((t-(+d.memfree||0))/t*100):null;}
+function _load1(d){const x=parseFloat((d.load||'').split(/ +/)[0]);return isNaN(x)?null:x;}
 let wimgAX=0, wimgAY=0;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
@@ -671,7 +714,7 @@ function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
 function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
 function biPlace(){placeOverlay(document.getElementById('bi'),biAX,biAY);}
 function openCC(serial,name,ev){
-  ev.stopPropagation();
+  ev.stopPropagation(); graphReset();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
@@ -684,7 +727,7 @@ function ccFetch(){
   const s=ccSerial;
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(ccSerial!==s)return;
-    ccCache[s]=d; renderCC(d);
+    ccCache[s]=d; graphPush('load',_load1(d)); graphPush('mem',_memPct(d)); renderCC(d);
     clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,PANEL_POLL_MS);   // keep live while open
   }).catch(()=>{
     if(ccSerial!==s)return;
@@ -697,6 +740,7 @@ function renderCC(d){
   cc.classList.toggle('stale-cc',stale);
   if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;ccPlace();return;}
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
   const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
   const mt=+d.memtotal,mf=+d.memfree,memU=mt?Math.round((mt-mf)/1024):null,memT=mt?Math.round(mt/1024):null;
@@ -707,8 +751,8 @@ function renderCC(d){
     kv('Kernel',d.kernel)+kv('Qt',d.qt)+kv('SoC',(d.soc||'').trim())+
     kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
-    kv('Load',d.load)+kv('Threads',d.threads)+
-    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
+    kvg('Load',d.load,spark('load',0,_ncpu(d),'high'))+kv('Threads',d.threads)+
+    kvg('Memory',memU!=null?`${memU} / ${memT} MB`:null,spark('mem',0,100,'high'))+kv('Storage',storage)+
     kv('Resolution',d.resolution)+kv('Timezone',d.tz)+kv('Clock',d.datetime)+
     kv('Machine (image)',d.geometry&&d.geometry.machine)+
     // The bootloader version string names the true hardware, which is the only
@@ -748,7 +792,7 @@ function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // else. The USB mode toggle lives here too, a deliberate click in an overlay
 // rather than the misclick-prone inline badge.
 function openNC(serial,name,ev,sshIp,mode){
-  ev.stopPropagation();
+  ev.stopPropagation(); graphReset();
   ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
   ncSshIp=sshIp||''; ncMode=mode||'';
   const nc=document.getElementById('nc');
@@ -762,7 +806,7 @@ function ncFetch(){
   const s=ncSerial;
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(ncSerial!==s)return;
-    ncCache[s]=d; renderNC(d);
+    ncCache[s]=d; graphPushRate('rx',d.net_rx); graphPushRate('tx',d.net_tx); renderNC(d);
     clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,PANEL_POLL_MS);
   }).catch(()=>{
     if(ncSerial!==s)return;
@@ -775,6 +819,7 @@ function renderNC(d){
   nc.classList.toggle('stale-cc',stale);
   d=d||{};
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
   const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
   const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
@@ -783,7 +828,7 @@ function renderNC(d){
   const net=sec('Addresses &amp; links',
     kv('USB IP',usbip)+kv('USB mode',ncMode==='ssh'?'SSH (developer)':'ADB')+
     kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('WiFi IP',d.ip)+
-    kv('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'))+
+    kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
     kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
     kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
@@ -816,7 +861,7 @@ function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 // read-only window, leaving the pill to carry just the charge and one line of
 // appended detail.
 function openBI(serial,name,ev){
-  ev.stopPropagation();
+  ev.stopPropagation(); graphReset();
   biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
   const bi=document.getElementById('bi');
   bi.classList.remove('stale-cc');
@@ -829,7 +874,7 @@ function biFetch(){
   const s=biSerial;
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(biSerial!==s)return;
-    biCache[s]=d; renderBI(d);
+    biCache[s]=d; graphPush('bcap',d.bat_cap==null?null:+d.bat_cap); graphPush('bvolt',d.bat_volt?+d.bat_volt/1e6:null); graphPush('bcur',d.bat_curr?+d.bat_curr/1000:null); graphPush('btemp',d.bat_temp==null?null:+d.bat_temp/10); renderBI(d);
     clearTimeout(biPoll); biPoll=setTimeout(biFetch,PANEL_POLL_MS);
   }).catch(()=>{
     if(biSerial!==s)return;
@@ -842,15 +887,16 @@ function renderBI(d){
   bi.classList.toggle('stale-cc',stale);
   d=d||{};
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
   const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
   const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt);
   const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
   const bat=sec('Battery',
-    kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
+    kvg('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null,spark('bcap',0,100,'low'))+kv('Status',d.bat_status)+
     kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
-    kv('Voltage',bv?(bv/1e6).toFixed(3)+' V':null)+kv('Current',cur)+
-    kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
+    kvg('Voltage',bv?(bv/1e6).toFixed(3)+' V':null,spark('bvolt',3.2,4.35,'low'))+kvg('Current',cur,spark('bcur',-600,600,'low'))+
+    kvg('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null,spark('btemp',15,50,'high'))+kv('Cycles',d.bat_cycles)+
     kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
     kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
   bi.innerHTML=
