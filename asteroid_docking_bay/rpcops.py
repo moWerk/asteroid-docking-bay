@@ -209,6 +209,19 @@ def _watch_settime(args):
     return {"ok": True, "timezone": _watch(args["serial"]).set_time_from_host()}
 
 
+_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+
+@DISPATCH.op("watch.set_datetime")
+def _watch_set_datetime(args):
+    """Set the watch clock to an explicit 'YYYY-MM-DD HH:MM:SS'. The format is
+    validated here so only a well-formed moment ever reaches the shell."""
+    when = args.get("when", "")
+    if not _DATETIME_RE.match(when):
+        return {"ok": False, "error": "bad datetime"}
+    return {"ok": _watch(args["serial"]).set_datetime(when)}
+
+
 @DISPATCH.op("watch.notify")
 def _watch_notify(args):
     return {"ok": _watch(args["serial"]).notify()}

@@ -173,6 +173,14 @@ def serve(args, cfg: dict):
                   {"serial": serial, "key": "/" + key, "value": state == "on"})
         return json.dumps(d)
 
+    # <when> is a URL-encoded 'YYYY-MM-DD HH:MM:SS' (bottle decodes it); the op
+    # revalidates the format before it reaches the shell.
+    @app.post("/api/watch/<serial>/datetime/<when>")
+    def api_watch_datetime(serial, when):
+        resp.content_type = "application/json"
+        d = _call("watch.set_datetime", {"serial": serial, "when": when})
+        return json.dumps(d)
+
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         d = _call("watch.screenshot", {"serial": serial})

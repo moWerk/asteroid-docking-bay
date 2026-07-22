@@ -152,3 +152,18 @@ def test_settings_write_op_coerces_value_and_dispatches(monkeypatch):
     monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
     d = rpcops.DISPATCH._data["watch.settings_write"]({"serial": "S1", "key": "/k", "value": 1})
     assert d == {"ok": True} and seen == {"key": "/k", "value": True}
+
+
+# ── arbitrary clock ──────────────────────────────────────────────────────────
+
+def test_set_datetime_validates_before_touching_the_watch(monkeypatch):
+    called = []
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    monkeypatch.setattr(rpcops, "Watch",
+                        type("W", (), {"__init__": lambda self, *a, **k: None,
+                                       "set_datetime": lambda self, w: (called.append(w), True)[1]}))
+    bad = rpcops.DISPATCH._data["watch.set_datetime"]({"serial": "S1", "when": "next tuesday"})
+    assert bad == {"ok": False, "error": "bad datetime"} and called == [], \
+        "a malformed datetime reached the shell"
+    ok = rpcops.DISPATCH._data["watch.set_datetime"]({"serial": "S1", "when": "2026-07-22 14:30:00"})
+    assert ok == {"ok": True} and called == ["2026-07-22 14:30:00"]

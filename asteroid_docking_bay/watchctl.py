@@ -310,6 +310,17 @@ class Watch:
                  self.serial, epoch, tz)
         return tz
 
+    def set_datetime(self, when: str) -> bool:
+        """Set the watch clock to an explicit 'YYYY-MM-DD HH:MM:SS' — for the
+        arbitrary-time screenshots devs want. Like set_time_from_host but with a
+        dialled-in moment instead of the host's; reversible via Sync-from-host.
+        The caller validates the format; shlex.quote guards the shell."""
+        rc, _, err = self.t.shell(f"date -s {shlex.quote(when)}", timeout=10)
+        if rc != 0:
+            log.warning("set_datetime %s on %s failed: %s",
+                        when, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
+
     def user_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
         """Run a command in the watch's ceres user session (not as root)."""
         inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
