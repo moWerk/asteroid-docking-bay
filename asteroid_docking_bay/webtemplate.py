@@ -157,7 +157,7 @@ _WEB_TEMPLATE = """\
     /* Port folds into the Power cell: the informative s#/p# label, then the
        toggle — kept on one line. */
     .pcell{white-space:nowrap}
-    .pcell .tgl{margin-left:8px}
+    .pcell .tgl{margin-right:8px}
     /* Smart pills vary in width (ppps / NO! / cycle), so centre them in a
        slightly tighter column. */
     .smtc{text-align:center}
@@ -638,7 +638,7 @@ function render(data){
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
-          `<td class="pcell">${mkport(p)}<button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td class="pcell"><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,d)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
@@ -709,7 +709,7 @@ function render(data){
         const isRef=refreshing.has(slot);
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
-          `<td class="pcell">${mkport(p)}<button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button></td>` +
+          `<td class="pcell"><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,dp)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
