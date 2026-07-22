@@ -154,14 +154,43 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+# A healthy watch enumerates within ~40s of a boot (30-40s observed), so a
+# port powered with a boot we triggered but still no watch is "booting up"
+# below the window and a hedged "boot failed?" above it — up to a cap, after
+# which we stop claiming anything and let the plain connection state show.
+BOOT_WINDOW = 45.0
+BOOT_FAIL_CAP = 300.0
+
+
+def _boot_state(ls: dict, power: "bool | None") -> "str | None":
+    """"booting" while a watch we deliberately (re)booted is expected to come
+    up, then "bootfail" once the definite-boot window lapses with still no OS
+    sighting — a question, not a verdict, since it can equally be a watch that
+    simply never enumerates (flat battery, contact/cable). Only meaningful with
+    the port powered; a real adb sighting bumps last_live_ts past booting_since
+    and ends both with no explicit clear. Beyond the cap it returns None."""
+    if not power:
+        return None
+    bs = ls.get("booting_since") or 0
+    if not bs or (ls.get("last_live_ts") or 0) >= bs:
+        return None
+    dt = time.time() - bs
+    if dt < BOOT_WINDOW:
+        return "booting"
+    if dt < BOOT_FAIL_CAP:
+        return "bootfail"
+    return None
+
+
 def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "str | None":
-    """The one power-state we can positively assert: "down". A confirmed
-    graceful shutdown stamps safe_off_ts; if the watch has not been seen on the
-    bus since (so >= last_live_ts) and its port is off, it is safely down and
-    not draining. A raw port cut never stamps safe_off_ts, so its ambiguous
-    off-state stays unmarked — absence of the pill is "no claim", never
-    "definitely off". Self-clears: the next time the watch is seen live,
-    last_live_ts advances past safe_off_ts and this returns None."""
+    """The power-states we can positively assert, shown in the connection
+    column. "down": a confirmed graceful shutdown (safe_off_ts) with the watch
+    not seen live since and its port off — safely halted, not draining. A raw
+    port cut never stamps safe_off_ts, so its ambiguous off-state stays
+    unmarked — absence is "no claim", never "definitely off". "booting"/
+    "bootfail": a deliberate (re)boot in progress or overdue (see _boot_state).
+    Self-clears: the next time the watch is seen live, last_live_ts advances
+    past both markers and this returns None."""
     if not serial:
         return None
     ls = last_seen.get(serial) or {}
@@ -169,7 +198,12 @@ def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "st
         # Wear-held: while docked it is topping off (no pill — the button shows
         # the armed state); once it leaves the bus it is being worn.
         return None if present else "worn"
-    if present or power:
+    if present:
+        return None
+    boot = _boot_state(ls, power)
+    if boot:
+        return boot
+    if power:
         return None
     so = ls.get("safe_off_ts") or 0
     llt = ls.get("last_live_ts") or 0

@@ -164,6 +164,10 @@ _WEB_TEMPLATE = """\
     .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
+    .cbadge.life.booting{border-color:#c9d1d9;color:#f0f6fc;animation:bootpulse 1.2s ease-in-out infinite}
+    .cbadge.life.bootfail{border-color:#f85149;color:#f85149;animation:bootfail .5s ease-in-out infinite}
+    @keyframes bootpulse{0%,100%{opacity:1}50%{opacity:.3}}
+    @keyframes bootfail{0%,100%{background:transparent;color:#f85149}50%{background:rgba(248,81,73,.55);color:#fff}}
     .cbadge.bat.ok{border-color:#3fb950;color:#3fb950}
     .cbadge.bat.warn{border-color:#d29922;color:#d29922}
     .cbadge.bat.low{border-color:#f85149;color:#f85149}
@@ -473,6 +477,14 @@ function mkadbrow(p){
   // invisible, until flat. That is how sturgeon reached 0%.
   if(p.fb_draining)
     return '<span class="err" title="last seen in FASTBOOT, port now unpowered — a watch in the bootloader does NOT stop when power is cut, it keeps running on battery until flat and is invisible while it does. Power the port back on, then either boot it or power it off from the on-screen fastboot menu.">draining in fastboot?</span>';
+  // A boot we deliberately triggered: white pulse while it is expected up,
+  // then a red-flashing "boot failed?" once the ~40s window lapses. Both beat
+  // the generic no-link/not-enumerating messages below — we have positive
+  // evidence a boot is under way, so we name it.
+  if(p.adb===null&&p.lifecycle==='booting')
+    return '<span class="cbadge life booting" title="just powered on / rebooted — waiting for it to come up (~40s)">booting up</span>';
+  if(p.adb===null&&p.lifecycle==='bootfail')
+    return '<span class="cbadge life bootfail" title="triggered a boot but it has not come up in time — it may have failed to boot, or is simply not enumerating (flat battery, contact/cable)">boot failed?</span>';
   if(p.adb===null&&p.not_enumerating)
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)

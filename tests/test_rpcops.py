@@ -541,6 +541,55 @@ def test_poweroff_over_ssh_marks_down_and_does_not_strand(monkeypatch):
     assert marked.get("safe_off_ts"), "ssh poweroff did not stamp the down marker"
 
 
+def test_power_on_stamps_the_boot_marker_but_power_off_does_not(monkeypatch):
+    """Powering a docked watch's port on boots it, so it stamps booting_since
+    for the "booting up" pill. Powering off is not a boot and must stamp
+    nothing (the graceful poweroff op owns the "down" marker instead)."""
+    import asteroid_docking_bay.rpcops as ro
+    marked = {}
+    monkeypatch.setattr(ro, "_refuse_if_busy", lambda l, p: None)
+    monkeypatch.setattr(ro, "load_config", lambda: {})
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
+    monkeypatch.setattr(ro, "uhubctl_set_power", lambda l, p, on: True)   # confirmed
+    monkeypatch.setattr(ro.last_seen, "mark",
+                        lambda s, **k: marked.update({"serial": s, **k}))
+
+    d = ro.DISPATCH._data["port.set"]({"loc": "1-2", "port": 1, "on": True})
+    assert d["ok"] and marked.get("serial") == "S9", d
+    assert marked.get("booting_since"), "power-on did not stamp the boot marker"
+
+    marked.clear()
+    ro.DISPATCH._data["port.set"]({"loc": "1-2", "port": 1, "on": False})
+    assert marked == {}, "power-off must not claim a boot"
+
+
+def test_reboot_and_continue_track_the_boot_but_bootloader_does_not(monkeypatch):
+    """The actions that send the watch off to boot the OS (reboot, continue)
+    stamp booting_since; the ones that land in another mode (bootloader) do
+    not — a bootloader entry is not an OS boot to wait on."""
+    import asteroid_docking_bay.rpcops as ro
+    marks = []
+    monkeypatch.setattr(ro, "_refuse_if_busy", lambda l, p: None)
+    monkeypatch.setattr(ro, "load_config", lambda: {})
+    monkeypatch.setattr(ro, "find_serial_for_loc_port", lambda c, l, p: "S9")
+    monkeypatch.setattr(ro, "_run", lambda cmd, **k: (0, "", ""))
+    monkeypatch.setattr(ro.last_seen, "mark", lambda s, **k: marks.append((s, k)))
+
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {})    # on adb, not fastboot
+    marks.clear()
+    ro.DISPATCH._data["port.reboot"]({"loc": "1-2", "port": 1})
+    assert marks and marks[-1][0] == "S9" and "booting_since" in marks[-1][1]
+
+    marks.clear()
+    ro.DISPATCH._data["port.bootloader"]({"loc": "1-2", "port": 1})
+    assert marks == [], "reboot-to-bootloader must not claim an OS boot"
+
+    monkeypatch.setattr(ro, "_fastboot_list", lambda: {"S9": {}})   # continue is fb-only
+    marks.clear()
+    ro.DISPATCH._data["port.continue"]({"loc": "1-2", "port": 1})
+    assert marks and "booting_since" in marks[-1][1]
+
+
 def test_watch_cc_reports_the_transport_for_poll_pacing(monkeypatch):
     """The Control Center paces its live poll to the link: adb is fast, SSH is
     slow. So watch.cc must report which transport answered."""

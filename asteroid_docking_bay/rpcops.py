@@ -401,6 +401,10 @@ def _port_set(args):
         confirmed = uhubctl_set_power(args["loc"], args["port"], bool(args["on"]))
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
+    if args["on"] and confirmed:
+        # Powering a docked watch's port on boots it; a watch already up just
+        # re-asserts and the marker self-clears on its next live sighting.
+        _mark_booting(find_serial_for_loc_port(load_config(), args["loc"], args["port"]))
     return {"ok": True, "confirmed": confirmed}
 
 
@@ -428,6 +432,7 @@ def _port_cycle(args):
                     _store_smart_verdict(hub, port, smart)
                     save_config(cfg)
                     break
+    _mark_booting(serial)   # a cycle cuts and restores VBUS — the watch reboots
     return {"ok": True, "smart": smart, "reason": reason}
 
 
@@ -503,7 +508,16 @@ def _port_poweroff(args):
     return {"ok": True, "adb_shutdown": graceful, "confirmed": confirmed}
 
 
-def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):
+def _mark_booting(serial):
+    """Stamp when we deliberately (re)boot a known watch, so the connection
+    column can show "booting up" through the ~40s window and a hedged "boot
+    failed?" past it. Only a real OS sighting (last_live_ts) clears it — see
+    webstatus._boot_state. A None serial (empty/unmapped port) stamps nothing."""
+    if serial:
+        last_seen.mark(serial, booting_since=time.time())
+
+
+def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg, boots_os=False):
     """Run a power action against whichever protocol the watch is speaking.
 
     A docked watch is reachable over adb when it is booted and over fastboot
@@ -511,7 +525,9 @@ def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):
     bootloader") just needs a different command. Dispatching here keeps one
     op per concept instead of a parallel fastboot family, and lets the UI
     offer the same menu in both states. Either command may be None where the
-    action has no equivalent in that protocol."""
+    action has no equivalent in that protocol. boots_os marks the actions that
+    send the watch off to boot the OS (reboot, continue) so the UI can track
+    the boot — not the ones that land in another mode (bootloader, recovery)."""
     busy = _refuse_if_busy(loc, port)
     if busy:
         return busy
@@ -527,13 +543,15 @@ def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg):
     rc, _, err = _run(f"{tool} -s {serial} {cmd}", check=False, timeout=20)
     if rc != 0:
         return {"ok": False, "error": err or fail_msg}
+    if boots_os:
+        _mark_booting(serial)
     return {"ok": True, "via": tool}
 
 
 @DISPATCH.op("port.reboot")
 def _port_reboot(args):
     return _watch_action(args["loc"], args["port"], "reboot", "reboot",
-                         "reboot failed")
+                         "reboot failed", boots_os=True)
 
 
 @DISPATCH.op("port.bootloader")
@@ -556,7 +574,7 @@ def _port_continue(args):
     """Resume the boot chain from the bootloader. Fastboot-only — a booted
     watch has nothing to continue."""
     return _watch_action(args["loc"], args["port"], None, "continue",
-                         "fastboot continue failed")
+                         "fastboot continue failed", boots_os=True)
 
 
 # ── config visibility ───────────────────────────────────────────────────────

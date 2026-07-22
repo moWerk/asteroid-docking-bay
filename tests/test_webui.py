@@ -417,6 +417,37 @@ def test_lifecycle_pill_shows_down_only_when_asserted(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_boot_pill_shows_in_connection_column_and_outranks_no_link(tmp_path):
+    """A triggered boot paints a white pulsing 'booting up' pill in the
+    connection column, escalating to a red-flashing 'boot failed?' once the
+    window lapses. Both carry positive evidence a boot is under way, so they
+    outrank the generic not-enumerating / no-link messages that would otherwise
+    show for a powered port with no adb."""
+    import json
+    h = tmp_path / "boot.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconst base={adb:null,power:true,connected:true,not_enumerating:true};"
+                 "console.log(JSON.stringify({"
+                 "booting:mkadbrow({...base,lifecycle:'booting'}),"
+                 "bootfail:mkadbrow({...base,lifecycle:'bootfail'}),"
+                 "plain:mkadbrow({...base,lifecycle:null})}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "life booting" in out["booting"] and "booting up" in out["booting"]
+    assert "life bootfail" in out["bootfail"] and "boot failed?" in out["bootfail"]
+    # 'boot failed?' is hedged (question mark) — it is a suspicion, not a verdict.
+    assert out["bootfail"].count("?") >= 1
+    # Neither boot pill lets the generic not-enumerating pill through (match the
+    # visible label, not the word where it appears inside the boot tooltip).
+    assert ">not enumerating<" not in out["booting"]
+    assert ">not enumerating<" not in out["bootfail"]
+    # With no boot claim, the same row still shows not-enumerating as before.
+    assert ">not enumerating<" in out["plain"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_reopening_a_panel_paints_instantly_from_cache(tmp_path):
     """A previously-opened panel must repaint from the cached payload straight
     away — no 'loading…' flash while the (possibly slow, over-SSH) fetch runs."""

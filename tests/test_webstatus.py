@@ -216,6 +216,35 @@ def test_lifecycle_self_clears_when_seen_live_again(monkeypatch):
     assert ws._lifecycle("S1", False, False) is None
 
 
+def test_lifecycle_tracks_a_triggered_boot_through_its_window(monkeypatch):
+    """A deliberate (re)boot stamps booting_since. With the port powered and no
+    OS sighting yet, the connection column shows "booting" inside the definite-
+    boot window and a hedged "bootfail" past it — up to the cap, after which no
+    claim is made. A real live sighting (last_live_ts past the stamp) ends it."""
+    from asteroid_docking_bay import webstatus as ws
+    now = 10_000.0
+    monkeypatch.setattr(ws.time, "time", lambda: now)
+    store = {"S1": {"booting_since": now, "last_live_ts": 500.0}}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+
+    # Just triggered, port powered, not up yet -> booting.
+    assert ws._lifecycle("S1", present=False, power=True) == "booting"
+    # Past the window but under the cap -> hedged failure question.
+    now = 10_000.0 + ws.BOOT_WINDOW + 1
+    assert ws._lifecycle("S1", present=False, power=True) == "bootfail"
+    # Past the cap -> stop claiming; fall through to plain state (None here).
+    now = 10_000.0 + ws.BOOT_FAIL_CAP + 1
+    assert ws._lifecycle("S1", present=False, power=True) is None
+    # A real OS sighting since the stamp -> boot succeeded, no claim.
+    store["S1"]["last_live_ts"] = 10_000.0 + 5
+    now = 10_000.0 + 10
+    assert ws._lifecycle("S1", present=False, power=True) is None
+    # The port powered off mid-boot cannot be "booting" — nothing is booting.
+    store["S1"]["last_live_ts"] = 500.0
+    now = 10_000.0 + 5
+    assert ws._lifecycle("S1", present=False, power=False) is None
+
+
 def test_wear_makes_a_departed_watch_worn_not_down(monkeypatch):
     """A wear-held watch that has left the bus is 'worn' (off-rig), overriding
     any 'down' — and while still docked it shows no pill (the button carries
