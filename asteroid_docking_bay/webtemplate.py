@@ -182,10 +182,14 @@ _WEB_TEMPLATE = """\
     /* Lifecycle pill by the codename — the one power-state we can assert:
        "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
     .smt{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
-    .smt.yes{border-color:#3fb950;color:#3fb950}
+    /* Smart type is blue, not green — green is reserved for the power/charge
+       states so it keeps its weight. The known type (ppps) is the brighter
+       tone; the untested cycle is a darker shade of the same blue (it is an
+       action, so deliberately NOT orange — orange means ambiguous/stale here). */
+    .smt.ppps{border-color:#58a6ff;color:#58a6ff}
     .smt.no{border-color:#f85149;color:#f85149}
-    .smt.unk{border-color:#d29922;color:#d29922;cursor:pointer}
-    .smt.unk:hover:not(:disabled){background:#2a2113}
+    .smt.unk{border-color:#1f6feb;color:#388bfd;cursor:pointer}
+    .smt.unk:hover:not(:disabled){background:#0d2136}
     .smt.unk:disabled{opacity:.35;cursor:default}
     .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
@@ -335,7 +339,7 @@ function mksmart(p,slot,dis){
   // red NO!). Untested shows the power-cycle in its place, because the cycle
   // IS the test — one click cuts and restores power and records the verdict —
   // so the control lives exactly where its result will land.
-  if(p.smart===true)return '<span class="smt yes" title="port can switch power (smart)">yes</span>';
+  if(p.smart===true)return '<span class="smt ppps" title="PPPS — this port switches its own VBUS (per-port power switching)">ppps</span>';
   if(p.smart===false)return '<span class="smt no" title="port cannot switch its own power (not smart)">NO!</span>';
   return `<button class="smt unk"${dis} onclick="pulseSelf(this);doCy('${slot}')" title="smart capability not tested — click to power-cycle the port and detect it">&#x21BA;</button>`;
 }
