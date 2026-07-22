@@ -325,10 +325,10 @@ def test_battery_graph_dot_opens_battery_info_with_history(tmp_path):
     assert "openSpark" not in strip, "battery-graph dot still opens the old popup"
     h = tmp_path / "bihist.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nbiSerial='S9';biName='sk';"
+                 "\nctlSerial='S9';ctlName='sk';ctlTab='bat';"
                  "biHist['S9']={points:[{ts:1,pct:90},{ts:2,pct:80},{ts:3,pct:70}],rate:0.5};"
-                 "renderBI({bat_cap:80});"
-                 "console.log(JSON.stringify(global.__els['bi'].innerHTML));"
+                 "renderControl({bat_cap:80});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
@@ -536,9 +536,9 @@ def test_network_center_lists_usb_ip_and_mode_toggle(tmp_path):
     import json
     h = tmp_path / "nc.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nncSshIp='192.168.13.37';ncMode='ssh';ncSerial='S9';ncName='skipjack';"
-                 "renderNC({serial:'S9', os:'AsteroidOS', wifi:1, ip:'10.0.0.9', wlanmac:'aa:bb'});"
-                 "console.log(JSON.stringify(global.__els['nc'].innerHTML));"
+                 "\nctlSshIp='192.168.13.37';ctlMode='ssh';ctlSerial='S9';ctlName='skipjack';ctlTab='net';"
+                 "renderControl({serial:'S9', os:'AsteroidOS', wifi:1, ip:'10.0.0.9', wlanmac:'aa:bb'});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
@@ -556,11 +556,11 @@ def test_usb_switch_updates_an_open_network_center(tmp_path):
     import json
     h = tmp_path / "ncsync.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nncSerial='S9';ncName='wren';ncMode='adb';ncSshIp='192.168.2.15';"
-                 "ncCache['S9']={serial:'S9'};"
-                 "ncSet('S9','ssh','192.168.13.42');"
-                 "console.log(JSON.stringify({mode:ncMode,ip:ncSshIp,"
-                 "html:global.__els['nc'].innerHTML}));\nprocess.exit(0);\n")
+                 "\nctlSerial='S9';ctlName='wren';ctlMode='adb';ctlSshIp='192.168.2.15';ctlTab='net';"
+                 "ctlCache['S9']={serial:'S9'};"
+                 "ctlSet('S9','ssh','192.168.13.42');"
+                 "console.log(JSON.stringify({mode:ctlMode,ip:ctlSshIp,"
+                 "html:global.__els['cc'].innerHTML}));\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
@@ -576,8 +576,8 @@ def test_control_center_no_longer_carries_the_network_section(tmp_path):
     import json
     h = tmp_path / "ccnet.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nccName='skipjack';ccSerial='S9';"
-                 "renderCC({serial:'S9', kernel:'3.18', os:'AsteroidOS', wifi:1});"
+                 "\nctlName='skipjack';ctlSerial='S9';ctlTab='sys';"
+                 "renderControl({serial:'S9', kernel:'3.18', os:'AsteroidOS', wifi:1});"
                  "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
@@ -614,10 +614,10 @@ def test_battery_info_window_lists_the_detail(tmp_path):
     import json
     h = tmp_path / "bi.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nbiSerial='S9';biName='skipjack';"
-                 "renderBI({serial:'S9',os:'AsteroidOS',bat_cap:83,bat_status:'Charging',"
+                 "\nctlSerial='S9';ctlName='skipjack';ctlTab='bat';"
+                 "renderControl({serial:'S9',os:'AsteroidOS',bat_cap:83,bat_status:'Charging',"
                  "bat_volt:3900000,bat_cycles:42,standby_measured:2.5});"
-                 "console.log(JSON.stringify(global.__els['bi'].innerHTML));"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
@@ -633,8 +633,8 @@ def test_control_center_no_longer_carries_the_battery_section(tmp_path):
     import json
     h = tmp_path / "ccbat.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nccName='skipjack';ccSerial='S9';"
-                 "renderCC({serial:'S9',kernel:'3.18',os:'AsteroidOS',bat_cap:83,bat_cycles:42});"
+                 "\nctlName='skipjack';ctlSerial='S9';ctlTab='sys';"
+                 "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS',bat_cap:83,bat_cycles:42});"
                  "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
@@ -773,7 +773,7 @@ def test_reopening_a_panel_paints_instantly_from_cache(tmp_path):
     h = tmp_path / "cache.js"
     h.write_text(_DOM_CAPTURE + JS +
                  "\nglobal.fetch=()=>new Promise(()=>{});"          # never resolves
-                 "\nccCache['S9']={kernel:'3.18',os:'AsteroidOS'};"  # seed a prior open
+                 "\nctlCache['S9']={kernel:'3.18',os:'AsteroidOS'};"  # seed a prior open
                  "openCC('S9','skipjack',{stopPropagation(){},clientX:5,clientY:5});"
                  "console.log(JSON.stringify(global.__els['cc'].innerHTML));"
                  "\nprocess.exit(0);\n")
@@ -897,10 +897,10 @@ def test_a_mousedown_outside_an_open_panel_closes_it(tmp_path):
                  # Open Battery Info, then fire the captured mousedown handler
                  # with a target that no panel contains (contains()=>false).
                  "openBI('S9','sk',{stopPropagation(){},clientX:0,clientY:0});"
-                 "global.__els['bi'].style.display='block';"
-                 "const biBefore=biSerial;"
+                 "global.__els['cc'].style.display='block';"
+                 "const biBefore=ctlSerial;"
                  "global.__h.mousedown({target:el()});"
-                 "console.log(JSON.stringify({biBefore,biAfter:biSerial,"
+                 "console.log(JSON.stringify({biBefore,biAfter:ctlSerial,"
                  "hasHandler:typeof global.__h.mousedown}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
@@ -913,3 +913,27 @@ def test_a_mousedown_outside_an_open_panel_closes_it(tmp_path):
     assert "closePanels" not in JS, "openers still call an added close helper"
     assert "ccLeave" not in JS and "onmouseleave" not in _WEB_TEMPLATE, (
         "a hover-out close path survives — panels must persist until a click")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_switching_tabs_keeps_the_graph_history(tmp_path):
+    """The single window's promise: switching tabs re-renders the cached blob
+    with NO graphReset, so a graph accrued on one tab keeps its history when you
+    move to another. A graphReset() inside ctlTabTo would wipe it (the bug this
+    pins), and the poll — not the switch — is what refills every tab's metric."""
+    import json
+    h = tmp_path / "tabswitch.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"          # no live data
+                 "openControl('S9','sk',{stopPropagation(){},clientX:0,clientY:0},'sys');"
+                 "ctlCache['S9']={kernel:'3.18',bat_cap:80};"       # a cached blob
+                 "graphData['bcap']=[70,72,74];"                    # history accrued so far
+                 "ctlTabTo('bat');"                                 # switch tabs
+                 "console.log(JSON.stringify({n:(graphData['bcap']||[]).length,"
+                 "html:global.__els['cc'].innerHTML}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["n"] == 3, "tab switch wiped the graph history (a graphReset on switch)"
+    assert "Battery" in o["html"] and "Cycles" in o["html"], "did not switch to the Battery tab"
+    assert "cc-tab" in o["html"], "the tab row is missing from the window"

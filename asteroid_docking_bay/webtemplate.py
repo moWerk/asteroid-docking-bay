@@ -57,6 +57,10 @@ _WEB_TEMPLATE = """\
     .cc-hd .dim{font-weight:400}
     .cc-x{position:absolute;right:10px;top:6px;cursor:pointer;color:#6e7681;font-weight:400;font-size:16px;line-height:1}
     .cc-x:hover{color:#fff}
+    .cc-tabs{display:flex;background:#0d1117;border-bottom:1px solid #30363d}
+    .cc-tab{flex:1;padding:6px 4px;border:0;background:transparent;color:#8b949e;cursor:pointer;font:inherit;font-size:11px;border-bottom:2px solid transparent}
+    .cc-tab:hover{color:#c9d1d9;background:#161b22}
+    .cc-tab.on{color:#58a6ff;border-bottom-color:#58a6ff}
     .cc-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
     /* Rows a touch taller to seat the inline live graph beside the value. */
     .cc-grid .cc-v{min-height:15px;display:flex;align-items:center;justify-content:flex-end;gap:7px}
@@ -363,8 +367,6 @@ _WEB_TEMPLATE = """\
   </div>
   <div id="hist" style="display:none"></div>
   <div id="cc" class="cc"></div>
-  <div id="nc" class="cc"></div>
-  <div id="bi" class="cc"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -562,14 +564,14 @@ function sparkSvg(pts){
   const d=pts.map((p,i)=>(i?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.pct).toFixed(1)).join(' ');
   return `<svg class="spark-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><path d="${d}" fill="none" stroke="#58a6ff" stroke-width="1.5"/></svg>`;
 }
-// Battery history for the Battery Info panel: fetched once when the panel opens
-// and stored per serial, so renderBI can append the chart at its foot.
+// Battery history for the Battery tab: fetched once when the tab opens and
+// stored per serial, so the Battery body can append the chart at its foot.
 const biHist={};
 function biHistFetch(serial){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/timeline').then(r=>r.json()).then(d=>{
-    if(biSerial!==serial)return;
+    if(ctlSerial!==serial)return;
     biHist[serial]=d;
-    if(biCache[serial])renderBI(biCache[serial]);
+    if(ctlTab==='bat'&&ctlCache[serial])renderControl(ctlCache[serial]);
   }).catch(()=>{});
 }
 function mkport(p){
@@ -800,15 +802,28 @@ function render(data){
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
-// ── Control Center overlay ──────────────────────────────────────────────────
-let ccSerial=null, ccName=null, ccAX=0, ccAY=0;
-let ncSerial=null, ncName=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
-let biSerial=null, biName=null, biAX=0, biAY=0;
-// Last-fetched payload per serial, so re-opening a panel paints instantly from
-// the previous values while the fresh fetch is in flight — and a self-cancelling
-// poll keeps an open panel live (important over SSH, where a fetch is slow).
-const ccCache={}, ncCache={}, biCache={};
-let ccPoll=null, ncPoll=null, biPoll=null;
+// ── Control Center — one tabbed window ──────────────────────────────────────
+// System, Network and Battery were three separate overlays in 0.8, but all
+// three fetched the SAME /api/watch/<serial> blob and shared one graph store —
+// so they fold into a single window whose tabs swap the body. One serial, one
+// cache, one poll: switching tabs re-renders the cached blob with NO refetch
+// and NO graphReset, so every tab's graph keeps filling across a switch.
+let ctlSerial=null, ctlName=null, ctlAX=0, ctlAY=0;
+let ctlTab='sys', ctlSshIp=null, ctlMode=null;
+// The tab bar. Order is System → Network → Battery here; Settings and Live join
+// in later steps, landing the final System · Settings · Network · Battery · Live.
+const CTL_TABS=[['sys','System'],['net','Network'],['bat','Battery']];
+// Last-fetched payload per serial, so re-opening paints instantly from the
+// previous values while the fresh fetch is in flight — and a self-cancelling
+// poll keeps the open window live (important over SSH, where a fetch is slow).
+const ctlCache={};
+let ctlPoll=null;
+// Shared cell/section builders — one definition for every tab body (each used
+// to redefine its own identical copy).
+const _kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'\\u2014':String(v))}</div>`;
+const _kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'\\u2014':String(v))}${g||''}</div>`;
+const _sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
+const _num=x=>(x==null||x===''||isNaN(+x))?null:+x;
 // adb is a warm channel (poll briskly); SSH pays a handshake per call, so a
 // 3s poll would never keep up — pace it to 10s. The panel header shows which.
 function panelPollMs(d){return (d&&d.transport==='ssh')?10000:3000;}
@@ -879,9 +894,7 @@ function placeOverlay(el,ax,ay){
   if(top+h>window.innerHeight-8) top=ay-h-10;
   el.style.left=Math.max(8,left)+'px'; el.style.top=Math.max(8,top)+'px';
 }
-function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
-function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
-function biPlace(){placeOverlay(document.getElementById('bi'),biAX,biAY);}
+function ctlPlace(){placeOverlay(document.getElementById('cc'),ctlAX,ctlAY);}
 // First open of a watch has no client cache, so instead of a "loading…" wait
 // paint the server's last-known values immediately — the /stale endpoint reads
 // them with no device I/O, so it returns at once (amber, marked stale). The
@@ -892,206 +905,158 @@ function paintStale(serial,curSerial,cacheHas,renderFn){
     if(curSerial()===serial && !cacheHas() && d && d.kernel)renderFn(d);
   }).catch(()=>{});
 }
-function openCC(serial,name,ev){
-  ev.stopPropagation(); graphReset();
-  ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
+function openControl(serial,name,ev,tab,sshIp,mode){
+  ev.stopPropagation(); graphReset();      // fresh graphs for a fresh watch, not per tab
+  ctlSerial=serial; ctlName=name; ctlAX=ev.clientX; ctlAY=ev.clientY;
+  ctlTab=tab||'sys';
+  if(sshIp!=null)ctlSshIp=sshIp; if(mode!=null)ctlMode=mode;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
   cc.style.display='block';
-  if(ccCache[serial])renderCC(ccCache[serial]);   // instant, from the last open
-  else{cc.innerHTML=`<div class="cc-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`;ccPlace();
-       paintStale(serial,()=>ccSerial,()=>!!ccCache[serial],renderCC);}
-  ccFetch();
+  if(ctlTab==='bat')biHistFetch(serial);
+  if(ctlCache[serial])renderControl(ctlCache[serial]);   // instant, from the last open
+  else{cc.innerHTML=ctlChrome(null,`<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`);ctlPlace();
+       paintStale(serial,()=>ctlSerial,()=>!!ctlCache[serial],renderControl);}
+  ctlFetch();
 }
-function ccFetch(){
-  const s=ccSerial;
+// The row triggers still open the window on the tab that matches what was
+// clicked — codename→System, battery pill→Battery, network badge→Network.
+function openCC(s,n,ev){openControl(s,n,ev,'sys');}
+function openNC(s,n,ev,sshIp,mode){openControl(s,n,ev,'net',sshIp,mode);}
+function openBI(s,n,ev){openControl(s,n,ev,'bat');}
+function ctlTabTo(tab){
+  if(!ctlSerial)return;
+  ctlTab=tab;                              // no refetch, no graphReset: the poll
+  if(tab==='bat')biHistFetch(ctlSerial);   // keeps every metric filling regardless
+  renderControl(ctlCache[ctlSerial]||null);
+}
+function ctlFetch(){
+  const s=ctlSerial;
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
-    if(ccSerial!==s)return;
-    ccCache[s]=d; graphPush('load',_load1(d)); graphPush('mem',_memPct(d)); renderCC(d);
-    clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,panelPollMs(d));   // keep live while open
+    if(ctlSerial!==s)return;
+    ctlCache[s]=d;
+    // Push EVERY tab's metrics on every poll, so a tab's graph is already full
+    // the instant you switch to it — the continuity a single window buys.
+    graphPush('load',_load1(d)); graphPush('mem',_memPct(d));
+    graphPushRate('rx',d.net_rx); graphPushRate('tx',d.net_tx);
+    graphPush('bcap',d.bat_cap==null?null:+d.bat_cap);
+    graphPush('bvolt',d.bat_volt?+d.bat_volt/1e6:null);
+    graphPush('bcur',d.bat_curr?+d.bat_curr/1000:null);
+    graphPush('btemp',d.bat_temp==null?null:+d.bat_temp/10);
+    renderControl(d);
+    clearTimeout(ctlPoll); ctlPoll=setTimeout(ctlFetch,panelPollMs(d));   // keep live while open
   }).catch(()=>{
-    if(ccSerial!==s)return;
-    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${esc(ccName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
+    if(ctlSerial!==s)return;
+    document.getElementById('cc').innerHTML=ctlChrome(null,`<div class="cc-sec"><span class="err">unreachable</span></div>`);
   });
 }
-function renderCC(d){
-  const cc=document.getElementById('cc');
+// Shared window frame: title, the tab row, the active tab's body. Every tab
+// renders into the same chrome, so the header and tabs never move on a switch.
+function ctlChrome(d,body){
   const stale=!!(d&&d.stale);
-  cc.classList.toggle('stale-cc',stale);
-  if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;ccPlace();return;}
-  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
-  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
-  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
-  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
+  const tabs=CTL_TABS.map(([id,label])=>`<button class="cc-tab${ctlTab===id?' on':''}" onclick="ctlTabTo('${id}')">${label}</button>`).join('');
+  return `<div class="cc-hd" id="cc-hd">${esc(ctlName)} <span class="dim">${esc((d&&d.os)||'')}</span>${pollTag(d)}`+
+      (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeControl()">&times;</span></div>`+
+    `<div class="cc-tabs">${tabs}</div>`+
+    `<div class="cc-body">${body}</div>`;
+}
+function renderControl(d){
+  const cc=document.getElementById('cc');
+  cc.classList.toggle('stale-cc',!!(d&&d.stale));
+  const body=ctlTab==='net'?bodyNet(d):ctlTab==='bat'?bodyBat(d):bodySys(d);
+  cc.innerHTML=ctlChrome(d,body);
+  ctlPlace();
+}
+// ── System tab ──────────────────────────────────────────────────────────────
+function bodySys(d){
+  if(!d||!d.kernel)return `<div class="cc-sec"><span class="err">no data (watch offline?)</span></div>`;
   const mt=+d.memtotal,mf=+d.memfree,memU=mt?Math.round((mt-mf)/1024):null,memT=mt?Math.round(mt/1024):null;
-  const freq=num(d.cpufreq);
+  const freq=_num(d.cpufreq);
   const dfp=(d.df||'').trim().split(/[ \t]+/);
   const storage=dfp.length>=5?`${dfp[2]} / ${dfp[1]} (${dfp[4]})`:null;
-  const sys=sec('System',
-    kv('Kernel',d.kernel)+kv('Qt',d.qt)+kv('SoC',(d.soc||'').trim())+
-    kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
-    kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
-    kvg('Load',d.load,spark('load',0,_ncpu(d),'high'))+kv('Threads',d.threads)+
-    kvg('Memory',memU!=null?`${memU} / ${memT} MB`:null,spark('mem',0,100,'high'))+kv('Storage',storage)+
-    kv('Resolution',d.resolution)+kv('Timezone',d.tz)+kv('Clock',d.datetime)+
-    kv('Machine (image)',d.geometry&&d.geometry.machine)+
+  const sys=_sec('System',
+    _kv('Kernel',d.kernel)+_kv('Qt',d.qt)+_kv('SoC',(d.soc||'').trim())+
+    _kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
+    _kv('Uptime',fmtUp(d.uptime))+_kv('Boot',d.bootreason)+
+    _kvg('Load',d.load,spark('load',0,_ncpu(d),'high'))+_kv('Threads',d.threads)+
+    _kvg('Memory',memU!=null?`${memU} / ${memT} MB`:null,spark('mem',0,100,'high'))+_kv('Storage',storage)+
+    _kv('Resolution',d.resolution)+_kv('Timezone',d.tz)+_kv('Clock',d.datetime)+
+    _kv('Machine (image)',d.geometry&&d.geometry.machine)+
     // The bootloader version string names the true hardware, which is the only
     // thing that distinguishes watches sharing an image (rover vs rubyfish).
     // Worth showing verbatim: it is the field the porting community reads to
     // identify a device, so a human can check our detection against it.
-    kv('Bootloader',d.geometry&&d.geometry.bootloader));
-  cc.innerHTML=
-    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
-      (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
-      `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
+    _kv('Bootloader',d.geometry&&d.geometry.bootloader));
+  return `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
     `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
       `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
     `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">Sync time from host</button></div>`;
-  ccPlace();
 }
-function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
-function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ccFetch();refresh();});}
+function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
+function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ctlFetch();refresh();});}
 function releaseScreen(s){fetch('/api/watch/'+encodeURIComponent(s)+'/screen/off',{method:'POST'}).then(()=>{toast('screen released');refresh()});}
 function releaseAllScreens(){fetch('/api/screen/release-all',{method:'POST'}).then(r=>r.json()).then(d=>{toast('released '+((d.released||[]).length)+' screen(s)');refresh()});}
 function ccSyncTime(){
   const b=document.getElementById('cc-time');if(b)b.textContent='syncing…';
-  fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
-    .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ccFetch();},700));
+  fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/settime',{method:'POST'})
+    .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ctlFetch();},700));
 }
-function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccPoll){clearTimeout(ccPoll);ccPoll=null;}}
 
-// ── Network Center ──────────────────────────────────────────────────────────
-// A second Control-Center-like overlay, opened by clicking the ADB/SSH badge.
-// It gathers the network detail that used to crowd the Control Center — links,
-// addresses, the WiFi/BT toggles — and adds the USB IP, which lives nowhere
-// else. The USB mode toggle lives here too, a deliberate click in an overlay
-// rather than the misclick-prone inline badge.
-function openNC(serial,name,ev,sshIp,mode){
-  ev.stopPropagation(); graphReset();
-  ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
-  ncSshIp=sshIp||''; ncMode=mode||'';
-  const nc=document.getElementById('nc');
-  nc.classList.remove('stale-cc');
-  nc.style.display='block';
-  if(ncCache[serial])renderNC(ncCache[serial]);
-  else{nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;ncPlace();
-       paintStale(serial,()=>ncSerial,()=>!!ncCache[serial],renderNC);}
-  ncFetch();
-}
-function ncFetch(){
-  const s=ncSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
-    if(ncSerial!==s)return;
-    ncCache[s]=d; graphPushRate('rx',d.net_rx); graphPushRate('tx',d.net_tx); renderNC(d);
-    clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,panelPollMs(d));
-  }).catch(()=>{
-    if(ncSerial!==s)return;
-    const nc=document.getElementById('nc');nc.innerHTML=`<div class="cc-hd">${esc(ncName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeNC()">&times;</span></div>`;
-  });
-}
-function renderNC(d){
-  const nc=document.getElementById('nc');
-  const stale=!!(d&&d.stale);
-  nc.classList.toggle('stale-cc',stale);
+// ── Network tab ─────────────────────────────────────────────────────────────
+// Addresses, links, the WiFi/BT toggles and the USB IP/mode switch — the detail
+// that would crowd the System view. The USB-mode toggle lives here, a deliberate
+// click rather than the misclick-prone inline badge.
+function bodyNet(d){
   d=d||{};
-  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
-  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
-  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
-  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
-  const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
+  const mb=x=>{const n=_num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
   const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
-  const usbip=ncSshIp||'192.168.2.15';
-  const net=sec('Addresses &amp; links',
-    kv('USB IP',usbip)+kv('USB mode',ncMode==='ssh'?'SSH (developer)':'ADB')+
-    kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('WiFi IP',d.ip)+
-    kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
-    kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
-    kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
+  const usbip=ctlSshIp||'192.168.2.15';
+  const net=_sec('Addresses &amp; links',
+    _kv('USB IP',usbip)+_kv('USB mode',ctlMode==='ssh'?'SSH (developer)':'ADB')+
+    _kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+_kv('WiFi IP',d.ip)+
+    _kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
+    _kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+_kv('Phone',phone)+
+    _kv('WLAN MAC',d.wlanmac)+_kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
-  // The USB-mode toggle: the deliberate home for the switch the badge used to
-  // carry. Reaches the watch over whichever link it is currently on.
-  const modeToggle=ncMode==='ssh'
-    ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
-    : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
-  nc.innerHTML=
-    `<div class="cc-hd">${esc(ncName)} &middot; Network <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
-      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
-      `<span class="cc-x" onclick="closeNC()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+
+  const modeToggle=ctlMode==='ssh'
+    ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
+    : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
+  return `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}${modeToggle}</div>`;
-  ncPlace();
 }
 function ncToggle(tech,on){
-  document.querySelectorAll('#nc .cc-tgl').forEach(b=>b.classList.add('busy'));
-  fetch('/api/watch/'+encodeURIComponent(ncSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
-    .then(()=>setTimeout(ncFetch,1600)).catch(()=>ncFetch());
+  document.querySelectorAll('#cc .cc-tgl').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
+    .then(()=>setTimeout(ctlFetch,1600)).catch(()=>ctlFetch());
 }
-function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncPoll){clearTimeout(ncPoll);ncPoll=null;}}
 
-// ── Battery Info ────────────────────────────────────────────────────────────
-// Opened by clicking the battery pill. There is nothing to *control* about a
-// battery, so this detail (voltage, current, temperature, cycles, health,
-// measured standby drain) moved out of the Control Center into its own
-// read-only window, leaving the pill to carry just the charge and one line of
-// appended detail.
-function openBI(serial,name,ev){
-  ev.stopPropagation(); graphReset();
-  biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
-  const bi=document.getElementById('bi');
-  bi.classList.remove('stale-cc');
-  bi.style.display='block';
-  biHistFetch(serial);
-  if(biCache[serial])renderBI(biCache[serial]);
-  else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();
-       paintStale(serial,()=>biSerial,()=>!!biCache[serial],renderBI);}
-  biFetch();
-}
-function biFetch(){
-  const s=biSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
-    if(biSerial!==s)return;
-    biCache[s]=d; graphPush('bcap',d.bat_cap==null?null:+d.bat_cap); graphPush('bvolt',d.bat_volt?+d.bat_volt/1e6:null); graphPush('bcur',d.bat_curr?+d.bat_curr/1000:null); graphPush('btemp',d.bat_temp==null?null:+d.bat_temp/10); renderBI(d);
-    clearTimeout(biPoll); biPoll=setTimeout(biFetch,panelPollMs(d));
-  }).catch(()=>{
-    if(biSerial!==s)return;
-    const bi=document.getElementById('bi');bi.innerHTML=`<div class="cc-hd">${esc(biName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeBI()">&times;</span></div>`;
-  });
-}
-function renderBI(d){
-  const bi=document.getElementById('bi');
-  const stale=!!(d&&d.stale);
-  bi.classList.toggle('stale-cc',stale);
+// ── Battery tab ─────────────────────────────────────────────────────────────
+// There is nothing to *control* about a battery, so this is read-only detail:
+// voltage, current, temperature, cycles, health, measured standby drain, and
+// the fetched-once history chart at its foot.
+function bodyBat(d){
   d=d||{};
-  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
-  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
-  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
-  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
-  const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt);
+  const bv=_num(d.bat_volt),ba=_num(d.bat_curr),bt=_num(d.bat_temp),uv=_num(d.usb_volt);
   const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
-  const bat=sec('Battery',
-    kvg('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null,spark('bcap',0,100,'low'))+kv('Status',d.bat_status)+
-    kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
-    kvg('Voltage',bv?(bv/1e6).toFixed(3)+' V':null,spark('bvolt',3.2,4.35,'low'))+kvg('Current',cur,spark('bcur',-600,600,'low'))+
-    kvg('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null,spark('btemp',15,50,'high'))+kv('Cycles',d.bat_cycles)+
-    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
-    kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
-  const hist=biHist[biSerial], histPts=(hist&&hist.points)||[];
+  const bat=_sec('Battery',
+    _kvg('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null,spark('bcap',0,100,'low'))+_kv('Status',d.bat_status)+
+    _kv('Health',d.bat_health)+_kv('Tech',d.bat_tech)+
+    _kvg('Voltage',bv?(bv/1e6).toFixed(3)+' V':null,spark('bvolt',3.2,4.35,'low'))+_kvg('Current',cur,spark('bcur',-600,600,'low'))+
+    _kvg('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null,spark('btemp',15,50,'high'))+_kv('Cycles',d.bat_cycles)+
+    _kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
+    _kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
+  const hist=biHist[ctlSerial], histPts=(hist&&hist.points)||[];
   const histSec=histPts.length>=2
     ? `<div class="cc-sec"><div class="cc-sech">Battery history`
         +(hist.rate?` <span class="dim">~${(+hist.rate).toFixed(2)}%/h standby</span>`:'')
         +`</div>${sparkSvg(histPts)}</div>`
     : '';
-  bi.innerHTML=
-    `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
-      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
-      `<span class="cc-x" onclick="closeBI()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`+histSec;
-  biPlace();
+  return `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`+histSec;
 }
-function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biPoll){clearTimeout(biPoll);biPoll=null;}}
+function closeControl(){const cc=document.getElementById('cc');cc.style.display='none';ctlSerial=null;if(ctlPoll){clearTimeout(ctlPoll);ctlPoll=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
 let _menuAnchor=null;
 function openMenu(ev,html){
@@ -1238,7 +1203,7 @@ function loadShot(serial,res){
     });
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 // The row's actions fold into one Execute menu: each former button becomes a
 // group header, its items listed indented beneath, all visible at once (no
@@ -1350,14 +1315,14 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'adb',null);setTimeout(refresh,5000);}else flashFail(connPill(serial))});}
-function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'ssh',d.ip);setTimeout(refresh,6000);}else flashFail(connPill(serial))});}
-// Keep an open Network Center in sync with a USB-mode switch made from it: the
+function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok){ctlSet(serial,'adb',null);setTimeout(refresh,5000);}else flashFail(connPill(serial))});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok){ctlSet(serial,'ssh',d.ip);setTimeout(refresh,6000);}else flashFail(connPill(serial))});}
+// Keep an open Network tab in sync with a USB-mode switch made from it: the
 // mode and assigned IP change immediately, before the watch re-enumerates.
-function ncSet(serial,mode,ip){
-  if(ncSerial!==serial)return;
-  ncMode=mode; if(ip)ncSshIp=ip;
-  if(ncCache[serial])renderNC(ncCache[serial]);
+function ctlSet(serial,mode,ip){
+  if(ctlSerial!==serial)return;
+  ctlMode=mode; if(ip)ctlSshIp=ip;
+  if(ctlTab==='net'&&ctlCache[serial])renderControl(ctlCache[serial]);
 }
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
@@ -1383,8 +1348,7 @@ function doDump(s){} function doRestoreDump(s){}
 // outside-click close and mutual exclusivity — so openers need do nothing, and
 // there is no hover-close to make a window vanish when the pointer drifts off.
 document.addEventListener('mousedown',e=>{
-  const overlays=[['cc',closeCC],['nc',closeNC],['bi',closeBI],
-                  ['menu',closeMenu],['wimg',closeWatchImg]];
+  const overlays=[['cc',closeControl],['menu',closeMenu],['wimg',closeWatchImg]];
   for(const [id,close] of overlays){
     const el=document.getElementById(id);
     if(el&&el.style.display==='block'&&!el.contains(e.target))close();
