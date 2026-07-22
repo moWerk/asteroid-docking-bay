@@ -165,8 +165,9 @@ _WEB_TEMPLATE = """\
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
     /* Lifecycle pill by the codename — the one power-state we can assert:
        "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
-    .lifedot{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
-      border-radius:50%;border:1px solid;font-size:9px;line-height:1;vertical-align:middle;margin-left:6px}
+    .lifedot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+      width:16px;height:16px;border-radius:50%;border:1px solid;font-size:10px;line-height:1;
+      vertical-align:middle;margin-right:6px;flex:none}
     .lifedot.on{border-color:#3fb950;color:#3fb950}
     .lifedot.down{border-color:#3d4756;color:#8b98a5}
     .lifedot.amb{border-color:#d29922;color:#d29922}
@@ -669,9 +670,9 @@ function render(data){
           `<td>${mksmt(p.smart)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
-          `<td>`+(p.serial
+          `<td>`+mklife(p)+(p.serial
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
