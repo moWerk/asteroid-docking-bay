@@ -550,6 +550,26 @@ def test_network_center_lists_usb_ip_and_mode_toggle(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_usb_switch_updates_an_open_network_center(tmp_path):
+    """A USB-mode switch made from the Network Center updates the open panel's
+    mode and IP immediately (the badge alone updating left the panel stale)."""
+    import json
+    h = tmp_path / "ncsync.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nncSerial='S9';ncName='wren';ncMode='adb';ncSshIp='192.168.2.15';"
+                 "ncCache['S9']={serial:'S9'};"
+                 "ncSet('S9','ssh','192.168.13.42');"
+                 "console.log(JSON.stringify({mode:ncMode,ip:ncSshIp,"
+                 "html:global.__els['nc'].innerHTML}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["mode"] == "ssh" and out["ip"] == "192.168.13.42"
+    assert "192.168.13.42" in out["html"] and "192.168.2.15" not in out["html"], \
+        "Network Center still shows the stale USB IP after the switch"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_control_center_no_longer_carries_the_network_section(tmp_path):
     """The network detail moved to the Network Center, freeing the Control
     Center. Its render must no longer emit the old WiFi/BT toggle wiring."""

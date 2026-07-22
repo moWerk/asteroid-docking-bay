@@ -158,10 +158,15 @@ _WEB_TEMPLATE = """\
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
        positions may shift slightly with string length — that's fine. */
-    .tblwrap{overflow-x:auto;background:#0d1117}   /* solid over the starfield so rows stay readable */
+    /* Milk glass: the table frosts the starfield behind it and rows are only
+       semi-opaque, so the stars faintly shine through. Hub headers are a touch
+       more transparent than the watch rows; the hover stays light enough not to
+       hide the stars. */
+    .tblwrap{overflow-x:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
     td{padding:7px 8px;border-bottom:1px solid #161b22;vertical-align:middle}
+    .wr td{background:rgba(13,17,23,.72)}
     /* Port folds into the Power cell: the informative s#/p# label, then the
        toggle — kept on one line. */
     .pcell{white-space:nowrap}
@@ -172,8 +177,8 @@ _WEB_TEMPLATE = """\
        stay left-aligned. */
     .smtc,.batc,.connc,.actc{text-align:center}
     td.smtc{padding-left:6px;padding-right:6px}
-    .wr:hover td{background:#161b22}
-    .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
+    .wr:hover td{background:rgba(32,41,54,.6)}
+    .hub-hdr td{background:rgba(13,20,32,.5);color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
     .hub-hdr:first-child td{border-top:none;padding-top:0}
     .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
     tr.empty td{color:#6e7681}
@@ -1345,8 +1350,15 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000);else flashFail(connPill(serial))});}
-function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,6000);else flashFail(connPill(serial))});}
+function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'adb',null);setTimeout(refresh,5000);}else flashFail(connPill(serial))});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'ssh',d.ip);setTimeout(refresh,6000);}else flashFail(connPill(serial))});}
+// Keep an open Network Center in sync with a USB-mode switch made from it: the
+// mode and assigned IP change immediately, before the watch re-enumerates.
+function ncSet(serial,mode,ip){
+  if(ncSerial!==serial)return;
+  ncMode=mode; if(ip)ncSshIp=ip;
+  if(ncCache[serial])renderNC(ncCache[serial]);
+}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
     toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');
