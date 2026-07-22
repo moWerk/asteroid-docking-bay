@@ -556,7 +556,7 @@ function mkadbrow(p){
   // A safely-down or worn watch is offline on purpose — say so here rather than
   // a bare dash, so the connection column reads as intentional, not a fault.
   if(p.adb===null&&p.lifecycle==='down')
-    return '<span class="cbadge life down" title="safely powered down — gracefully halted, port off, not draining">powered down</span>';
+    return '<span class="cbadge life down" title="shelved — gracefully powered down, port off, not draining (a deliberate, safe off)">shelved</span>';
   if(p.adb===null&&p.lifecycle==='worn')
     return '<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>';
   return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename);
