@@ -274,6 +274,15 @@ def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "st
     boot = _boot_state(ls, power)
     if boot:
         return boot
+    # A powered watch that was just in fastboot and has now dropped off the bus
+    # is almost certainly booting (mo): a flash or a fastboot reboot takes it off
+    # the bus for the boot, and the bare "no link" that showed instead read as a
+    # dead watch. Claim "booting" for a bounded window after the last fastboot
+    # sighting; past the cap we stop claiming and let the plain state show.
+    if power and ls.get("last_conn_state") == "fastboot":
+        llt = ls.get("last_live_ts") or 0
+        if llt and time.time() - llt < BOOT_FAIL_CAP:
+            return "booting"
     if power:
         return None
     so = ls.get("safe_off_ts") or 0

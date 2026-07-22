@@ -205,6 +205,25 @@ def test_lifecycle_down_only_after_a_graceful_shutdown(monkeypatch):
     assert ws._lifecycle("S2", present=False, power=False) is None
 
 
+def test_lifecycle_booting_after_leaving_fastboot(monkeypatch):
+    """A powered watch last seen in fastboot that has dropped off the bus is
+    almost certainly booting (a flash / fastboot reboot) — not the bare no-link
+    it showed before (mo). Bounded: past the fail cap we stop claiming, and an
+    unpowered watch is drain-warning territory, not booting."""
+    import time
+    from asteroid_docking_bay import webstatus as ws
+    store = {}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+    now = time.time()
+    store["S1"] = {"last_conn_state": "fastboot", "last_live_ts": now - 10}
+    assert ws._lifecycle("S1", present=False, power=True) == "booting"
+    assert ws._lifecycle("S1", present=True, power=True) is None      # booted, seen
+    store["S1"]["last_live_ts"] = now - (ws.BOOT_FAIL_CAP + 10)       # gave up
+    assert ws._lifecycle("S1", present=False, power=True) is None
+    store["S2"] = {"last_conn_state": "fastboot", "last_live_ts": now - 10}
+    assert ws._lifecycle("S2", present=False, power=False) is None    # unpowered
+
+
 def test_lifecycle_self_clears_when_seen_live_again(monkeypatch):
     """After the watch is seen live again, last_live_ts advances past
     safe_off_ts and the claim drops with no explicit clear."""
