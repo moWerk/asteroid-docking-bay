@@ -86,11 +86,10 @@ _WEB_TEMPLATE = """\
     .spin-l{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.4px}
     .spin-sep{width:8px}
     .qp{display:flex;flex-wrap:wrap;gap:8px;padding:6px 2px 10px}
-    .qpb{width:29px;height:29px;border-radius:50%;background:#30363d;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;color:#fff;opacity:.5}
+    .qpb{width:38px;height:38px;border-radius:50%;background:#30363d;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;color:#fff;opacity:.4}
     .qpb.on{opacity:1}
     .qpb:hover{background:#3a4149}
-    .qpb.busy{cursor:progress}
-    .qpi{width:80%;height:80%;fill:#fff}
+    .qpi{width:60%;height:60%;fill:#fff}
     .cc-acts{padding:0 12px 12px}
     .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
     .cc-act:hover{background:#0d1f3a}
@@ -834,6 +833,8 @@ const CTL_TABS=[['sys','System'],['set','Settings'],['net','Network'],['bat','Ba
 const ctlCache={};
 const ctlSettings={};   // per-serial mirrored settings rows (or an error)
 let ctlDate=null;       // the Settings-tab clock spinners' dialled value
+let ctlDateTouched=false;   // once the user dials a spinner, stop tracking now
+const ctlPending=new Set(); // Settings-tab writes in flight — keys pulse until confirmed
 let ctlPoll=null;
 // Shared cell/section builders — one definition for every tab body (each used
 // to redefine its own identical copy).
@@ -953,7 +954,7 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   // Network tab show adb/.2.15 for an SSH watch. bodyNet falls back to the
   // authoritative d.transport/d.ssh_ip when these are null.
   ctlSshIp=(sshIp!=null?sshIp:null); ctlMode=(mode!=null?mode:null);
-  ctlDate=null;   // the clock spinners re-seed from now for the newly-opened watch
+  ctlDate=null; ctlDateTouched=false; ctlPending.clear();   // fresh clock + no pending writes
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
   cc.style.display='block';
@@ -1113,6 +1114,7 @@ function settingsFetch(serial){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/settings').then(r=>r.json()).then(d=>{
     if(ctlSerial!==serial)return;
     ctlSettings[serial]=d;
+    ctlPending.clear();   // the fresh state reflects any writes — stop their pulse
     if(ctlTab==='set')renderControl(ctlCache[serial]||{});
   }).catch(()=>{
     if(ctlSerial!==serial)return;
@@ -1122,7 +1124,7 @@ function settingsFetch(serial){
 }
 function settingsWrite(key,on){
   const s=ctlSerial;
-  document.querySelectorAll('#cc .set-tgl').forEach(b=>b.classList.add('busy'));
+  ctlPending.add('set:'+key); renderControl(ctlCache[s]||{});   // pulse until confirmed
   fetch('/api/watch/'+encodeURIComponent(s)+'/setting/'+(on?'on':'off')+key,{method:'POST'})
     .then(r=>r.json()).then(d=>{if(!d.ok)toast('setting write failed');setTimeout(()=>settingsFetch(s),400);})
     .catch(()=>{toast('setting write failed');settingsFetch(s);});
@@ -1150,12 +1152,12 @@ const QPICONS={
 };
 function bodyQuickpanel(qp){
   if(!qp||!qp.length)return '';
-  const btns=qp.map(t=>`<button class="qpb${t.enabled?' on':''}" title="${esc(t.label)}" onclick="quickpanelSet('${t.id}',${t.enabled?0:1})"><svg class="qpi" viewBox="0 0 512 512">${QPICONS[t.id]||''}</svg></button>`).join('');
+  const btns=qp.map(t=>`<button class="qpb${t.enabled?' on':''}${ctlPending.has('qp:'+t.id)?' cmd-pending':''}" title="${esc(t.label)}" onclick="quickpanelSet('${t.id}',${t.enabled?0:1})"><svg class="qpi" viewBox="0 0 512 512">${QPICONS[t.id]||''}</svg></button>`).join('');
   return `<div class="cc-sec"><div class="cc-sech">Quick panel</div><div class="qp">${btns}</div></div>`;
 }
 function quickpanelSet(id,on){
   const s=ctlSerial;
-  document.querySelectorAll('#cc .qpb').forEach(b=>b.classList.add('busy'));
+  ctlPending.add('qp:'+id); renderControl(ctlCache[s]||{});   // pulse until confirmed
   fetch('/api/watch/'+encodeURIComponent(s)+'/quickpanel/'+id+'/'+(on?'on':'off'),{method:'POST'})
     .then(r=>r.json()).then(d=>{if(!d.ok)toast('quickpanel write failed');setTimeout(()=>settingsFetch(s),400);})
     .catch(()=>{toast('quickpanel write failed');settingsFetch(s);});
@@ -1169,6 +1171,7 @@ function _dateNow(){const t=new Date();return {y:t.getFullYear(),mo:t.getMonth()
 function _daysInMonth(y,mo){return new Date(y,mo,0).getDate();}
 function ctlDateAdj(f,delta){
   const D=ctlDate; if(!D)return;
+  ctlDateTouched=true;                     // the user is dialing — stop tracking now
   if(f==='h')D.h=(D.h+delta+24)%24;
   else if(f==='mi')D.mi=(D.mi+delta+60)%60;
   else if(f==='mo')D.mo=(D.mo+delta+11)%12+1;
@@ -1186,7 +1189,9 @@ function ctlDateApply(){
     .catch(()=>toast('set clock failed'));
 }
 function bodyClock(d){
-  if(ctlDate===null)ctlDate=_dateNow();
+  // Track the live clock until the user dials a spinner, then hold their pick —
+  // so the preselected time is "now" by default and freezes only once grabbed.
+  if(ctlDate===null||!ctlDateTouched)ctlDate=_dateNow();
   const z=n=>String(n).padStart(2,'0'), D=ctlDate;
   const spin=(f,val,lbl)=>`<div class="spin" onwheel="ctlDateWheel(event,'${f}')" title="scroll or use the arrows to change the ${lbl}">`+
     `<button class="spin-b" tabindex="-1" onclick="ctlDateAdj('${f}',1)">&#9650;</button>`+
@@ -1214,7 +1219,7 @@ function bodySetGroups(){
       if(r.type==='bool'){
         const on=!!r.value, def=r.is_set?'':' <span class="dim">(default)</span>';
         return `<div class="cc-k">${esc(r.label)}${def}</div><div class="cc-v">`+
-          `<button class="cc-tgl set-tgl${on?' on':''}" onclick="settingsWrite('${r.key}',${on?0:1})">${on?'ON':'OFF'}</button></div>`;
+          `<button class="cc-tgl set-tgl${on?' on':''}${ctlPending.has('set:'+r.key)?' cmd-pending':''}" onclick="settingsWrite('${r.key}',${on?0:1})">${on?'ON':'OFF'}</button></div>`;
       }
       const v=r.value?String(r.value):'', base=v?v.split('/').pop():'\\u2014';
       return `<div class="cc-k">${esc(r.label)}</div><div class="cc-v"><span title="${esc(v)}">${esc(base)}</span></div>`;

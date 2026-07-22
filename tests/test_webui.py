@@ -1046,7 +1046,8 @@ def test_settings_clock_spinners_and_persistence(tmp_path):
     h.write_text(_DOM_CAPTURE + JS +
                  "\nglobal.fetch=()=>new Promise(()=>{});"
                  "ctlSerial='S9';ctlName='sk';ctlTab='set';"
-                 "ctlDate={y:2026,mo:7,d:22,h:10,mi:5};ctlSettings['S9']={ok:true,settings:[]};"
+                 "ctlDate={y:2026,mo:7,d:22,h:10,mi:5};ctlDateTouched=true;"
+                 "ctlSettings['S9']={ok:true,settings:[]};"
                  "renderControl({});const first=global.__els['cc'].innerHTML;"
                  "ctlDateAdj('h',1);"                        # 10 -> 11, re-renders
                  "renderControl({});"                        # a poll re-render must keep it
@@ -1090,3 +1091,54 @@ def test_settings_quickpanel_icons_reflect_enable_state(tmp_path):
     assert "quickpanelSet('musicButton',1)" in html, "disabled toggle should click to on"
     assert 'class="qpb on"' in html, "the enabled toggle is not shown active"
     assert 'class="qpb"' in html, "the disabled toggle is not shown dimmed"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_clock_tracks_now_until_a_spinner_is_dialed(tmp_path):
+    """The clock shows the live time by default (re-seeds each render), and stops
+    tracking the moment the user dials a spinner — otherwise a dialled arbitrary
+    time would snap back to now (mo)."""
+    import json
+    h = tmp_path / "track.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlSerial='S9';ctlTab='set';ctlSettings['S9']={ok:true,settings:[]};"
+                 "ctlDate={y:2000,mo:1,d:1,h:3,mi:3};ctlDateTouched=false;"
+                 "renderControl({});"                       # untouched → re-seeds to now
+                 "const trackedY=ctlDate.y;"
+                 "ctlDateAdj('mi',1);"                       # dial → freeze
+                 "const heldY=ctlDate.y, heldMi=ctlDate.mi;"
+                 "renderControl({});renderControl({});"      # further polls must hold
+                 "console.log(JSON.stringify({trackedY,touched:ctlDateTouched,"
+                 "held:(ctlDate.y===heldY&&ctlDate.mi===heldMi)}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["trackedY"] >= 2020, "untouched clock did not track the current time"
+    assert o["touched"] is True and o["held"] is True, "dialled time was not held"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_quickpanel_toggle_pulses_until_confirmed(tmp_path):
+    """A clicked quick-panel toggle pulses (cmd-pending) until the settings
+    refetch confirms the new state — and because the pulse is a render-applied
+    pending flag, a full poll re-render can't wipe it mid-flight (the bug: the
+    quickpanel toggles didn't pulse during exec)."""
+    import json
+    h = tmp_path / "qppulse.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"   # write never resolves → stays pending
+                 "ctlSerial='S9';ctlTab='set';ctlSettings['S9']={ok:true,settings:[],"
+                 "quickpanel:[{id:'wifiToggle',label:'Wifi',enabled:true,is_set:false}]};"
+                 "quickpanelSet('wifiToggle',0);"           # pending + re-render
+                 "const a=global.__els['cc'].innerHTML;"
+                 "renderControl({});"                        # a poll re-render must keep the pulse
+                 "const b=global.__els['cc'].innerHTML;"
+                 "console.log(JSON.stringify({first:a.indexOf('cmd-pending')>=0,"
+                 "afterPoll:b.indexOf('cmd-pending')>=0,pending:ctlPending.has('qp:wifiToggle')}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["first"] and o["pending"], "the toggle did not pulse on click"
+    assert o["afterPoll"], "the pulse was wiped by a poll re-render"
