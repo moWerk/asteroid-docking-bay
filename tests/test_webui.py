@@ -313,6 +313,28 @@ def test_smart_column_is_pills_with_the_cycle_as_the_untested_state(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_battery_graph_dot_opens_battery_info_with_history(tmp_path):
+    """The Stats battery-graph dot opens the same Battery Info panel as the
+    battery pill — not a separate sparkline popup — and the panel carries the
+    history chart at its foot when history exists."""
+    import json
+    # (a) the dot wires openBI, and the old openSpark popup is gone.
+    strip = _WEB_TEMPLATE
+    assert "openSpark" not in strip, "battery-graph dot still opens the old popup"
+    h = tmp_path / "bihist.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nbiSerial='S9';biName='sk';"
+                 "biHist['S9']={points:[{ts:1,pct:90},{ts:2,pct:80},{ts:3,pct:70}],rate:0.5};"
+                 "renderBI({bat_cap:80});"
+                 "console.log(JSON.stringify(global.__els['bi'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "Battery history" in html and "spark-svg" in html, "BI panel lost its history chart"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_stats_items_are_dots_and_the_age_trails_as_text(tmp_path):
     """Every stat icon is a dot — a glyph in a circle — for one visual language
     with the power dot and the charging circle. The last-seen age is NOT a pill

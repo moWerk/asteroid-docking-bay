@@ -128,7 +128,6 @@ _WEB_TEMPLATE = """\
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
     /* Last-seen age is not a pill — it trails the Stats dots as plain text. */
     .lastseen{color:#6e7681;font-size:11px;white-space:nowrap}
-    .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
     .wimg{position:fixed;z-index:120;display:none;
           background:#161b22;border:1px solid #30363d;border-radius:10px;
@@ -473,9 +472,10 @@ function mkstrip(p,wearH){
   }else if(p.codename){
     out+=sdot('warn','?','never drain-tested — run a drain test to rate standby life');
   }
-  // 2. battery-history sparkline — an always-present dot (the "battery graph");
-  //    click for the timeline.
-  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery history',`openSpark('${p.serial}','${esc(p.codename||'')}',event)`);
+  // 2. battery-graph dot — an always-present indicator that history exists;
+  //    clicking it opens the same Battery Info panel as the battery pill, which
+  //    carries the history chart at its foot.
+  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery info + history',`openBI('${p.serial}','${esc(p.codename||'')}',event)`);
   // 3. charge state — last of the dots, because it only appears conditionally:
   //    an active dock op (charging = yellow bolt on a green disc; drain test =
   //    a dim pulse), else the watch-side charge state (ground truth).
@@ -500,15 +500,14 @@ function sparkSvg(pts){
   const d=pts.map((p,i)=>(i?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.pct).toFixed(1)).join(' ');
   return `<svg class="spark-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><path d="${d}" fill="none" stroke="#58a6ff" stroke-width="1.5"/></svg>`;
 }
-function openSpark(serial,name,ev){
-  ev.stopPropagation();
-  openMenu(ev,`<div class="spark-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`);
+// Battery history for the Battery Info panel: fetched once when the panel opens
+// and stored per serial, so renderBI can append the chart at its foot.
+const biHist={};
+function biHistFetch(serial){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/timeline').then(r=>r.json()).then(d=>{
-    const m=document.getElementById('menu');
-    const pts=(d&&d.points)||[];
-    if(pts.length<2){m.innerHTML=`<div class="spark-hd">${esc(name)} <span class="dim">no history yet — readings accrue as it's checked/drained</span></div>`;placeMenu();return;}
-    m.innerHTML=`<div class="spark-hd">${esc(name)} battery history`+(d.rate?` <span class="dim">~${(+d.rate).toFixed(2)}%/h standby</span>`:'')+`</div>`+sparkSvg(pts);
-    placeMenu();   // reposition now the real (larger) chart size is known
+    if(biSerial!==serial)return;
+    biHist[serial]=d;
+    if(biCache[serial])renderBI(biCache[serial]);
   }).catch(()=>{});
 }
 function mkport(p){
@@ -980,6 +979,7 @@ function openBI(serial,name,ev){
   const bi=document.getElementById('bi');
   bi.classList.remove('stale-cc');
   bi.style.display='block';
+  biHistFetch(serial);
   if(biCache[serial])renderBI(biCache[serial]);
   else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();
        paintStale(serial,()=>biSerial,()=>!!biCache[serial],renderBI);}
@@ -1014,11 +1014,17 @@ function renderBI(d){
     kvg('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null,spark('btemp',15,50,'high'))+kv('Cycles',d.bat_cycles)+
     kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
     kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
+  const hist=biHist[biSerial], histPts=(hist&&hist.points)||[];
+  const histSec=histPts.length>=2
+    ? `<div class="cc-sec"><div class="cc-sech">Battery history`
+        +(hist.rate?` <span class="dim">~${(+hist.rate).toFixed(2)}%/h standby</span>`:'')
+        +`</div>${sparkSvg(histPts)}</div>`
+    : '';
   bi.innerHTML=
     `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeBI()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`;
+    `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`+histSec;
   biPlace();
 }
 function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biPoll){clearTimeout(biPoll);biPoll=null;}}
