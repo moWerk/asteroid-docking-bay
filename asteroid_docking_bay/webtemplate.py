@@ -284,9 +284,9 @@ _WEB_TEMPLATE = """\
   </table>
   </div>
   <div id="hist" style="display:none"></div>
-  <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
-  <div id="nc" class="cc" onmouseleave="ncLeave()" onmouseenter="ncEnter()"></div>
-  <div id="bi" class="cc" onmouseleave="biLeave()" onmouseenter="biEnter()"></div>
+  <div id="cc" class="cc"></div>
+  <div id="nc" class="cc"></div>
+  <div id="bi" class="cc"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -663,9 +663,9 @@ function render(data){
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
 // ── Control Center overlay ──────────────────────────────────────────────────
-let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
-let ncSerial=null, ncName=null, ncTimer=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
-let biSerial=null, biName=null, biTimer=null, biAX=0, biAY=0;
+let ccSerial=null, ccName=null, ccAX=0, ccAY=0;
+let ncSerial=null, ncName=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
+let biSerial=null, biName=null, biAX=0, biAY=0;
 // Last-fetched payload per serial, so re-opening a panel paints instantly from
 // the previous values while the fresh fetch is in flight — and a self-cancelling
 // poll keeps an open panel live (important over SSH, where a fetch is slow).
@@ -755,7 +755,7 @@ function paintStale(serial,curSerial,cacheHas,renderFn){
   }).catch(()=>{});
 }
 function openCC(serial,name,ev){
-  ev.stopPropagation(); closePanels(); graphReset();
+  ev.stopPropagation(); graphReset();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
@@ -823,9 +823,7 @@ function ccSyncTime(){
   fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
     .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ccFetch();},700));
 }
-function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}if(ccPoll){clearTimeout(ccPoll);ccPoll=null;}}
-function ccLeave(){ccTimer=setTimeout(closeCC,600);}
-function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccPoll){clearTimeout(ccPoll);ccPoll=null;}}
 
 // ── Network Center ──────────────────────────────────────────────────────────
 // A second Control-Center-like overlay, opened by clicking the ADB/SSH badge.
@@ -834,7 +832,7 @@ function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // else. The USB mode toggle lives here too, a deliberate click in an overlay
 // rather than the misclick-prone inline badge.
 function openNC(serial,name,ev,sshIp,mode){
-  ev.stopPropagation(); closePanels(); graphReset();
+  ev.stopPropagation(); graphReset();
   ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
   ncSshIp=sshIp||''; ncMode=mode||'';
   const nc=document.getElementById('nc');
@@ -893,9 +891,7 @@ function ncToggle(tech,on){
   fetch('/api/watch/'+encodeURIComponent(ncSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
     .then(()=>setTimeout(ncFetch,1600)).catch(()=>ncFetch());
 }
-function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}if(ncPoll){clearTimeout(ncPoll);ncPoll=null;}}
-function ncLeave(){ncTimer=setTimeout(closeNC,600);}
-function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
+function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncPoll){clearTimeout(ncPoll);ncPoll=null;}}
 
 // ── Battery Info ────────────────────────────────────────────────────────────
 // Opened by clicking the battery pill. There is nothing to *control* about a
@@ -904,7 +900,7 @@ function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 // read-only window, leaving the pill to carry just the charge and one line of
 // appended detail.
 function openBI(serial,name,ev){
-  ev.stopPropagation(); closePanels(); graphReset();
+  ev.stopPropagation(); graphReset();
   biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
   const bi=document.getElementById('bi');
   bi.classList.remove('stale-cc');
@@ -950,12 +946,7 @@ function renderBI(d){
     `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`;
   biPlace();
 }
-function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biTimer){clearTimeout(biTimer);biTimer=null;}if(biPoll){clearTimeout(biPoll);biPoll=null;}}
-// Only one floating window at a time: opening any panel closes the others (and
-// the composite image). Each open() calls this first, then opens its own.
-function closePanels(){closeCC();closeNC();closeBI();closeWatchImg();}
-function biLeave(){biTimer=setTimeout(closeBI,600);}
-function biEnter(){if(biTimer){clearTimeout(biTimer);biTimer=null;}}
+function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biPoll){clearTimeout(biPoll);biPoll=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
 let _menuAnchor=null;
 function openMenu(ev,html){
@@ -1014,7 +1005,6 @@ function holeFor(codename,img){
 }
 function openWatchImg(codename,serial,ev,isRound,res){
   if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
-  closeCC();closeNC();closeBI();   // one floating window at a time
   // Load the product photo in a device frame; onProdLoad then decides the
   // layout once we can inspect the image for a transparent screen cutout.
   const o=document.getElementById('wimg');
@@ -1213,13 +1203,20 @@ function doFbReport(c){toast('reading bootloader…');fetch('/api/fbreport/'+_ap
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
-document.addEventListener('click',e=>{
-  const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
-  const nc=document.getElementById('nc');if(nc.style.display==='block'&&!nc.contains(e.target)&&!e.target.classList.contains('cbadge'))closeNC();
-  const bi=document.getElementById('bi');if(bi.style.display==='block'&&!bi.contains(e.target)&&!e.target.classList.contains('cbadge'))closeBI();
-  const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
-  const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
-});
+// One floating window at a time, each persisting until a click lands OUTSIDE
+// it. Handled on mousedown in the CAPTURE phase, so it runs before any
+// trigger's onclick: the very click that opens a new window first closes
+// whatever it landed outside of. This one check gives both behaviours — the
+// outside-click close and mutual exclusivity — so openers need do nothing, and
+// there is no hover-close to make a window vanish when the pointer drifts off.
+document.addEventListener('mousedown',e=>{
+  const overlays=[['cc',closeCC],['nc',closeNC],['bi',closeBI],
+                  ['menu',closeMenu],['wimg',closeWatchImg]];
+  for(const [id,close] of overlays){
+    const el=document.getElementById(id);
+    if(el&&el.style.display==='block'&&!el.contains(e.target))close();
+  }
+},true);
 function showBackendError(msg){
   // Split mode: the page is served but the backend RPC failed, so status.get
   // came back as an {ok:false,error} envelope with no hubs. Keep the last table

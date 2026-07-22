@@ -135,9 +135,10 @@ _SAMPLE = {
 
 _DOM_STUBS = r"""
 function el(){return{style:{},classList:{add(){},remove(){},contains:()=>false,toggle(){}},
-  innerHTML:'',textContent:'',value:'',querySelectorAll:()=>[],querySelector:()=>null,
+  innerHTML:'',textContent:'',value:'',querySelectorAll:()=>[],querySelector:()=>null,contains:()=>false,
   appendChild(){},removeChild(){},remove(){},setAttribute(){},getAttribute:()=>null,offsetHeight:100,offsetWidth:100};}
-global.document={getElementById:()=>el(),createElement:()=>el(),addEventListener(){},body:el(),documentElement:el()};
+global.__h={};
+global.document={getElementById:()=>el(),createElement:()=>el(),addEventListener(t,f){global.__h[t]=f;},body:el(),documentElement:el()};
 global.window={innerWidth:1200,innerHeight:800,addEventListener(){},open(){},location:{href:''}};
 global.fetch=()=>Promise.resolve({json:()=>Promise.resolve({}),text:()=>Promise.resolve('')});
 global.EventSource=function(){this.close=function(){}};
@@ -533,21 +534,33 @@ def test_failed_actions_flash_red():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_opening_a_panel_closes_the_others(tmp_path):
-    """Only one floating window at a time — opening the Control Center while
-    Battery Info is up must close Battery Info."""
+def test_a_mousedown_outside_an_open_panel_closes_it(tmp_path):
+    """One document-level mousedown-capture handler enforces both rules at once:
+    a click anywhere outside an open panel closes it, and since triggering
+    another panel is itself an outside click, only one window is ever up. The
+    open() functions must NOT carry their own close-the-others helper — the
+    outside-click handler already covers that case (beroset: refactor, don't
+    add). The panel must persist on mere hover-out, so no timer/leave close."""
     import json
     h = tmp_path / "one.js"
     h.write_text(_DOM_CAPTURE + JS +
                  "\nglobal.fetch=()=>new Promise(()=>{});"
+                 # Open Battery Info, then fire the captured mousedown handler
+                 # with a target that no panel contains (contains()=>false).
                  "openBI('S9','sk',{stopPropagation(){},clientX:0,clientY:0});"
+                 "global.__els['bi'].style.display='block';"
                  "const biBefore=biSerial;"
-                 "openCC('S9','sk',{stopPropagation(){},clientX:0,clientY:0});"
-                 "console.log(JSON.stringify({biBefore,biAfter:biSerial,ccAfter:ccSerial}));"
+                 "global.__h.mousedown({target:el()});"
+                 "console.log(JSON.stringify({biBefore,biAfter:biSerial,"
+                 "hasHandler:typeof global.__h.mousedown}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["hasHandler"] == "function", "no document mousedown-capture handler"
     assert o["biBefore"] == "S9", "Battery Info did not open"
-    assert o["biAfter"] is None, "Battery Info stayed open when Control Center opened"
-    assert o["ccAfter"] == "S9", "Control Center did not open"
+    assert o["biAfter"] is None, "outside mousedown did not close Battery Info"
+    # The refactor's whole point: no per-open close helper, no hover-close.
+    assert "closePanels" not in JS, "openers still call an added close helper"
+    assert "ccLeave" not in JS and "onmouseleave" not in _WEB_TEMPLATE, (
+        "a hover-out close path survives — panels must persist until a click")
