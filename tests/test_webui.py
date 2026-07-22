@@ -287,6 +287,15 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
     assert "switchSsh(" not in out["wear"] and "<svg" not in out["wear"], out["wear"]
 
 
+def test_execute_trigger_is_a_markerless_pill():
+    """Execute spawns a panel like the badges/battery do, so it reads as one of
+    them: a pill, and no dropdown ▾ marker (which also stopped it wrapping to
+    two lines in a narrow tiled window)."""
+    assert ">Execute</button>" in _WEB_TEMPLATE, "Execute lost its label or gained a marker"
+    assert "Execute &#9662;" not in _WEB_TEMPLATE and "Execute ▾" not in _WEB_TEMPLATE
+    assert ".btn.ex{border-radius" in _WEB_TEMPLATE, "Execute is not pill-shaped"
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_execute_menu_folds_every_group_under_a_header(tmp_path):
     """The single Execute button opens one menu holding all former action

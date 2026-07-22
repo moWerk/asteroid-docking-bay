@@ -204,7 +204,7 @@ _WEB_TEMPLATE = """\
     .hrb{border-color:#d29922;color:#d29922}.hrb:hover{background:#2a2113}
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn.ex{border-color:#58a6ff;color:#58a6ff}.btn.ex:hover{background:#122132}
+    .btn.ex{border-radius:12px;padding:3px 15px;border-color:#58a6ff;color:#58a6ff}.btn.ex:hover{background:#122132}
     /* A worn row dims but stays. */
     .wr.worn td{opacity:.5}
     .wr.worn:hover td{opacity:.62}
@@ -675,7 +675,7 @@ function render(data){
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
-          `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute &#9662;</button>` +
+          `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute</button>` +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
