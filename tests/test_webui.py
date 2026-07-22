@@ -577,7 +577,7 @@ def test_column_order_is_the_ground_truth_order():
     actions last. The two blank leading headers are the tree glyph and the
     thumbnail."""
     m = re.search(r"<thead>.*?</thead>", _WEB_TEMPLATE, re.S)
-    labels = [t for t in re.findall(r"<th>([^<]*)</th>", m.group(0)) if t.strip()]
+    labels = [t for t in re.findall(r"<th[^>]*>([^<]*)</th>", m.group(0)) if t.strip()]
     # Port folds into the Power cell, so there is no separate Power header; the
     # blank header is the thumbnail.
     assert labels == ["Port", "Smart", "Connection",
