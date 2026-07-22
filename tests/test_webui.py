@@ -359,13 +359,13 @@ def test_pills_dots_and_toggle_share_one_height_token():
         assert "inline-block" in rule(sel), f"{sel} is not inline-block — long content won't wrap"
 
 
-def test_execute_trigger_is_a_markerless_pill():
-    """Execute spawns a panel like the badges/battery do, so it reads as one of
-    them: a pill, and no dropdown ▾ marker (which also stopped it wrapping to
-    two lines in a narrow tiled window)."""
-    assert ">Execute</button>" in _WEB_TEMPLATE, "Execute lost its label or gained a marker"
-    assert "Execute &#9662;" not in _WEB_TEMPLATE and "Execute ▾" not in _WEB_TEMPLATE
-    assert ".btn.ex{border-radius" in _WEB_TEMPLATE, "Execute is not pill-shaped"
+def test_menu_trigger_is_a_markerless_pill():
+    """The row menu trigger spawns a panel like the badges/battery pills do, so
+    it reads as one of them: labelled "menu", a pill, and no dropdown ▾ marker
+    (which also stopped it wrapping to two lines in a narrow tiled window)."""
+    assert ">menu</button>" in _WEB_TEMPLATE, "menu trigger lost its label or gained a marker"
+    assert "&#9662;" not in _WEB_TEMPLATE and "▾" not in _WEB_TEMPLATE
+    assert ".btn.ex{border-radius" in _WEB_TEMPLATE, "menu trigger is not pill-shaped"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
