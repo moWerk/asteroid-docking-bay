@@ -256,17 +256,17 @@ _WEB_TEMPLATE = """\
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
       .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(7){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
-      .wr td:nth-child(7) .wthumb{width:44px;height:44px}
-      .wr td:nth-child(8){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
+      .wr td:nth-child(6){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
+      .wr td:nth-child(6) .wthumb{width:44px;height:44px}
+      .wr td:nth-child(7){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
                           padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}  /* codename title */
       .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
       .wr td:nth-child(2)::before{content:"Port"}
       .wr td:nth-child(3)::before{content:"Power"}
       .wr td:nth-child(4)::before{content:"Smart"}
       .wr td:nth-child(5)::before{content:"Connection"}
-      .wr td:nth-child(6)::before{content:"Battery"}
-      .wr td:nth-child(9)::before{content:"Stats"}
+      .wr td:nth-child(8)::before{content:"Stats"}
+      .wr td:nth-child(9)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
       .wr td:nth-child(10){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
@@ -290,8 +290,8 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th>Port</th><th>Power</th><th>Smart</th><th>Connection</th><th>Battery</th>
-      <th></th><th>Watch</th><th>Stats</th><th>Actions</th>
+      <th></th><th>Port</th><th>Power</th><th>Smart</th><th>Connection</th>
+      <th></th><th>Watch</th><th>Stats</th><th>Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -595,10 +595,10 @@ function render(data){
           `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adbCell}</td>` +
-          `<td class="dim">&mdash;</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
+          `<td class="dim">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
@@ -668,12 +668,12 @@ function render(data){
           `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
-          `<td id="bat-${slot}">${bat}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
             :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
+          `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
           `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute &#9662;</button>` +
           `</td></tr>` +

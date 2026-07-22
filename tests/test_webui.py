@@ -498,7 +498,7 @@ def test_column_order_is_the_ground_truth_order():
     m = re.search(r"<thead>.*?</thead>", _WEB_TEMPLATE, re.S)
     labels = [t for t in re.findall(r"<th>([^<]*)</th>", m.group(0)) if t.strip()]
     assert labels == ["Port", "Power", "Smart", "Connection",
-                      "Battery", "Watch", "Stats", "Actions"], labels
+                      "Watch", "Stats", "Battery", "Actions"], labels
 
 
 def test_usb_preference_toggle_is_present_with_a_bullet_tooltip():
