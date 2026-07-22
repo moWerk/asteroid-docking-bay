@@ -17,7 +17,7 @@ from .util import _run, log
 from .adb import _adb_state, adb_devices, adb_shell, get_watch_codename
 from .transport import AdbTransport
 from .config import ChargeConfig, find_serial_for_codename, save_config
-from .watch_settings import effective_settings
+from .watch_settings import dconf_arg, effective_settings, writable
 
 
 def wait_for_adb(codename: str, cfg: dict,
@@ -321,6 +321,21 @@ class Watch:
         fall back to their baked defaults; None when the watch is unreachable."""
         rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
         return effective_settings(out) if rc == 0 else None
+
+    def settings_write(self, key: str, value) -> bool:
+        """Write one togglable setting over dconf in the ceres session (same env
+        the read uses). Refuses any key not in the writable catalog — display-
+        only 'path' rows and anything off-catalog can't be reached here."""
+        s = writable(key)
+        if s is None:
+            log.warning("settings_write refused non-writable key %s", key)
+            return False
+        cmd = f"HOME=/home/ceres dconf write {shlex.quote(key)} {dconf_arg(s, value)}"
+        rc, _, err = self.user_cmd(cmd, timeout=12)
+        if rc != 0:
+            log.warning("settings_write %s on %s failed: %s",
+                        key, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
 
     def notify(self) -> bool:
         """Send a test notification."""

@@ -100,3 +100,55 @@ def test_settings_read_op_reports_unreachable(monkeypatch):
                                        "settings_read": lambda self: None}))
     d = rpcops.DISPATCH._data["watch.settings_read"]({"serial": "S1"})
     assert d["ok"] is False and "unreachable" in d["error"]
+
+
+# ── the write gate ───────────────────────────────────────────────────────────
+
+def test_writable_accepts_boolean_settings_only():
+    from asteroid_docking_bay.watch_settings import writable
+    assert writable("/org/asteroidos/settings/use-12h-format") is not None
+    assert writable("/desktop/asteroid/watchface") is None        # display-only path
+    assert writable("/desktop/asteroid/background-filename") is None
+    assert writable("/etc/anything") is None                      # off-catalog
+
+
+def test_dconf_arg_is_a_bool_literal():
+    from asteroid_docking_bay.watch_settings import dconf_arg, writable
+    s = writable("/org/asteroidos/settings/use-12h-format")
+    assert dconf_arg(s, True) == "true" and dconf_arg(s, False) == "false"
+
+
+def test_settings_write_refuses_a_display_only_key_without_touching_the_watch():
+    from asteroid_docking_bay.watchctl import Watch
+    calls = []
+    w = Watch("S1", transport=object())
+    w.user_cmd = lambda cmd, timeout=12: (calls.append(cmd), (0, "", ""))[1]
+    assert w.settings_write("/desktop/asteroid/watchface", True) is False
+    assert calls == [], "a display-only key still issued a dconf write"
+
+
+def test_settings_write_writes_a_boolean_key():
+    from asteroid_docking_bay.watchctl import Watch
+    calls = []
+    w = Watch("S1", transport=object())
+    w.user_cmd = lambda cmd, timeout=12: (calls.append(cmd), (0, "", ""))[1]
+    assert w.settings_write("/org/asteroidos/settings/use-12h-format", True) is True
+    assert len(calls) == 1
+    assert "dconf write" in calls[0] and "use-12h-format true" in calls[0]
+
+
+def test_settings_write_op_coerces_value_and_dispatches(monkeypatch):
+    seen = {}
+
+    class W:
+        def __init__(self, *a, **k):
+            pass
+
+        def settings_write(self, key, value):
+            seen.update(key=key, value=value)
+            return True
+
+    monkeypatch.setattr(rpcops, "Watch", W)
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    d = rpcops.DISPATCH._data["watch.settings_write"]({"serial": "S1", "key": "/k", "value": 1})
+    assert d == {"ok": True} and seen == {"key": "/k", "value": True}

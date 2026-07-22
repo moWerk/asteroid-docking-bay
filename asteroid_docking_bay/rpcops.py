@@ -177,6 +177,15 @@ def _watch_settings_read(args):
     return {"ok": True, "settings": rows}
 
 
+@DISPATCH.op("watch.settings_write")
+def _watch_settings_write(args):
+    """Write one togglable mirrored setting over dconf. The watch layer refuses
+    any key not in the writable catalog, so an unknown or display-only key is a
+    no-op, never a write — the catalog is the boundary."""
+    ok = _watch(args["serial"]).settings_write(args["key"], bool(args["value"]))
+    return {"ok": ok}
+
+
 @DISPATCH.op("watch.toggle")
 def _watch_toggle(args):
     tech = args["tech"]

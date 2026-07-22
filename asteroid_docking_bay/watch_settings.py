@@ -89,3 +89,21 @@ def effective_settings(dump_text):
                      "type": s.type, "value": stored[s.key] if is_set else s.default,
                      "is_set": is_set})
     return rows
+
+
+def writable(key):
+    """The Setting for a key a-d-b may write, or None. Only the boolean settings
+    are writable — the 'path' rows (watchface/launcher/wallpaper) are display-
+    only (mo), and any key outside the catalog is refused. This is the boundary:
+    the write op can only reach a key this returns non-None for."""
+    for setting in SETTINGS:
+        if setting.key == key:
+            return setting if setting.type == "bool" else None
+    return None
+
+
+def dconf_arg(setting, value):
+    """The dconf-write gvariant literal for a setting's new value (bools only)."""
+    if setting.type == "bool":
+        return "true" if value else "false"
+    raise ValueError(f"{setting.type} settings are not writable")

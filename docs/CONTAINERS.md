@@ -99,6 +99,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
 | `watch.settings_read` | mirrored watch settings (dconf appearance/display/nightstand), read-only |
+| `watch.settings_write` | write one togglable mirrored setting over dconf (catalog-gated boolean keys only) |
 | `watch.fbreport` | fastboot getvar all -> downloadable text report |
 | `config.hide / hide_hub` | config mutations |
 | `flash.start`, `onboard.start` | streaming ops |

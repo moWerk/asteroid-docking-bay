@@ -164,6 +164,15 @@ def serve(args, cfg: dict):
         _bust_status_cache()
         return json.dumps(d)
 
+    # The dconf key carries slashes, so it is the trailing <key:path>; the value
+    # is the on/off segment before it (only booleans are writable).
+    @app.post("/api/watch/<serial>/setting/<state>/<key:path>")
+    def api_watch_setting(serial, state, key):
+        resp.content_type = "application/json"
+        d = _call("watch.settings_write",
+                  {"serial": serial, "key": "/" + key, "value": state == "on"})
+        return json.dumps(d)
+
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         d = _call("watch.screenshot", {"serial": serial})
