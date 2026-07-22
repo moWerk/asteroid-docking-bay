@@ -478,3 +478,21 @@ def test_spark_bars_scale_and_colour_by_metric_direction(tmp_path):
     assert bhue > 90, f"full battery should be green, hue={bhue}"
     assert lhue < 30, f"high load should be red, hue={lhue}"
     assert o["empty"] == "", "no samples yet must draw nothing"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_poll_interval_and_tag_follow_the_transport(tmp_path):
+    """adb polls at 3s, SSH at 10s (a 3s poll can't keep up with an SSH
+    round-trip), and the panel header shows which."""
+    import json
+    h = tmp_path / "poll.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({"
+                 "adbMs:panelPollMs({transport:'adb'}),sshMs:panelPollMs({transport:'ssh'}),"
+                 "adbTag:pollTag({transport:'adb'}),sshTag:pollTag({transport:'ssh'})}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["adbMs"] == 3000 and o["sshMs"] == 10000, o
+    assert "3s" in o["adbTag"] and "10s" in o["sshTag"] and "ssh" in o["sshTag"]

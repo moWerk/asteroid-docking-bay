@@ -106,16 +106,21 @@ def _watch_cc(args):
     # Passive standby drain measured across power-off→boot (event log), honest
     # because it carries no charge-bump. Always current, so fold into either path.
     standby = event_log.standby_off_to_on_rate(serial, None)
-    data = _watch(serial).cc_data()
+    tr = _reachable_transport(serial)
+    # Tell the UI which link answered, so it can pace its live-poll to match:
+    # adb is a warm channel (fast), SSH pays a fresh handshake per call (slow).
+    tkind = "ssh" if isinstance(tr, SshTransport) else "adb"
+    data = Watch(serial, transport=tr).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
         # Screen geometry/resolution is cached separately (probed by the status
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
         geo = (last_seen.get(serial) or {}).get("geometry")
-        extra = {}
+        extra = {"transport": tkind}
         if geo:
-            extra = {"geometry": geo, "resolution": geo.get("resolution")}
+            extra["geometry"] = geo
+            extra["resolution"] = geo.get("resolution")
         if standby is not None:
             extra["standby_measured"] = round(standby, 2)
         return {**data, **extra} if extra else data

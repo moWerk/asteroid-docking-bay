@@ -539,3 +539,24 @@ def test_poweroff_over_ssh_marks_down_and_does_not_strand(monkeypatch):
     assert calls == [("192.168.13.37", "poweroff")], "did not power off over ssh"
     assert powered == [False], "port not cut after the ssh halt"
     assert marked.get("safe_off_ts"), "ssh poweroff did not stamp the down marker"
+
+
+def test_watch_cc_reports_the_transport_for_poll_pacing(monkeypatch):
+    """The Control Center paces its live poll to the link: adb is fast, SSH is
+    slow. So watch.cc must report which transport answered."""
+    import asteroid_docking_bay.rpcops as ro
+    from asteroid_docking_bay.transport import SshTransport
+
+    class _W:
+        def __init__(self, s, transport=None): pass
+        def cc_data(self): return {"kernel": "x"}
+    monkeypatch.setattr(ro, "Watch", _W)
+    monkeypatch.setattr(ro, "last_seen",
+                        type("L", (), {"record": staticmethod(lambda *a, **k: None),
+                                       "get": staticmethod(lambda s: None)}))
+    monkeypatch.setattr(ro.event_log, "standby_off_to_on_rate", lambda *a, **k: None)
+
+    monkeypatch.setattr(ro, "_reachable_transport", lambda s: None)   # adb
+    assert ro.DISPATCH._data["watch.cc"]({"serial": "S1"})["transport"] == "adb"
+    monkeypatch.setattr(ro, "_reachable_transport", lambda s: SshTransport("1.2.3.4"))
+    assert ro.DISPATCH._data["watch.cc"]({"serial": "S1"})["transport"] == "ssh"

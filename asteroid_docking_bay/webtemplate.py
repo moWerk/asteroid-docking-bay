@@ -643,7 +643,10 @@ let biSerial=null, biName=null, biTimer=null, biAX=0, biAY=0;
 // poll keeps an open panel live (important over SSH, where a fetch is slow).
 const ccCache={}, ncCache={}, biCache={};
 let ccPoll=null, ncPoll=null, biPoll=null;
-const PANEL_POLL_MS=3500;
+// adb is a warm channel (poll briskly); SSH pays a handshake per call, so a
+// 3s poll would never keep up — pace it to 10s. The panel header shows which.
+function panelPollMs(d){return (d&&d.transport==='ssh')?10000:3000;}
+function pollTag(d){return d?` <span class="dim" title="live refresh interval">&middot; ${d.transport==='ssh'?'10s &middot; ssh':'3s'}</span>`:'';}
 
 // ── live btop-style graphs ──────────────────────────────────────────────────
 // A temporary history that lives only while a panel is open — one shared store
@@ -728,7 +731,7 @@ function ccFetch(){
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(ccSerial!==s)return;
     ccCache[s]=d; graphPush('load',_load1(d)); graphPush('mem',_memPct(d)); renderCC(d);
-    clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,PANEL_POLL_MS);   // keep live while open
+    clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,panelPollMs(d));   // keep live while open
   }).catch(()=>{
     if(ccSerial!==s)return;
     const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${esc(ccName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
@@ -761,7 +764,7 @@ function renderCC(d){
     // identify a device, so a human can check our detection against it.
     kv('Bootloader',d.geometry&&d.geometry.bootloader));
   cc.innerHTML=
-    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
+    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
@@ -807,7 +810,7 @@ function ncFetch(){
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(ncSerial!==s)return;
     ncCache[s]=d; graphPushRate('rx',d.net_rx); graphPushRate('tx',d.net_tx); renderNC(d);
-    clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,PANEL_POLL_MS);
+    clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,panelPollMs(d));
   }).catch(()=>{
     if(ncSerial!==s)return;
     const nc=document.getElementById('nc');nc.innerHTML=`<div class="cc-hd">${esc(ncName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeNC()">&times;</span></div>`;
@@ -838,7 +841,7 @@ function renderNC(d){
     ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
     : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
   nc.innerHTML=
-    `<div class="cc-hd">${esc(ncName)} &middot; Network <span class="dim">${esc(d.os||'')}</span>`+
+    `<div class="cc-hd">${esc(ncName)} &middot; Network <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeNC()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+
@@ -875,7 +878,7 @@ function biFetch(){
   fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
     if(biSerial!==s)return;
     biCache[s]=d; graphPush('bcap',d.bat_cap==null?null:+d.bat_cap); graphPush('bvolt',d.bat_volt?+d.bat_volt/1e6:null); graphPush('bcur',d.bat_curr?+d.bat_curr/1000:null); graphPush('btemp',d.bat_temp==null?null:+d.bat_temp/10); renderBI(d);
-    clearTimeout(biPoll); biPoll=setTimeout(biFetch,PANEL_POLL_MS);
+    clearTimeout(biPoll); biPoll=setTimeout(biFetch,panelPollMs(d));
   }).catch(()=>{
     if(biSerial!==s)return;
     const bi=document.getElementById('bi');bi.innerHTML=`<div class="cc-hd">${esc(biName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeBI()">&times;</span></div>`;
@@ -900,7 +903,7 @@ function renderBI(d){
     kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
     kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
   bi.innerHTML=
-    `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>`+
+    `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeBI()">&times;</span></div>`+
     `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`;
