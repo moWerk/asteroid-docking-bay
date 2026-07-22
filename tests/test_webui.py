@@ -1013,3 +1013,22 @@ def test_settings_tab_renders_toggles_and_readonly_paths(tmp_path):
     assert "(default)" in html, "an unset key is not marked as default"
     assert "000-default.qml" in html and "Watchface" in html, "path selection not shown"
     assert "settingsWrite('/desktop/asteroid/watchface'" not in html, "a display-only path wired a write"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_network_tab_reads_mode_and_ip_from_the_server_not_the_click(tmp_path):
+    """Reached via another tab, the Network tab has no click USB context, so it
+    must take the real mode + IP from the blob (d.transport / d.ssh_ip) — an SSH
+    watch shown as ADB/.2.15 was the bug (mo: actual IP .13.40, mode ssh)."""
+    import json
+    h = tmp_path / "nettransport.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nctlSerial='S9';ctlName='sk';ctlTab='net';ctlMode=null;ctlSshIp=null;"
+                 "renderControl({serial:'S9',transport:'ssh',ssh_ip:'192.168.13.40',wifi:1});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "SSH (developer)" in html and "192.168.13.40" in html, "did not use the server's mode/IP"
+    assert "switchAdb(" in html, "an SSH watch was not offered the switch-to-ADB toggle"
+    assert "192.168.2.15" not in html, "fell back to the default ADB IP for an SSH watch"

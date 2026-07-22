@@ -934,7 +934,11 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   ev.stopPropagation(); graphReset();      // fresh graphs for a fresh watch, not per tab
   ctlSerial=serial; ctlName=name; ctlAX=ev.clientX; ctlAY=ev.clientY;
   ctlTab=tab||'sys'; ctlMoved=false; ctlPlaced=false;   // a new open re-anchors
-  if(sshIp!=null)ctlSshIp=sshIp; if(mode!=null)ctlMode=mode;
+  // Reset the click's USB context each open — a codename/battery open carries
+  // none, and a stale value from a previous open is exactly what made the
+  // Network tab show adb/.2.15 for an SSH watch. bodyNet falls back to the
+  // authoritative d.transport/d.ssh_ip when these are null.
+  ctlSshIp=(sshIp!=null?sshIp:null); ctlMode=(mode!=null?mode:null);
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
   cc.style.display='block';
@@ -1040,15 +1044,18 @@ function bodyNet(d){
   d=d||{};
   const mb=x=>{const n=_num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
   const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
-  const usbip=ctlSshIp||'192.168.2.15';
+  // The link that answered (d.transport) is the watch's real USB gadget mode;
+  // ctlMode/ctlSshIp only override it transiently right after a manual switch.
+  const mode=ctlMode||d.transport||'adb', isSsh=mode==='ssh';
+  const usbip=ctlSshIp||d.ssh_ip||(isSsh?'192.168.13.37':'192.168.2.15');
   const net=_sec('Addresses &amp; links',
-    _kv('USB IP',usbip)+_kv('USB mode',ctlMode==='ssh'?'SSH (developer)':'ADB')+
+    _kv('USB IP',usbip)+_kv('USB mode',isSsh?'SSH (developer)':'ADB')+
     _kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+_kv('WiFi IP',d.ip)+
     _kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
     _kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+_kv('Phone',phone)+
     _kv('WLAN MAC',d.wlanmac)+_kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
-  const modeToggle=ctlMode==='ssh'
+  const modeToggle=isSsh
     ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
     : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
   return `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+

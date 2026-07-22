@@ -119,6 +119,9 @@ def _stale_cc(serial, standby):
     blob = dict(cached["cc"])
     blob["stale"] = True
     blob["last_live_ts"] = cached.get("cc_ts")
+    ip = ssh_ip_for_serial(load_config(), serial)
+    if ip:
+        blob["ssh_ip"] = ip
     geo = cached.get("geometry")
     if geo:
         blob["geometry"] = geo
@@ -156,7 +159,14 @@ def _watch_cc(args):
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
         geo = (last_seen.get(serial) or {}).get("geometry")
+        # The link that answered IS the watch's USB gadget mode (ssh/developer
+        # vs adb), and its assigned SSH IP lives in config — surface both so the
+        # Network tab shows the truth however it was opened, not the click's
+        # stale context.
         extra = {"transport": tkind}
+        ip = ssh_ip_for_serial(load_config(), serial)
+        if ip:
+            extra["ssh_ip"] = ip
         if geo:
             extra["geometry"] = geo
             extra["resolution"] = geo.get("resolution")
