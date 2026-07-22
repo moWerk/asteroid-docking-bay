@@ -78,6 +78,13 @@ _WEB_TEMPLATE = """\
     .cc-tgl.busy{opacity:.5;cursor:progress}
     .cc-tgl:hover{background:#0d1117}
     .set-tgl{flex:0 0 auto;padding:3px 10px;min-width:46px;font-size:11px}
+    .spins{display:flex;gap:5px;align-items:flex-end;justify-content:center;padding:4px 0 10px}
+    .spin{display:flex;flex-direction:column;align-items:center;gap:2px;user-select:none}
+    .spin-b{border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;font-size:8px;line-height:1;padding:2px 7px;border-radius:4px}
+    .spin-b:hover{background:#0d1117;color:#c9d1d9}
+    .spin-v{font-variant-numeric:tabular-nums;font-size:15px;color:#c9d1d9;padding:1px 3px;min-width:24px;text-align:center}
+    .spin-l{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.4px}
+    .spin-sep{width:8px}
     .cc-acts{padding:0 12px 12px}
     .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
     .cc-act:hover{background:#0d1f3a}
@@ -820,6 +827,7 @@ const CTL_TABS=[['sys','System'],['set','Settings'],['net','Network'],['bat','Ba
 // poll keeps the open window live (important over SSH, where a fetch is slow).
 const ctlCache={};
 const ctlSettings={};   // per-serial mirrored settings rows (or an error)
+let ctlDate=null;       // the Settings-tab clock spinners' dialled value
 let ctlPoll=null;
 // Shared cell/section builders — one definition for every tab body (each used
 // to redefine its own identical copy).
@@ -939,6 +947,7 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   // Network tab show adb/.2.15 for an SSH watch. bodyNet falls back to the
   // authoritative d.transport/d.ssh_ip when these are null.
   ctlSshIp=(sshIp!=null?sshIp:null); ctlMode=(mode!=null?mode:null);
+  ctlDate=null;   // the clock spinners re-seed from now for the newly-opened watch
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
   cc.style.display='block';
@@ -1023,8 +1032,7 @@ function bodySys(d){
     `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
-      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
-    `<div class="cc-acts"><button class="cc-act" id="cc-time" onclick="ccSyncTime()">Sync time from host</button></div>`;
+      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`;
 }
 function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
 function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ctlFetch();refresh();});}
@@ -1113,7 +1121,50 @@ function settingsWrite(key,on){
     .then(r=>r.json()).then(d=>{if(!d.ok)toast('setting write failed');setTimeout(()=>settingsFetch(s),400);})
     .catch(()=>{toast('setting write failed');settingsFetch(s);});
 }
-function bodySet(d){
+// ── Clock (arbitrary time) — the top of the Settings tab ────────────────────
+// Spinners for hour/min and day/month/year, each reacting to the mouse wheel
+// and to its ▲▼, matching the watch's own spinner UI. The dialled value lives
+// in ctlDate so a 3s poll re-render can't reset it mid-adjust. Set clock applies
+// it; Sync from host (moved here from the System tab) resets it to the host.
+function _dateNow(){const t=new Date();return {y:t.getFullYear(),mo:t.getMonth()+1,d:t.getDate(),h:t.getHours(),mi:t.getMinutes()};}
+function _daysInMonth(y,mo){return new Date(y,mo,0).getDate();}
+function ctlDateAdj(f,delta){
+  const D=ctlDate; if(!D)return;
+  if(f==='h')D.h=(D.h+delta+24)%24;
+  else if(f==='mi')D.mi=(D.mi+delta+60)%60;
+  else if(f==='mo')D.mo=(D.mo+delta+11)%12+1;
+  else if(f==='y')D.y=Math.min(2099,Math.max(1970,D.y+delta));
+  else if(f==='d'){const dim=_daysInMonth(D.y,D.mo);D.d=(D.d-1+delta+dim)%dim+1;}
+  const dim=_daysInMonth(D.y,D.mo); if(D.d>dim)D.d=dim;   // clamp after a shorter month
+  renderControl(ctlCache[ctlSerial]||{});
+}
+function ctlDateWheel(e,f){e.preventDefault();ctlDateAdj(f,e.deltaY<0?1:-1);}
+function ctlDateApply(){
+  const s=ctlSerial,z=n=>String(n).padStart(2,'0'),D=ctlDate;
+  const when=`${D.y}-${z(D.mo)}-${z(D.d)} ${z(D.h)}:${z(D.mi)}:00`;
+  fetch('/api/watch/'+encodeURIComponent(s)+'/datetime/'+encodeURIComponent(when),{method:'POST'})
+    .then(r=>r.json()).then(d=>toast(d.ok?'clock set: '+when:'set clock failed'))
+    .catch(()=>toast('set clock failed'));
+}
+function bodyClock(d){
+  if(ctlDate===null)ctlDate=_dateNow();
+  const z=n=>String(n).padStart(2,'0'), D=ctlDate;
+  const spin=(f,val,lbl)=>`<div class="spin" onwheel="ctlDateWheel(event,'${f}')" title="scroll or use the arrows to change the ${lbl}">`+
+    `<button class="spin-b" tabindex="-1" onclick="ctlDateAdj('${f}',1)">&#9650;</button>`+
+    `<div class="spin-v">${val}</div>`+
+    `<button class="spin-b" tabindex="-1" onclick="ctlDateAdj('${f}',-1)">&#9660;</button>`+
+    `<div class="spin-l">${lbl}</div></div>`;
+  const spins=spin('h',z(D.h),'hr')+spin('mi',z(D.mi),'min')+`<div class="spin-sep"></div>`+
+    spin('d',z(D.d),'day')+spin('mo',z(D.mo),'mon')+spin('y',D.y,'year');
+  return `<div class="cc-sec"><div class="cc-sech">Clock</div>`+
+    `<div class="spins">${spins}</div>`+
+    `<div class="cc-tgls">`+
+      `<button class="cc-act mini" onclick="ctlDateApply()" title="set the watch clock to the dialled time">Set clock</button>`+
+      `<button class="cc-act mini" id="cc-time" onclick="ccSyncTime()" title="reset the watch clock + timezone to the host">Sync from host</button>`+
+    `</div></div>`;
+}
+function bodySet(d){return bodyClock(d)+bodySetGroups();}
+function bodySetGroups(){
   const st=ctlSettings[ctlSerial];
   if(!st)return `<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`;
   if(!st.ok)return `<div class="cc-sec"><span class="err">${esc(st.error||'unreachable')}</span></div>`;

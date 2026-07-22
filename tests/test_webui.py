@@ -642,6 +642,7 @@ def test_control_center_no_longer_carries_the_battery_section(tmp_path):
     html = json.loads(r.stdout.strip().splitlines()[-1])
     assert "System" in html, "Control Center lost its System section"
     assert "Cycles" not in html, "Control Center still carries the moved battery detail"
+    assert "ccSyncTime(" not in html, "Sync-from-host should have moved to the Settings tab"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -1032,3 +1033,34 @@ def test_network_tab_reads_mode_and_ip_from_the_server_not_the_click(tmp_path):
     assert "SSH (developer)" in html and "192.168.13.40" in html, "did not use the server's mode/IP"
     assert "switchAdb(" in html, "an SSH watch was not offered the switch-to-ADB toggle"
     assert "192.168.2.15" not in html, "fell back to the default ADB IP for an SSH watch"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_settings_clock_spinners_and_persistence(tmp_path):
+    """The Settings tab opens with a Clock section: five scroll-wheel spinners, a
+    Set-clock button (set_datetime) and Sync-from-host (moved from System). The
+    dialled value must survive a poll re-render — re-deriving it from now each
+    render would snap it back mid-adjust (the bug this pins)."""
+    import json
+    h = tmp_path / "clock.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlSerial='S9';ctlName='sk';ctlTab='set';"
+                 "ctlDate={y:2026,mo:7,d:22,h:10,mi:5};ctlSettings['S9']={ok:true,settings:[]};"
+                 "renderControl({});const first=global.__els['cc'].innerHTML;"
+                 "ctlDateAdj('h',1);"                        # 10 -> 11, re-renders
+                 "renderControl({});"                        # a poll re-render must keep it
+                 "console.log(JSON.stringify({h:ctlDate.h,html:global.__els['cc'].innerHTML,"
+                 "hasWheel:first.indexOf(\"ctlDateWheel(event,'y')\")>=0,"
+                 "hasApply:first.indexOf('ctlDateApply(')>=0,"
+                 "hasSync:first.indexOf('ccSyncTime(')>=0,"
+                 "spins:(first.match(/class=\"spin-v\"/g)||[]).length}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["hasWheel"], "spinners do not react to the mouse wheel"
+    assert o["hasApply"], "no Set-clock button wired to set_datetime"
+    assert o["hasSync"], "Sync-from-host was not moved into the Clock section"
+    assert o["spins"] == 5, "expected five spinners (hr min day mon year)"
+    assert o["h"] == 11 and '<div class="spin-v">11</div>' in o["html"], \
+        "the dialled spinner value did not survive a re-render"
