@@ -77,20 +77,22 @@ def test_catalog_covers_only_non_redundant_settings():
 # ── the read op ──────────────────────────────────────────────────────────────
 
 class _FakeWatch:
-    rows = [{"key": "/x", "value": True, "is_set": True}]
+    data = {"settings": [{"key": "/x", "value": True, "is_set": True}],
+            "quickpanel": [{"id": "wifiToggle", "enabled": True, "is_set": False}]}
 
     def __init__(self, *a, **k):
         pass
 
     def settings_read(self):
-        return type(self).rows
+        return type(self).data
 
 
-def test_settings_read_op_returns_rows(monkeypatch):
+def test_settings_read_op_returns_rows_and_quickpanel(monkeypatch):
     monkeypatch.setattr(rpcops, "Watch", _FakeWatch)
     monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
     d = rpcops.DISPATCH._data["watch.settings_read"]({"serial": "S1"})
     assert d["ok"] is True and d["settings"][0]["value"] is True
+    assert d["quickpanel"][0]["id"] == "wifiToggle"
 
 
 def test_settings_read_op_reports_unreachable(monkeypatch):
@@ -167,3 +169,63 @@ def test_set_datetime_validates_before_touching_the_watch(monkeypatch):
         "a malformed datetime reached the shell"
     ok = rpcops.DISPATCH._data["watch.set_datetime"]({"serial": "S1", "when": "2026-07-22 14:30:00"})
     assert ok == {"ok": True} and called == ["2026-07-22 14:30:00"]
+
+
+# ── quick-panel toggle set ───────────────────────────────────────────────────
+
+def test_quickpanel_dict_parse_and_default_merge():
+    from asteroid_docking_bay.watch_settings import parse_gvariant_dict, quickpanel_state
+    assert parse_gvariant_dict("{'wifiToggle': true, 'musicButton': false}") == \
+        {"wifiToggle": True, "musicButton": False}
+    rows = {r["id"]: r for r in quickpanel_state("")}          # empty dump = defaults
+    assert rows["wifiToggle"]["enabled"] is True and rows["wifiToggle"]["is_set"] is False
+    assert rows["musicButton"]["enabled"] is False             # music defaults off
+    dump = "[desktop/asteroid/quickpanel]\nenabled={'wifiToggle': false, 'musicButton': true}\n"
+    rows = {r["id"]: r for r in quickpanel_state(dump)}
+    assert rows["wifiToggle"]["enabled"] is False and rows["wifiToggle"]["is_set"] is True
+    assert rows["musicButton"]["enabled"] is True
+
+
+def test_quickpanel_write_arg_is_a_complete_dict():
+    from asteroid_docking_bay.watch_settings import QUICKPANEL, quickpanel_write_arg
+    arg = quickpanel_write_arg({"wifiToggle": False})
+    assert arg.startswith("{") and arg.endswith("}")
+    assert "'wifiToggle': false" in arg
+    assert all(f"'{tid}'" in arg for tid, _, _ in QUICKPANEL), "the written dict is not complete"
+
+
+def test_quickpanel_set_refuses_unknown_id_without_writing():
+    from asteroid_docking_bay.watchctl import Watch
+    calls = []
+    w = Watch("S1", transport=object())
+    w.user_cmd = lambda cmd, timeout=15: (calls.append(cmd), (0, "", ""))[1]
+    assert w.quickpanel_set("notAToggle", True) is False
+    assert calls == [], "an unknown toggle id still hit the shell"
+
+
+def test_quickpanel_set_reads_then_writes_the_full_dict():
+    from asteroid_docking_bay.watchctl import Watch
+    calls = []
+    w = Watch("S1", transport=object())
+    w.user_cmd = lambda cmd, timeout=15: (calls.append(cmd), (0, "", ""))[1]
+    assert w.quickpanel_set("wifiToggle", False) is True
+    assert any("dconf dump" in c for c in calls), "did not read the current dict first"
+    write = [c for c in calls if "dconf write" in c][0]
+    assert "quickpanel/enabled" in write and "wifiToggle" in write
+
+
+def test_quickpanel_set_op_coerces_and_dispatches(monkeypatch):
+    seen = {}
+
+    class W:
+        def __init__(self, *a, **k):
+            pass
+
+        def quickpanel_set(self, tid, on):
+            seen.update(id=tid, on=on)
+            return True
+
+    monkeypatch.setattr(rpcops, "Watch", W)
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    d = rpcops.DISPATCH._data["watch.quickpanel_set"]({"serial": "S1", "id": "wifiToggle", "on": 1})
+    assert d == {"ok": True} and seen == {"id": "wifiToggle", "on": True}

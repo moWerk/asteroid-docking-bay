@@ -181,6 +181,13 @@ def serve(args, cfg: dict):
         d = _call("watch.set_datetime", {"serial": serial, "when": when})
         return json.dumps(d)
 
+    @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
+    def api_watch_quickpanel(serial, tid, state):
+        resp.content_type = "application/json"
+        d = _call("watch.quickpanel_set",
+                  {"serial": serial, "id": tid, "on": state == "on"})
+        return json.dumps(d)
+
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         d = _call("watch.screenshot", {"serial": serial})

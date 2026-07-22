@@ -181,10 +181,18 @@ def _watch_cc(args):
 def _watch_settings_read(args):
     """The mirrored watch settings (appearance/display/nightstand) with their
     current dconf values. Read-only — the write op is deliberately separate."""
-    rows = _watch(args["serial"]).settings_read()
-    if rows is None:
+    data = _watch(args["serial"]).settings_read()
+    if data is None:
         return {"ok": False, "error": "watch unreachable"}
-    return {"ok": True, "settings": rows}
+    return {"ok": True, "settings": data["settings"], "quickpanel": data["quickpanel"]}
+
+
+@DISPATCH.op("watch.quickpanel_set")
+def _watch_quickpanel_set(args):
+    """Enable/disable one quick-panel toggle (the mirror writes the whole dconf
+    dict). The watch layer refuses any id outside the catalog."""
+    ok = _watch(args["serial"]).quickpanel_set(args["id"], bool(args["on"]))
+    return {"ok": ok}
 
 
 @DISPATCH.op("watch.settings_write")

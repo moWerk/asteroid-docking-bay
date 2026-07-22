@@ -15,6 +15,7 @@ asteroid-settings QML `defaultValue`, baked here as `default`. The reader dumps
 the whole dconf db once (the call backup already uses) and merges it over these
 defaults, so an unset key still shows its true effective value."""
 
+import re
 from collections import namedtuple
 
 Setting = namedtuple("Setting", "group key label type default")
@@ -107,3 +108,62 @@ def dconf_arg(setting, value):
     if setting.type == "bool":
         return "true" if value else "false"
     raise ValueError(f"{setting.type} settings are not writable")
+
+
+# ── quick-panel toggle set ───────────────────────────────────────────────────
+# /desktop/asteroid/quickpanel/enabled is a dconf dict<string,bool> of which
+# toggles appear in the watch's quick panel. We mirror the enable state (not the
+# order, mo). (id, label, default_enabled) from asteroid-settings QuickPanelPage
+# — all default true except music and flashlight.
+QUICKPANEL_KEY = "/desktop/asteroid/quickpanel/enabled"
+QUICKPANEL = [
+    ("lockButton", "Lock button", True),
+    ("settingsButton", "Settings", True),
+    ("brightnessToggle", "Brightness", True),
+    ("bluetoothToggle", "Bluetooth", True),
+    ("hapticsToggle", "Vibration", True),
+    ("wifiToggle", "Wifi", True),
+    ("soundToggle", "Mute sound", True),
+    ("cinemaToggle", "Cinema mode", True),
+    ("aodToggle", "Always-on display", True),
+    ("powerOffToggle", "Power off", True),
+    ("rebootToggle", "Reboot", True),
+    ("musicButton", "Music", False),
+    ("flashlightButton", "Flashlight", False),
+]
+
+
+def parse_gvariant_dict(raw):
+    """A dconf-dump dict literal {'a': true, 'b': false} → {a: bool}. Anything
+    that is not a quoted-key/boolean pair is ignored, so a malformed or partial
+    dict degrades to what it could parse rather than raising."""
+    if not isinstance(raw, str):
+        return {}
+    return {m.group(1): m.group(2) == "true"
+            for m in re.finditer(r"'([^']+)'\s*:\s*(true|false)", raw)}
+
+
+def quickpanel_state(dump_text):
+    """The quick-panel toggles with their enabled state — the stored dict merged
+    over the QML defaults. [{id,label,enabled,is_set}]."""
+    stored = parse_gvariant_dict(parse_dconf_dump(dump_text).get(QUICKPANEL_KEY))
+    rows = []
+    for tid, label, default in QUICKPANEL:
+        is_set = tid in stored
+        rows.append({"id": tid, "label": label,
+                     "enabled": stored[tid] if is_set else default,
+                     "is_set": is_set})
+    return rows
+
+
+def quickpanel_ids():
+    """The set of valid toggle ids — the write boundary."""
+    return {tid for tid, _, _ in QUICKPANEL}
+
+
+def quickpanel_write_arg(states):
+    """Serialize a full {id: bool} map → the dconf gvariant dict literal for the
+    enabled key. Every catalog id is emitted so the written dict is complete."""
+    body = ", ".join(f"'{tid}': {'true' if states.get(tid) else 'false'}"
+                     for tid, _, _ in QUICKPANEL)
+    return "{" + body + "}"

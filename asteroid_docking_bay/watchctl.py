@@ -17,7 +17,9 @@ from .util import _run, log
 from .adb import _adb_state, adb_devices, adb_shell, get_watch_codename
 from .transport import AdbTransport
 from .config import ChargeConfig, find_serial_for_codename, save_config
-from .watch_settings import dconf_arg, effective_settings, writable
+from .watch_settings import (QUICKPANEL_KEY, dconf_arg, effective_settings,
+                             quickpanel_ids, quickpanel_state,
+                             quickpanel_write_arg, writable)
 
 
 def wait_for_adb(codename: str, cfg: dict,
@@ -326,12 +328,37 @@ class Watch:
         inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
         return self.t.shell(shlex.quote(inner), timeout=timeout)
 
-    def settings_read(self) -> "list | None":
+    def settings_read(self) -> "dict | None":
         """The mirrored settings with their current values, read with one dconf
-        dump in the ceres session (the call backup() already uses). Unset keys
-        fall back to their baked defaults; None when the watch is unreachable."""
+        dump in the ceres session (the call backup() already uses): the catalog
+        rows plus the quick-panel toggle states. Unset keys fall back to their
+        baked defaults; None when the watch is unreachable."""
         rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
-        return effective_settings(out) if rc == 0 else None
+        if rc != 0:
+            return None
+        return {"settings": effective_settings(out),
+                "quickpanel": quickpanel_state(out)}
+
+    def quickpanel_set(self, tid: str, on: bool) -> bool:
+        """Enable/disable one quick-panel toggle. dconf stores the whole set as a
+        single dict, so read the current states, flip this id, and write the full
+        dict back. Refuses any id not in the catalog."""
+        if tid not in quickpanel_ids():
+            log.warning("quickpanel_set refused unknown toggle %s", tid)
+            return False
+        rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
+        if rc != 0:
+            return False
+        states = {r["id"]: r["enabled"] for r in quickpanel_state(out)}
+        states[tid] = bool(on)
+        arg = quickpanel_write_arg(states)
+        rc, _, err = self.user_cmd(
+            f"HOME=/home/ceres dconf write {shlex.quote(QUICKPANEL_KEY)} {shlex.quote(arg)}",
+            timeout=12)
+        if rc != 0:
+            log.warning("quickpanel_set %s on %s failed: %s",
+                        tid, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
 
     def settings_write(self, key: str, value) -> bool:
         """Write one togglable setting over dconf in the ceres session (same env
