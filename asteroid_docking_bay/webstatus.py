@@ -13,7 +13,7 @@ from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
 from .config import (_config_lock, charge_config, find_codename_for_serial,
                      load_config, record_exact_codename, save_config,
-                     ssh_ip_for_serial)
+                     ssh_ip_for_serial, usb_mode_preference)
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
@@ -64,6 +64,68 @@ def _maybe_self_heal_fake_power(slot: str, loc: str, port: int,
     log.info("%s: fake-power wedge (powered, no connect >%ds) — auto-cycling",
              slot, _FAKE_POWER_GRACE_SEC)
     threading.Thread(target=uhubctl_cycle, args=(loc, port), daemon=True).start()
+
+
+# Stray SSH watches: a watch that self-enumerated in developer/SSH mode without
+# going through switch_ssh has no allocated IP, so it is on the shared default
+# 192.168.2.15 — the address every such watch takes, the source of the conflict.
+# Track the last time we acted on one, so an in-flight relocation (a mode
+# round-trip spanning several polls) does not re-fire and a failed attempt backs
+# off rather than churning.
+_STRAY_SSH_IP = "192.168.2.15"
+_ssh_align_attempt: dict[str, float] = {}
+_SSH_ALIGN_BACKOFF_SEC = 90
+
+
+def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
+                          cfg: dict) -> None:
+    """Correct a stray SSH watch to match the fleet USB-mode preference: under
+    "adb" switch it back to the standard mode; under "ssh" relocate it to its
+    own IP so several watches can run SSH without colliding on the default.
+
+    Only the stray is ever touched — a watch WITH an allocated IP was switched
+    deliberately (switch_ssh allocates), so it is left alone, and a manual
+    per-watch SSH switch is never undone. Guarded (per-serial backoff), runs in
+    a daemon thread, never blocks the status path."""
+    if adb_state != "ssh" or not serial or ssh_ip_for_serial(cfg, serial):
+        if serial:
+            _ssh_align_attempt.pop(serial, None)
+        return
+    now = time.time()
+    if now - _ssh_align_attempt.get(serial, 0) < _SSH_ALIGN_BACKOFF_SEC:
+        return
+    _ssh_align_attempt[serial] = now
+    pref = usb_mode_preference(cfg)
+    log.info("%s: stray SSH watch on the default IP — aligning to '%s'",
+             serial, pref)
+    threading.Thread(target=_align_usb_mode_worker, args=(serial, pref),
+                     daemon=True).start()
+
+
+def _align_usb_mode_worker(serial: str, pref: str) -> None:
+    """The mode round-trip, off the poll path. Reuses the two proven ops: get
+    the stray off the shared IP onto adb, and under an SSH preference hand it a
+    unique IP via the adb-side switch_ssh (the IP cannot change under a live SSH
+    session, so it must be set while on adb, then applied on the switch back)."""
+    from .fastboot import _switch_ssh_to_adb
+    res = _switch_ssh_to_adb(_STRAY_SSH_IP)
+    if not res.get("ok"):
+        log.warning("%s: could not reach the stray SSH watch to align it: %s",
+                    serial, res.get("error"))
+        return
+    if pref == "adb":
+        return   # back on the standard mode — done
+    for _ in range(20):
+        time.sleep(1)
+        if serial in adb_devices():
+            break
+    else:
+        log.warning("%s: did not reappear on adb to receive its SSH IP", serial)
+        return
+    from . import rpcops   # local: rpcops imports this module
+    out = rpcops.DISPATCH._data["watch.switch_ssh"]({"serial": serial})
+    if not out.get("ok"):
+        log.warning("%s: SSH IP relocation failed: %s", serial, out.get("error"))
 
 
 def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
@@ -447,6 +509,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
                           or (drain and drain["active"])
                           or (workbench and workbench["active"]))
             _maybe_self_heal_fake_power(slot, loc, port_num, wedged, busy, cfg)
+            if not busy:
+                _maybe_align_usb_mode(serial, adb_state, cfg)
             hub_ports.append({
                 "port": port_num, "codename": display_codename,
                 "machine": machine, "serial": serial,

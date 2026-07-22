@@ -245,6 +245,71 @@ def test_lifecycle_tracks_a_triggered_boot_through_its_window(monkeypatch):
     assert ws._lifecycle("S1", present=False, power=False) is None
 
 
+def test_align_usb_mode_only_touches_a_stray_and_backs_off(monkeypatch):
+    """A watch WITH an allocated SSH IP was switched deliberately — never
+    disturbed. Only a stray (SSH mode, no allocation, hence on the shared
+    default IP) is aligned, once, with the current preference, and a second poll
+    inside the backoff does not re-fire the in-flight round-trip."""
+    from asteroid_docking_bay import webstatus as ws
+    spawned = []
+
+    class _T:
+        def __init__(self, target=None, args=(), daemon=None):
+            spawned.append(args)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(ws.threading, "Thread", _T)
+    ws._ssh_align_attempt.clear()
+    cfg = {"ssh_ips": {"S1": "192.168.13.40"}, "usb_mode_preference": "adb"}
+
+    ws._maybe_align_usb_mode("S1", "ssh", cfg)          # allocated -> deliberate
+    assert spawned == [], "a watch with its own IP was disturbed"
+    ws._maybe_align_usb_mode("S2", "device", cfg)       # not in SSH -> nothing
+    assert spawned == []
+    ws._maybe_align_usb_mode("S2", "ssh", cfg)          # stray -> align to pref
+    assert spawned == [("S2", "adb")], spawned
+    ws._maybe_align_usb_mode("S2", "ssh", cfg)          # backoff -> no re-fire
+    assert spawned == [("S2", "adb")], "re-fired inside the backoff window"
+
+
+def test_align_worker_switches_to_adb_or_relocates_by_preference(monkeypatch):
+    """The worker reuses the two proven ops: it always gets the stray off the
+    shared IP onto adb; under an SSH preference it then hands it a unique IP via
+    the adb-side switch_ssh op. Under adb it stops after the switch."""
+    from asteroid_docking_bay import webstatus as ws
+    import asteroid_docking_bay.fastboot as fb
+    import asteroid_docking_bay.rpcops as ro
+    calls = {"to_adb": 0, "switch_ssh": None}
+    monkeypatch.setattr(fb, "_switch_ssh_to_adb",
+                        lambda ip="x": calls.__setitem__("to_adb", calls["to_adb"] + 1) or {"ok": True})
+    monkeypatch.setattr(ws, "adb_devices", lambda: {"S1": {}})
+    monkeypatch.setattr(ws.time, "sleep", lambda *a: None)
+    monkeypatch.setitem(ro.DISPATCH._data, "watch.switch_ssh",
+                        lambda args: calls.__setitem__("switch_ssh", args) or {"ok": True, "ip": "x"})
+
+    ws._align_usb_mode_worker("S1", "adb")
+    assert calls["to_adb"] == 1 and calls["switch_ssh"] is None, "adb-pref relocated"
+
+    ws._align_usb_mode_worker("S1", "ssh")
+    assert calls["switch_ssh"] == {"serial": "S1"}, "ssh-pref did not relocate"
+
+
+def test_align_worker_gives_up_when_the_stray_is_unreachable(monkeypatch):
+    """If the watch cannot be reached on the shared IP, the worker logs and
+    stops — it never proceeds to a relocation it cannot complete."""
+    from asteroid_docking_bay import webstatus as ws
+    import asteroid_docking_bay.fastboot as fb
+    import asteroid_docking_bay.rpcops as ro
+    hit = {"switch_ssh": False}
+    monkeypatch.setattr(fb, "_switch_ssh_to_adb", lambda ip="x": {"ok": False, "error": "unreachable"})
+    monkeypatch.setitem(ro.DISPATCH._data, "watch.switch_ssh",
+                        lambda args: hit.__setitem__("switch_ssh", True) or {"ok": True})
+    ws._align_usb_mode_worker("S1", "ssh")
+    assert hit["switch_ssh"] is False, "relocated despite never reaching the watch"
+
+
 def test_wear_makes_a_departed_watch_worn_not_down(monkeypatch):
     """A wear-held watch that has left the bus is 'worn' (off-rig), overriding
     any 'down' — and while still docked it shows no pill (the button carries
