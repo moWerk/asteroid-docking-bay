@@ -167,6 +167,16 @@ def _watch_cc(args):
     return {}
 
 
+@DISPATCH.op("watch.settings_read")
+def _watch_settings_read(args):
+    """The mirrored watch settings (appearance/display/nightstand) with their
+    current dconf values. Read-only — the write op is deliberately separate."""
+    rows = _watch(args["serial"]).settings_read()
+    if rows is None:
+        return {"ok": False, "error": "watch unreachable"}
+    return {"ok": True, "settings": rows}
+
+
 @DISPATCH.op("watch.toggle")
 def _watch_toggle(args):
     tech = args["tech"]

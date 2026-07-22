@@ -17,6 +17,7 @@ from .util import _run, log
 from .adb import _adb_state, adb_devices, adb_shell, get_watch_codename
 from .transport import AdbTransport
 from .config import ChargeConfig, find_serial_for_codename, save_config
+from .watch_settings import effective_settings
 
 
 def wait_for_adb(codename: str, cfg: dict,
@@ -313,6 +314,13 @@ class Watch:
         """Run a command in the watch's ceres user session (not as root)."""
         inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
         return self.t.shell(shlex.quote(inner), timeout=timeout)
+
+    def settings_read(self) -> "list | None":
+        """The mirrored settings with their current values, read with one dconf
+        dump in the ceres session (the call backup() already uses). Unset keys
+        fall back to their baked defaults; None when the watch is unreachable."""
+        rc, out, _ = self.user_cmd("HOME=/home/ceres dconf dump /", timeout=15)
+        return effective_settings(out) if rc == 0 else None
 
     def notify(self) -> bool:
         """Send a test notification."""
