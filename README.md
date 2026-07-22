@@ -5,7 +5,7 @@
 A dashboard and CLI for keeping a collection of [AsteroidOS](https://asteroidos.org)
 smartwatches charged and healthy while they sit in a drawer.
 
-If you flash AsteroidOS you tend to accumulate watches, and their 2014–2018
+If you are an AsteroidOS user you tend to accumulate watches, and their 2014–2018
 batteries don't store well. Powered off, a worn cell drains flat within weeks
 (one "powered off at 100%" is empty months later), and a flat cell often gets
 stuck in the low-charge reboot loop. Left on a powered dock instead, it sits
@@ -19,14 +19,20 @@ fallback).
 
 What it does:
 
-- A web dashboard for the fleet: power, ADB and OS detection, battery, and
-  running operations, and it tracks watches you move between ports. When a
-  watch drops off the bus its last-known readings stay on screen — marked
-  stale, with a "last live" age — instead of blanking. Click a watch to open
-  a Control Center that reads its telemetry (battery
-  voltage/current/temperature/cycles, memory, network, screen resolution,
-  paired phone) and controls its hardware over ADB: WiFi, Bluetooth, screen,
-  buzz-to-find, clock sync, screenshots.
+- A web dashboard for the fleet: port power, connection state, OS detection,
+  battery, and running operations, and it tracks watches you move between
+  ports. When a watch drops off the bus its last-known readings stay on
+  screen — marked stale, with a "last live" age — instead of blanking. Every
+  row is compact by design: a battery *gauge* that fills by charge level, a
+  row of status *dots*, and a single **menu** hold all the actions. Click a
+  watch to open a Control Center that reads its telemetry and controls its
+  hardware (WiFi, Bluetooth, screen, buzz-to-find, clock sync, screenshots).
+- **Works over ADB *or* SSH.** Every watch feature works the same whether a
+  watch is on ADB or in SSH/developer USB mode — the tool picks whichever wire
+  answers. You can switch a watch's USB mode from the dashboard, run several
+  watches on SSH at once (each gets its own address, so they never collide on
+  the default `192.168.2.15`), and set a fleet-wide **prefer ADB / prefer SSH**
+  policy that quietly keeps stray watches on the mode you chose.
 - Watch identity, exactly: each row shows the watch's product photo and its
   precise hardware codename — even for variants that share a factory image (a
   TicWatch E2 reads as `tunny`, not the `skipjack` image it actually ships),
@@ -35,9 +41,9 @@ What it does:
 - Battery care: charge one or several watches at once to a target rather than
   on a timer, a sustain job every 12 hours, and a workbench mode that keeps a
   watch in-band while you work on it over WiFi/SSH.
-- Battery triage: standby drain tests with saved history, surfaced in a
-  per-row status strip, to see which watches still hold a day of standby and
-  which are battery-swap candidates worth keeping only as dock-powered dev
+- Battery triage: standby drain tests with saved history, surfaced as a
+  wearability dot in each row, to see which watches still hold a day of standby
+  and which are battery-swap candidates worth keeping only as dock-powered dev
   units.
 - Fleet flashing: fetch, checksum, and flash AsteroidOS nightlies to every
   docked watch at once.
@@ -271,81 +277,111 @@ assigned) show a **Refresh** button that triggers a full per-port remap: powers
 the port on, waits for a watch, reads its codename, tests PPPS, and updates
 config — all streamed live into an inline log below the row.
 
-**Mapped watch rows** keep a compact action column: a leading **↻** refresh,
-the **ON / OFF** power toggle and **⟳** power-cycle, then three floating menus
-that flip above or below the button to stay on-screen. Click a watch's
-**codename** to open its **Control Center** (described below). The menus:
+**Mapped watch rows** read left to right in the order state actually flows —
+the port, its controls, the connection, the watch, its stats, battery, and
+actions. Almost everything lives *in the row*:
 
-- **⏻ Power** — the charge, drain-test and power operations below, plus
-  **Power off / Reboot / Reboot to bootloader**.
-- **🔧 Workbench** — the checkout band-hold plus attended actions that leave
-  the watch powered on: **Set time from host**, **Screenshot**, **Test
-  notification**.
-- **💾 Flash** — **Flash nightly** (Backup / Restore and versioned flashes are
-  placeholders for now).
+- **Port** — the socket/port label (`s1 p1`) with the **ON / OFF** power toggle
+  in front of it. The toggle shows an animated *EXEC* state while a switch is in
+  flight and settles into the confirmed state.
+- **Smart** — the port's per-port-power-switching verdict as a pill: `ppps`
+  when the port can switch its own VBUS, `NO!` when it can't, or a **⟳ cycle**
+  button when it hasn't been tested — clicking it power-cycles the port and
+  fills in the verdict (the cycle *is* the test).
+- **Connection** — an **ADB** or **SSH** badge (each carries the watch's
+  address and opens the **Network Center** on click), a **fastboot** badge in
+  the bootloader, or an honest off-the-bus state: `no link`, `shelved` (a
+  confirmed graceful power-down), `booting up` / `boot failed?` after a boot
+  attempt, or `reconnecting` after a power cycle.
+- **Watch** — the product photo and codename; a disconnected watch's name dims
+  so the connected ones stand out. Click the **codename** for the **Control
+  Center**, the **photo** for the composited live screen.
+- **Stats** — a row of dots: a **power** dot (green = powered, grey = shelved,
+  orange = ambiguous) that also opens a short power menu, a **wearability** dot
+  from the last drain test (click for drain-test / wear actions), a
+  **battery-graph** dot, and a conditional **charge** dot (charging / full /
+  discharging). The battery-related dots all open the same **Battery Info**
+  panel; a "last live" age trails as plain text when the watch is off the bus.
+- **Battery** — a fixed-width **gauge** that fills by charge level. The outline
+  is grey; the fill is coloured (red / amber / green) only when the watch is
+  connected and the charge state is real — offline it shows the last level in
+  grey, a level without a colour claim. Click it for **Battery Info**.
+- **Actions** — one **menu** pill, opening a single panel with every action
+  grouped and labelled: **Wear**, **Power** (Charge / Drain test / Power off /
+  Reboot / Bootloader), **Flashing** (Backup / Restore / Fastboot report /
+  Flash nightly / 2.1 / 2.0), **Workbench**, and **Refresh** (re-identify /
+  power on). A watch in the bootloader gets the fastboot-appropriate power
+  group instead.
+
+Empty port rows keep an **Onboard** button (the streamed remap above).
 
 The charge, drain and workbench operations in detail:
-- **⚡ Charge** — charges to `high_threshold` (shown live as `⚡ 64% → 80%`),
-  polling the battery every 2 minutes and stopping exactly at the target
-  (capped by `charge_max_minutes`). Watches whose battery can't be read fall
-  back to a fixed `charge_duration_minutes` countdown. If a charging watch
-  starts *losing* charge — dirty contacts, bad cable, failing port — the
-  battery column flags **⚠ losing power!** instead of pretending to charge.
-  A **◼ Stop charge** item is available while it runs.
-- **📉 Drain test** — standby battery drain measurement: powers the port off
-  and lets the watch run on battery, waking it every 30 minutes for a battery
-  reading until it reaches 15% or you press **◼ Stop test**. The battery
-  column shows the current level, drain rate (%/h), and estimated time to the
-  floor. Results are saved as JSON to
-  `~/.local/share/asteroid-docking-bay/drain-tests/`, and the **📉 drain
-  history** link in the page header lists every recorded test — per-watch
-  drain rate, estimated 100→15% standby life, and a wearability verdict. A
-  rate that rises across months means battery wear.
-
-  Each watch's latest drain result also shows permanently in its **Stats**
-  column: a watch icon with **~3d** means the battery holds at least
-  `wearable_min_hours` (default 24 h) of standby — wearable; a dead-battery
-  icon with **~9h** marks a battery-swap candidate best kept as a dock-powered
-  dev / flash-test watch. The Stats strip also carries a watch-side charging
-  indicator, a **?** until a watch has ever been drain-tested, a
-  click-to-open battery-history sparkline, and a "last live" age when the
-  watch is off the bus.
-- **🔧 Workbench** — check a watch out for hands-on work. The rig powers it
-  up and then holds its battery in the low–high band for the whole session:
-  charge to `high_threshold`, rest with the port off, re-check every
+- **Charge** — charges to `high_threshold` (shown live as `64% → 80%`), polling
+  the battery every 2 minutes and stopping exactly at the target (capped by
+  `charge_max_minutes`). Watches whose battery can't be read fall back to a
+  fixed `charge_duration_minutes` countdown. If a charging watch starts
+  *losing* charge — dirty contacts, bad cable, failing port — the battery cell
+  flags it instead of pretending to charge. **Stop charge** is available while
+  it runs.
+- **Drain test** — standby battery drain measurement: powers the port off and
+  lets the watch run on battery, waking it every 30 minutes for a reading until
+  it reaches 15% or you press **Stop test**. The battery cell shows the current
+  level, drain rate (%/h) and estimated time to the floor. Results are saved as
+  JSON to `~/.local/share/asteroid-docking-bay/drain-tests/`, and the **drain
+  history** link in the page header lists every recorded test — per-watch drain
+  rate, estimated 100→15% standby life, and a wearability verdict. A rate that
+  rises across months means battery wear. Each watch's latest verdict shows
+  permanently as its Stats **wearability dot**: wearable when the estimate is at
+  least `wearable_min_hours` (default 24 h) of standby, a battery-swap candidate
+  otherwise; grey until the watch has ever been tested.
+- **Workbench** — check a watch out for hands-on work. The rig powers it up and
+  holds its battery in the low–high band for the whole session: charge to
+  `high_threshold`, rest with the port off, re-check every
   `workbench_poll_minutes`, charge again at `low_threshold` — instead of a
   powered dock pegging the watch at 100% while you work. Do your work over
-  WiFi/SSH (the USB link drops during rest phases); the rig's brief ADB
-  battery reads don't interfere. If the battery can't be read (USB switched
-  to RNDIS/SSH mode), it falls back to a blind duty cycle of
-  `workbench_blind_charge_minutes` of power per rest period. **↩ Return**
-  puts the watch back into the normal fleet, already inside the band.
-  Charge, drain and flash actions refuse while a watch is checked out.
+  WiFi/SSH (the USB link drops during rest phases); the rig's brief battery
+  reads don't interfere. If the battery can't be read (USB switched to SSH
+  mode), it falls back to a blind duty cycle of `workbench_blind_charge_minutes`
+  of power per rest period. **Return** puts the watch back into the normal
+  fleet, already inside the band. Charge, drain and flash actions refuse while a
+  watch is checked out.
 - **Flash nightly** — full nightly flash streamed live into the inline log.
 
-**Control Center.** Click a watch's **codename** to open a live, host-side
-mirror of the watch's own About page and quick settings, read in a single ADB
-batch:
+**Control Center, Battery Info, Network Center.** Click a watch's **codename**
+for the **Control Center** — a live, host-side mirror of the watch's About page
+and quick settings, read in a single batch: system (kernel, Qt, SoC, CPU clock,
+uptime, boot reason, memory, storage, screen resolution, and the flashed
+**machine image**, which names the real image behind a shared-image variant),
+plus quick controls. From it you can toggle **WiFi / Bluetooth**, **Buzz** the
+watch (vibrate to find it in a full dock), force its **Screen** on, grab a
+**Screenshot**, and **Sync** its clock + timezone from the host. Session actions
+run in the watch's `ceres` user session, not as root.
 
-- **System** — kernel, Qt, SoC, CPU clock, uptime, boot reason, memory,
-  storage, screen resolution, and the flashed **machine image** (which names
-  the real image behind a shared-image variant — see below).
-- **Battery** — charge, health, technology, voltage, **real charge/discharge
-  current in mA**, temperature, cycle count, and USB-input voltage (confirms
-  the port is actually delivering power, not just switched on).
-- **Network & links** — WiFi, IP, traffic, Bluetooth, and the connected
-  companion phone.
+Two details have their own panels, reachable straight from the row:
 
-From the same panel you can toggle **WiFi / Bluetooth**, **Buzz** the watch
-(vibrate to find it in a full dock), force its **Screen** on, grab a
-**Screenshot**, and **Sync** its clock + timezone from the host — all over
-ADB. Session actions (screenshot, notifications) run in the watch's `ceres`
-user session, not as root.
+- **Battery Info** — the battery gauge, or any of the Stats battery dots. Charge,
+  health, technology, voltage, **real charge/discharge current in mA**,
+  temperature, cycle count, and USB-input voltage (confirms the port is actually
+  delivering power, not just switched on), with the **battery-history chart** at
+  its foot.
+- **Network Center** — the ADB / SSH badge. WiFi, IP, traffic, Bluetooth, the
+  connected companion phone, the watch's **USB IP**, and the **USB-mode switch**.
 
-The ADB column shows the AsteroidOS logo next to `device` when the watch is
-detected running AsteroidOS; other watches show their detected OS instead
-(e.g. `WearOS`) — handy for mixed collections that dock non-AsteroidOS
-watches for battery care. Detection runs once per boot over ADB.
+**Any wire — ADB or SSH.** Every one of these — the Control Center, the
+toggles, screenshots, time-sync, even a graceful power-off — works whether the
+watch is on **ADB** or in **SSH/developer** USB mode; the tool reaches it over
+whichever link answers. Switch a watch between modes from the Network Center (or
+the workbench menu). Because every developer-mode watch defaults to the same
+`192.168.2.15`, the tool hands each watch its own sticky SSH address (starting at
+`192.168.13.37`), set over ADB before the switch, so several watches can run SSH
+at once without colliding. A top-bar **prefer ADB / prefer SSH** toggle sets the
+fleet policy: a watch that self-enumerates in the "wrong" mode on the shared
+address is quietly corrected — returned to ADB, or relocated to its own SSH IP.
+
+The Connection column carries the AsteroidOS logo inside the **ADB** / **SSH**
+badge when the watch is running AsteroidOS; other watches show their detected OS
+instead (e.g. `WearOS`) — handy for mixed collections that dock non-AsteroidOS
+watches for battery care.
 
 **Physical moves are followed automatically for booted watches.** Every
 status refresh compares each ADB-online watch's real hub port (from sysfs)
@@ -362,9 +398,9 @@ operations and their countdowns. They also survive a service restart, crash
 or reboot: each running operation is persisted to
 `~/.local/state/asteroid-docking-bay/tasks/` and resumed automatically when
 the service comes back (a drain test keeps its readings and start time, a
-charge continues toward its target). On ports recorded as not power-switchable, the power
-toggle, cycle, Charge and Drain buttons are disabled (Refresh, Halt and
-Flash still work — they only need ADB).
+charge continues toward its target). On ports recorded as not power-switchable
+the power toggle and the Charge / Drain menu items are disabled (Refresh, the
+watch actions and Flash still work — they only need a data connection).
 
 The page auto-refreshes every 15 seconds. `--host 0.0.0.0` makes it
 reachable from other machines on the network — if your distro runs a
@@ -559,8 +595,13 @@ If you rearrange cables, re-run `asteroid-docking-bay map`.
 The code lives in the `asteroid_docking_bay/` package;
 `bin/asteroid-docking-bay` is a thin launcher.
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps the modules, the
-dependency rules, and which parts are classes. The pure logic (parsers,
-drain math, the charge alarm) has a test suite:
+dependency rules, and which parts are classes. There is a ~290-test suite:
+the pure logic (parsers, drain math, the charge alarm, the transport and op
+tables), plus a headless-DOM harness that runs the web page's own JavaScript
+under Node so column order, click wiring and each pill/dot/gauge is checked
+without a browser. New behaviour is *planted-bug validated* — a test is only
+trusted after it has failed against a deliberately reintroduced copy of the bug
+it guards.
 
 ```sh
 pytest
