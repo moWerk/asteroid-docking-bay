@@ -77,6 +77,7 @@ _WEB_TEMPLATE = """\
     .cc-tgl.scrnon{border-color:#f0b429;color:#f0b429;background:rgba(240,180,41,.15);font-weight:700}
     .cc-tgl.busy{opacity:.5;cursor:progress}
     .cc-tgl:hover{background:#0d1117}
+    .set-tgl{flex:0 0 auto;padding:3px 10px;min-width:46px;font-size:11px}
     .cc-acts{padding:0 12px 12px}
     .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
     .cc-act:hover{background:#0d1f3a}
@@ -813,11 +814,12 @@ let ctlTab='sys', ctlSshIp=null, ctlMode=null;
 let ctlMoved=false, ctlPlaced=false, _drag=null;   // manual pos, placed-once, active drag
 // The tab bar. Order is System → Network → Battery here; Settings and Live join
 // in later steps, landing the final System · Settings · Network · Battery · Live.
-const CTL_TABS=[['sys','System'],['net','Network'],['bat','Battery']];
+const CTL_TABS=[['sys','System'],['set','Settings'],['net','Network'],['bat','Battery']];
 // Last-fetched payload per serial, so re-opening paints instantly from the
 // previous values while the fresh fetch is in flight — and a self-cancelling
 // poll keeps the open window live (important over SSH, where a fetch is slow).
 const ctlCache={};
+const ctlSettings={};   // per-serial mirrored settings rows (or an error)
 let ctlPoll=null;
 // Shared cell/section builders — one definition for every tab body (each used
 // to redefine its own identical copy).
@@ -937,6 +939,7 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   cc.classList.remove('stale-cc');
   cc.style.display='block';
   if(ctlTab==='bat')biHistFetch(serial);
+  if(ctlTab==='set')settingsFetch(serial);
   if(ctlCache[serial])renderControl(ctlCache[serial]);   // instant, from the last open
   else{cc.innerHTML=ctlChrome(null,`<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`);ctlPlace();
        paintStale(serial,()=>ctlSerial,()=>!!ctlCache[serial],renderControl);}
@@ -951,6 +954,7 @@ function ctlTabTo(tab){
   if(!ctlSerial)return;
   ctlTab=tab;                              // no refetch, no graphReset: the poll
   if(tab==='bat')biHistFetch(ctlSerial);   // keeps every metric filling regardless
+  if(tab==='set')settingsFetch(ctlSerial);
   renderControl(ctlCache[ctlSerial]||null);
 }
 function ctlFetch(){
@@ -987,7 +991,7 @@ function ctlChrome(d,body){
 function renderControl(d){
   const cc=document.getElementById('cc');
   cc.classList.toggle('stale-cc',!!(d&&d.stale));
-  const body=ctlTab==='net'?bodyNet(d):ctlTab==='bat'?bodyBat(d):bodySys(d);
+  const body=ctlTab==='set'?bodySet(d):ctlTab==='net'?bodyNet(d):ctlTab==='bat'?bodyBat(d):bodySys(d);
   cc.innerHTML=ctlChrome(d,body);
   ctlPlace(true);
 }
@@ -1078,6 +1082,48 @@ function bodyBat(d){
         +`</div>${sparkSvg(histPts)}</div>`
     : '';
   return `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`+histSec;
+}
+// ── Settings tab ────────────────────────────────────────────────────────────
+// A mirror of the watch's own settings, limited to what the other tabs don't
+// already control (mo): the boolean prefs are live toggles that write dconf;
+// watchface/launcher/wallpaper show read-only (a fleet manager rarely sets them
+// remotely). Fetched on demand like the battery history, cached per serial.
+function settingsFetch(serial){
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/settings').then(r=>r.json()).then(d=>{
+    if(ctlSerial!==serial)return;
+    ctlSettings[serial]=d;
+    if(ctlTab==='set')renderControl(ctlCache[serial]||{});
+  }).catch(()=>{
+    if(ctlSerial!==serial)return;
+    ctlSettings[serial]={ok:false,error:'unreachable'};
+    if(ctlTab==='set')renderControl(ctlCache[serial]||{});
+  });
+}
+function settingsWrite(key,on){
+  const s=ctlSerial;
+  document.querySelectorAll('#cc .set-tgl').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(s)+'/setting/'+(on?'on':'off')+key,{method:'POST'})
+    .then(r=>r.json()).then(d=>{if(!d.ok)toast('setting write failed');setTimeout(()=>settingsFetch(s),400);})
+    .catch(()=>{toast('setting write failed');settingsFetch(s);});
+}
+function bodySet(d){
+  const st=ctlSettings[ctlSerial];
+  if(!st)return `<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`;
+  if(!st.ok)return `<div class="cc-sec"><span class="err">${esc(st.error||'unreachable')}</span></div>`;
+  const rows=st.settings||[], order=[], byGroup={};
+  rows.forEach(r=>{if(!(r.group in byGroup)){byGroup[r.group]=[];order.push(r.group);}byGroup[r.group].push(r);});
+  return order.map(g=>{
+    const items=byGroup[g].map(r=>{
+      if(r.type==='bool'){
+        const on=!!r.value, def=r.is_set?'':' <span class="dim">(default)</span>';
+        return `<div class="cc-k">${esc(r.label)}${def}</div><div class="cc-v">`+
+          `<button class="cc-tgl set-tgl${on?' on':''}" onclick="settingsWrite('${r.key}',${on?0:1})">${on?'ON':'OFF'}</button></div>`;
+      }
+      const v=r.value?String(r.value):'', base=v?v.split('/').pop():'\\u2014';
+      return `<div class="cc-k">${esc(r.label)}</div><div class="cc-v"><span title="${esc(v)}">${esc(base)}</span></div>`;
+    }).join('');
+    return `<div class="cc-sec"><div class="cc-sech">${esc(g)}</div><div class="cc-grid">${items}</div></div>`;
+  }).join('');
 }
 function closeControl(){const cc=document.getElementById('cc');cc.style.display='none';ctlSerial=null;if(ctlPoll){clearTimeout(ctlPoll);ctlPoll=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────

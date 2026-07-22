@@ -984,3 +984,32 @@ def test_window_is_placed_once_not_on_every_tab_switch(tmp_path):
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o["placed"] is True, "the window never locked its position"
     assert o["placeN"] == 0, "the window re-places on tab switches (it will hop around)"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_settings_tab_renders_toggles_and_readonly_paths(tmp_path):
+    """The Settings tab shows the boolean prefs as live toggles that write, a
+    default marker on unset keys, and watchface/launcher/wallpaper read-only —
+    a path row must NOT wire a write (they are display-only, mo)."""
+    import json
+    h = tmp_path / "settings.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlSerial='S9';ctlName='sk';ctlTab='set';"
+                 "ctlSettings['S9']={ok:true,settings:["
+                 "{group:'Time & units',key:'/org/asteroidos/settings/use-12h-format',"
+                 "label:'12-hour clock',type:'bool',value:true,is_set:true},"
+                 "{group:'Time & units',key:'/org/asteroidos/settings/use-fahrenheit',"
+                 "label:'Fahrenheit units',type:'bool',value:false,is_set:false},"
+                 "{group:'Appearance',key:'/desktop/asteroid/watchface',label:'Watchface',"
+                 "type:'path',value:'file:///a/b/000-default.qml',is_set:true}]};"
+                 "renderControl({});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "12-hour clock" in html
+    assert "settingsWrite('/org/asteroidos/settings/use-12h-format'" in html, "bool is not a live toggle"
+    assert "(default)" in html, "an unset key is not marked as default"
+    assert "000-default.qml" in html and "Watchface" in html, "path selection not shown"
+    assert "settingsWrite('/desktop/asteroid/watchface'" not in html, "a display-only path wired a write"
