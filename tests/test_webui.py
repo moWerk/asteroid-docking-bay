@@ -963,3 +963,24 @@ def test_dragging_the_title_bar_parks_the_window(tmp_path):
     assert o["moved"] is True, "dragging the header did not set the manual-position flag"
     assert o["afterDrag"] == "250px", o           # clientX 300 − grab offset 50
     assert o["afterPlace"] == o["afterDrag"], "ctlPlace re-anchored a parked window"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_window_is_placed_once_not_on_every_tab_switch(tmp_path):
+    """The window is positioned once when it opens and then left put — placing
+    on every tab switch and poll made it hop around as tab bodies differ in size
+    (the bug this pins). After the first placement locks, no further placement."""
+    import json
+    h = tmp_path / "placeonce.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlCache['S9']={kernel:'3.18',bat_cap:80};"      # cached → places+locks at open
+                 "openControl('S9','sk',{stopPropagation(){},clientX:0,clientY:0},'sys');"
+                 "let placeN=0; placeOverlay=function(){placeN++;};"  # count placements after the lock
+                 "ctlTabTo('bat'); ctlTabTo('net');"                # switching tabs must not re-place
+                 "console.log(JSON.stringify({placeN,placed:ctlPlaced}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["placed"] is True, "the window never locked its position"
+    assert o["placeN"] == 0, "the window re-places on tab switches (it will hop around)"

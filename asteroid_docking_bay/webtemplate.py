@@ -810,7 +810,7 @@ function render(data){
 // and NO graphReset, so every tab's graph keeps filling across a switch.
 let ctlSerial=null, ctlName=null, ctlAX=0, ctlAY=0;
 let ctlTab='sys', ctlSshIp=null, ctlMode=null;
-let ctlMoved=false, _drag=null;   // a manual drag position, and the active drag
+let ctlMoved=false, ctlPlaced=false, _drag=null;   // manual pos, placed-once, active drag
 // The tab bar. Order is System → Network → Battery here; Settings and Live join
 // in later steps, landing the final System · Settings · Network · Battery · Live.
 const CTL_TABS=[['sys','System'],['net','Network'],['bat','Battery']];
@@ -895,7 +895,13 @@ function placeOverlay(el,ax,ay){
   if(top+h>window.innerHeight-8) top=ay-h-10;
   el.style.left=Math.max(8,left)+'px'; el.style.top=Math.max(8,top)+'px';
 }
-function ctlPlace(){if(ctlMoved)return;placeOverlay(document.getElementById('cc'),ctlAX,ctlAY);}
+// Place the window once per open (locked when real content lands), then leave
+// it put: re-placing on every tab switch and poll made it hop around as the tab
+// bodies differ in size (mo). A drag pins it the same way.
+function ctlPlace(lock){
+  if(!ctlMoved&&!ctlPlaced)placeOverlay(document.getElementById('cc'),ctlAX,ctlAY);
+  if(lock)ctlPlaced=true;
+}
 // Drag the window by its title bar to park it beside a toggle. The header is
 // rebuilt every render, so drag-start is an inline handler on it; a manual drag
 // sets ctlMoved, and ctlPlace() then leaves the window put across tab switches
@@ -925,7 +931,7 @@ function paintStale(serial,curSerial,cacheHas,renderFn){
 function openControl(serial,name,ev,tab,sshIp,mode){
   ev.stopPropagation(); graphReset();      // fresh graphs for a fresh watch, not per tab
   ctlSerial=serial; ctlName=name; ctlAX=ev.clientX; ctlAY=ev.clientY;
-  ctlTab=tab||'sys'; ctlMoved=false;       // a new open re-anchors at the click
+  ctlTab=tab||'sys'; ctlMoved=false; ctlPlaced=false;   // a new open re-anchors
   if(sshIp!=null)ctlSshIp=sshIp; if(mode!=null)ctlMode=mode;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
@@ -983,7 +989,7 @@ function renderControl(d){
   cc.classList.toggle('stale-cc',!!(d&&d.stale));
   const body=ctlTab==='net'?bodyNet(d):ctlTab==='bat'?bodyBat(d):bodySys(d);
   cc.innerHTML=ctlChrome(d,body);
-  ctlPlace();
+  ctlPlace(true);
 }
 // ── System tab ──────────────────────────────────────────────────────────────
 function bodySys(d){
