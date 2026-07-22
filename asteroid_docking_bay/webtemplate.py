@@ -469,8 +469,12 @@ function mkstrip(p,wearH){
   }else if(p.codename){
     out+=sdot('warn','?','never drain-tested — run a drain test to rate standby life');
   }
-  // 2. active dock op first (charging = yellow bolt on a green disc; drain
-  //    test = a dim pulse), else the watch-side charge state (ground truth).
+  // 2. battery-history sparkline — an always-present dot (the "battery graph");
+  //    click for the timeline.
+  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery history',`openSpark('${p.serial}','${esc(p.codename||'')}',event)`);
+  // 3. charge state — last of the dots, because it only appears conditionally:
+  //    an active dock op (charging = yellow bolt on a green disc; drain test =
+  //    a dim pulse), else the watch-side charge state (ground truth).
   if(p.charging_active){
     out+=sdot('chg',svgicon('flash'),'charging to target');
   }else if(p.drain&&p.drain.active){
@@ -481,9 +485,7 @@ function mkstrip(p,wearH){
     else if(cs==='Full')out+=sdot('on','&#10003;','battery full');
     else if(cs==='Discharging')out+=sdot('err','&#8595;','DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)');
   }
-  // 3. sparkline launcher — click for the battery timeline (click, not hover).
-  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery history',`openSpark('${p.serial}','${esc(p.codename||'')}',event)`);
-  // 4. last-seen age when the watch is off the bus — a pill, since it is text.
+  // 4. last-seen age when the watch is off the bus — plain trailing text.
   if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="lastseen" title="last live ${fmtAge(p.last_live_ts)} ago">${fmtAge(p.last_live_ts)}</span>`;
   return out?`<span class="strip">${out}</span>`:'';
 }

@@ -330,6 +330,9 @@ def test_stats_items_are_dots_and_the_age_trails_as_text(tmp_path):
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert 'class="sdot chg' in out["charging"], "charging op is not a dot"
     assert 'class="sdot dim spark"' in out["charging"], "sparkline is not a dot"
+    # Conditional charge state sits last, after the always-present sparkline.
+    assert out["charging"].index("sdot dim spark") < out["charging"].index("sdot chg"), \
+        "the conditional charge dot must come after the battery-graph dot"
     assert 'class="sdot on"' in out["full"], "full-charge state is not a dot"
     assert 'class="lastseen"' in out["off"], "last-seen age is not trailing text"
     assert "spill" not in out["off"], "last-seen age is still a pill"
