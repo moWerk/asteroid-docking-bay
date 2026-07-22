@@ -202,6 +202,9 @@ _WEB_TEMPLATE = """\
        cycle confirms the new state (which rebuilds the row without this class). */
     .cmd-pending{animation:cmdpulse .8s ease-in-out infinite}
     @keyframes cmdpulse{0%,100%{opacity:1}50%{opacity:.38}}
+    /* Failure: switch the pending pulse to a red flash, 3× at double the rate. */
+    .cmd-fail{animation:cmdfail .4s ease-in-out 3!important}
+    @keyframes cmdfail{0%,100%{background:transparent}50%{background:rgba(248,81,73,.6);border-color:#f85149;color:#fff}}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -313,6 +316,16 @@ function pulseSelf(el){
   el.classList.add('cmd-pending');
   setTimeout(()=>{try{el.classList.remove('cmd-pending');}catch(e){}},8000);
 }
+function flashFail(el){
+  // Direct feedback that a command FAILED: stop the pending pulse and flash
+  // the element red three times. Used where the backend tells us the action
+  // did not take (a port that would not switch, a refused mode switch).
+  if(!el)return;
+  el.classList.remove('cmd-pending');
+  el.classList.add('cmd-fail');
+  setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
+}
+function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
 function mklife(p){
   // The one power-state we positively assert, shown beside the codename.
   // "down" = safely halted (graceful power-off, port off, not draining);
@@ -543,7 +556,7 @@ function render(data){
           :mkadbrow(p);
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
-        const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
+        const pwrFn=p.power===true?`doOff('${slot}',this)`:`doOn('${slot}',this)`;
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
@@ -615,7 +628,7 @@ function render(data){
         }else{
           bat=mkbatCell(p,lo,hi);
         }
-        const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
+        const pwrFn=p.power===true?`doOff('${slot}',this)`:`doOn('${slot}',this)`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
@@ -630,7 +643,7 @@ function render(data){
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
-          `<td>${adb}</td>` +
+          `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
@@ -1177,8 +1190,8 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000)});}
-function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,6000)});}
+function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,5000);else flashFail(connPill(serial))});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok)setTimeout(refresh,6000);else flashFail(connPill(serial))});}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
     toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');
@@ -1238,15 +1251,15 @@ function _pwrFlash(c){
   r.classList.add('pwr-warn');
   setTimeout(()=>{r.classList.remove('pwr-warn');refresh();},3800);
 }
-function doOn(c){
+function doOn(c,el){
   fetch('/api/on/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false)_pwrFlash(c);else setTimeout(refresh,2000);
-  });
+    if(d.confirmed===false){flashFail(el);_pwrFlash(c);}else setTimeout(refresh,2000);
+  }).catch(()=>flashFail(el));
 }
-function doOff(c){
+function doOff(c,el){
   fetch('/api/off/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false)_pwrFlash(c);else refresh();
-  });
+    if(d.confirmed===false){flashFail(el);_pwrFlash(c);}else refresh();
+  }).catch(()=>flashFail(el));
 }
 function doPoweroff(c){
   fetch('/api/poweroff/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{

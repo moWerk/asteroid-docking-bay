@@ -518,3 +518,15 @@ def test_action_buttons_pulse_on_click_for_instant_feedback():
     assert "pulseSelf(this);${pwrFn}" in JS, "power toggle lacks instant feedback"
     assert "pulseSelf(this);doCy(" in JS, "cycle button lacks instant feedback"
     assert "pulseSelf(this);doWear(" in JS, "wear button lacks instant feedback"
+
+
+def test_failed_actions_flash_red():
+    """A failed command flashes its element red 3× — the port toggle flashes
+    the button, a refused mode switch flashes the connection pill."""
+    assert "function flashFail(" in JS and "cmd-fail" in _WEB_TEMPLATE
+    # port toggle: on confirmed===false, flash the clicked button
+    assert "if(d.confirmed===false){flashFail(el)" in JS, "power toggle failure not flashed"
+    # mode switch: on !ok, flash the row's connection pill
+    assert "flashFail(connPill(serial))" in JS, "mode-switch failure not flashed"
+    # the connection cell carries an id so the pill can be found
+    assert 'id="conn-${esc(p.serial)}"' in JS
