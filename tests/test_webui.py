@@ -342,7 +342,7 @@ def test_pills_and_dots_share_one_height_token():
     """Every in-row pill and glyph-dot draws its height from one --pill-h token
     so they line up; change it once and all follow (widths stay content-driven)."""
     assert "--pill-h:" in _WEB_TEMPLATE, "no shared pill-height token"
-    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{", ".lifedot{"):
+    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{"):
         block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
         assert "var(--pill-h)" in block, f"{cls} does not use the shared height token"
 
@@ -500,31 +500,31 @@ def test_control_center_no_longer_carries_the_battery_section(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_watch_power_dot_maps_state_to_colour(tmp_path):
-    """The persistent power dot beside the codename recolours by what we can
-    assert: green when the port is powered, grey for a confirmed graceful-down,
-    orange when the state is ambiguous (off with no down marker). It always
-    shows — an unknown state is honestly orange, never blank. Worn keeps its
-    own pink pill."""
+def test_power_dot_is_the_first_stats_dot_coloured_by_state(tmp_path):
+    """The power state is the first Stats dot now (same circle language as the
+    other stats): green when the port is powered, grey for a confirmed
+    graceful-down, orange when ambiguous (off with no down marker) — always
+    shown, never blank. Worn stays a pink pill by the codename, not a dot."""
     import json
     h = tmp_path / "life.js"
     h.write_text(_DOM_STUBS + JS +
                  "\nconsole.log(JSON.stringify({"
-                 "on:mklife({power:true}),"
-                 "down:mklife({lifecycle:'down'}),"
-                 "amb:mklife({}),"
-                 "worn:mklife({lifecycle:'worn'})}));"
+                 "on:pdot({power:true}),"
+                 "down:pdot({lifecycle:'down'}),"
+                 "amb:pdot({}),"
+                 "worn:mklife({lifecycle:'worn'}),"
+                 "plain:mklife({power:true})}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "lifedot on" in out["on"] and "down" not in out["on"]
-    assert "lifedot down" in out["down"]
-    assert "lifedot amb" in out["amb"], "an unknown state must be honestly ambiguous, not blank"
-    assert out["amb"] != "", "the dot is persistent — never blank"
-    assert "life worn" in out["worn"] and "lifedot" not in out["worn"]
-    # No literal "down" text label survives — it is a recoloured glyph now.
-    assert "&#9211;" in out["down"] and ">down<" not in out["down"]
+    assert 'class="sdot on"' in out["on"] and "&#9211;" in out["on"]
+    assert 'class="sdot dim"' in out["down"], "safely-down must read grey"
+    assert 'class="sdot warn"' in out["amb"], "ambiguous power must read orange"
+    assert out["amb"] != "", "the power dot is persistent — never blank"
+    # Worn is a name pill; mklife no longer carries the power state at all.
+    assert "life worn" in out["worn"] and "sdot" not in out["worn"]
+    assert out["plain"] == "", "mklife carries only worn now, not the power state"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

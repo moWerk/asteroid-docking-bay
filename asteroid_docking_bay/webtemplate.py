@@ -181,12 +181,6 @@ _WEB_TEMPLATE = """\
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
     /* Lifecycle pill by the codename — the one power-state we can assert:
        "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
-    .lifedot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
-      width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
-      line-height:1;vertical-align:middle;margin-right:6px;flex:none}
-    .lifedot.on{border-color:#3fb950;color:#3fb950}
-    .lifedot.down{border-color:#3d4756;color:#8b98a5}
-    .lifedot.amb{border-color:#d29922;color:#d29922}
     .smt{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
     .smt.yes{border-color:#3fb950;color:#3fb950}
     .smt.no{border-color:#f85149;color:#f85149}
@@ -366,20 +360,22 @@ function flashFail(el){
   setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
 }
 function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
-function mklife(p){
-  // A persistent power dot beside the codename: the ⏻ glyph in a circle
-  // (kept round for consistency with the pills), recoloured by what we can
-  // positively assert. green = powered (the port is delivering power); grey =
-  // safely down (a confirmed graceful shutdown, port off, not draining);
-  // orange = ambiguous (off with no graceful-shutdown marker — a raw port cut
-  // that could equally be off or still running on battery). "worn" (off-rig
-  // via the wear toggle) keeps its own pink pill.
-  if(p.lifecycle==='worn')return `<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>`;
+function pdot(p){
+  // Power state as the first Stats dot: the ⏻ glyph in a circle, recoloured by
+  // what we can positively assert. green = powered (the port is delivering
+  // power); grey = safely down (a confirmed graceful shutdown, port off, not
+  // draining); orange = ambiguous (off with no graceful-shutdown marker — a raw
+  // port cut that could equally be off or still running on battery).
   const st=p.power===true?'on':(p.lifecycle==='down'?'down':'amb');
   const tip=st==='on'?'powered — the port is delivering power'
     :st==='down'?'safely powered down — gracefully halted, port off, not draining'
     :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut';
-  return `<span class="lifedot ${st}" title="${tip}">&#9211;</span>`;
+  return sdot(st==='on'?'on':st==='down'?'dim':'warn','&#9211;',tip);
+}
+function mklife(p){
+  // Worn (off-rig via the wear toggle) is a marker on the name, so it keeps its
+  // own pink pill beside the codename; the power state lives in the Stats dot.
+  return p.lifecycle==='worn'?`<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>`:'';
 }
 function batBand(v,lo,hi){return v==null?'':(v<lo?'low':v<=hi?'ok':'');}
 function batPill(p,cls,inner,title){
@@ -440,6 +436,8 @@ function sdot(cls,inner,title,click){
 }
 function mkstrip(p,wearH){
   let out='';
+  // 0. power state — first, so it reads at the same spot on every row.
+  if(p.codename)out+=pdot(p);
   // 1. wearable verdict from the last drain test, or an untested "?".
   const dl=p.drain_last;
   if(dl&&dl.est_h!=null){
@@ -699,9 +697,9 @@ function render(data){
           `<td>${mksmart(p,slot,dp)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
-          `<td>`+mklife(p)+(p.serial
+          `<td>`+(p.serial
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
