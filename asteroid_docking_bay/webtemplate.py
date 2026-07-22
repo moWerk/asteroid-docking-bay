@@ -221,12 +221,37 @@ _WEB_TEMPLATE = """\
     button.cbadge{cursor:pointer}
     button.cbadge.ssh:hover{background:#2a2113}
     button.cbadge.adb:hover{background:#122117}
-    /* The port toggle is the reference the pill height comes from — it reads
-       --pill-h back so it and every pill/dot stay the same height together. */
-    .tgl{display:inline-flex;align-items:center;justify-content:center;gap:4px;box-sizing:border-box;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
-    .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
-    .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
-    .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
+    /* orbit-eclipse port toggle (moWerk design). State API: keep the confirmed
+       .on/.off class and ADD .pending while a command is in flight; on confirm,
+       remove .pending and swap on/off — the eclipse fill + dot glide animate
+       themselves. */
+    .tgl{--w:96px;--h:32px;--pad:4px;--green:#3fb950;--grey:#565f6e;--amber:#d29922;
+      --travel:calc(var(--w) - var(--h));
+      position:relative;display:inline-block;overflow:hidden;width:var(--w);height:var(--h);
+      box-sizing:border-box;border-radius:999px;border:1px solid #2a3140;background:transparent;
+      cursor:pointer;user-select:none;vertical-align:middle;
+      font:11px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:2px;
+      transition:border-color .3s,background .3s,box-shadow .3s}
+    .tgl::before{content:"";position:absolute;inset:0;border-radius:999px;background:rgba(63,185,80,.12);transform-origin:left center;transform:scaleX(0);transition:transform .5s ease}
+    .tgl .lbl{position:absolute;inset:0;display:flex;align-items:center;padding:0 13px;color:#8b949e;transition:color .3s}
+    .tgl .lbl::after{content:"OFF"}
+    .tgl .dot{position:absolute;top:var(--pad);left:var(--pad);width:calc(var(--h) - 2*var(--pad));height:calc(var(--h) - 2*var(--pad));box-sizing:border-box;border-radius:50%;background:var(--grey);border:2px dashed transparent;transform:translateX(var(--travel));transition:transform .5s ease,background .3s,border-color .3s}
+    .tgl.on{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.2)}
+    .tgl.on::before{transform:scaleX(1)}
+    .tgl.on .lbl{justify-content:flex-end;color:var(--green)}
+    .tgl.on .lbl::after{content:"ON"}
+    .tgl.on .dot{background:var(--green);transform:translateX(0)}
+    .tgl.pending{border-color:rgba(210,153,34,.55);background:rgba(210,153,34,.07);box-shadow:none}
+    .tgl.pending::before{transition:none}
+    .tgl.on.pending::before{transform:scaleX(1)}
+    .tgl.off.pending::before{transform:scaleX(0)}
+    .tgl.pending .lbl{color:var(--amber)}
+    .tgl.pending .lbl::after{content:"EXEC"}
+    .tgl.pending .dot{background:transparent;border-color:var(--amber);animation:tgl-spin 1s linear infinite}
+    @keyframes tgl-spin{to{transform:translateX(var(--x,0)) rotate(360deg)}}
+    .tgl.on.pending .dot{--x:0px;transform:translateX(0)}
+    .tgl.off.pending .dot{--x:var(--travel);transform:translateX(var(--travel))}
+    .tgl:hover{filter:brightness(1.18)}
     .tgl:disabled{opacity:.35;cursor:default;pointer-events:none}
     .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
@@ -302,10 +327,10 @@ _WEB_TEMPLATE = """\
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
       .wr td:nth-child(8){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
-      /* Bigger, tappable controls */
-      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
+      /* Bigger, tappable controls (the orbit-eclipse .tgl keeps its own fixed
+         geometry — no phone override). */
+      .wr .btn{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
-      .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
     }
   </style>
@@ -369,13 +394,23 @@ function pulseSelf(el){
   setTimeout(()=>{try{el.classList.remove('cmd-pending');}catch(e){}},8000);
 }
 function flashFail(el){
-  // Direct feedback that a command FAILED: stop the pending pulse and flash
+  // Direct feedback that a command FAILED: stop any pending state and flash
   // the element red three times. Used where the backend tells us the action
   // did not take (a port that would not switch, a refused mode switch).
   if(!el)return;
-  el.classList.remove('cmd-pending');
+  el.classList.remove('cmd-pending','pending');
   el.classList.add('cmd-fail');
   setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
+}
+// Port-toggle click: add the orbit-eclipse .pending spinner (the toggle keeps
+// its confirmed on/off class), fire the on/off op, and let the next status
+// refresh rebuild the row into the confirmed state. A safety timeout clears the
+// spinner if nothing ever comes back (a no-op that changes no row HTML).
+function pwrGo(el,slot,on){
+  if(el.classList.contains('pending'))return;
+  el.classList.add('pending');
+  (on?doOn:doOff)(slot,el);
+  setTimeout(()=>{try{el.classList.remove('pending');}catch(e){}},8000);
 }
 function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
 // The power symbol as a stroked ionicon (the same style AsteroidOS uses), not
@@ -636,13 +671,13 @@ function render(data){
           :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>');
         const adbCell=p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`
           :mkadbrow(p);
-        const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
-        const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
-        const pwrFn=p.power===true?`doOff('${slot}',this)`:`doOn('${slot}',this)`;
+        const pwrCls=p.power===true?'tgl on':'tgl off';
+        const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
+        const pwrFn=`pwrGo(this,'${slot}',${p.power!==true})`;
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
-          `<td class="pcell"><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
+          `<td class="pcell"><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,d)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
@@ -707,13 +742,13 @@ function render(data){
         }else{
           bat=mkbatCell(p,lo,hi);
         }
-        const pwrFn=p.power===true?`doOff('${slot}',this)`:`doOn('${slot}',this)`;
-        const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
-        const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
+        const pwrFn=`pwrGo(this,'${slot}',${p.power!==true})`;
+        const pwrCls=p.power===true?'tgl on':'tgl off';
+        const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
         const isRef=refreshing.has(slot);
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
-          `<td class="pcell"><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
+          `<td class="pcell"><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,dp)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +

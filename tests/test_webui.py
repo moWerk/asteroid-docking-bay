@@ -363,11 +363,11 @@ def test_stats_items_are_dots_and_the_age_trails_as_text(tmp_path):
         assert "svgw" not in html and 'class="ib' not in html, f"legacy icon span left: {html}"
 
 
-def test_pills_dots_and_toggle_share_one_height_token():
-    """Every in-row pill, glyph-dot and the port toggle draw their height from
-    one --pill-h token (the toggle is the reference size), so they line up;
-    change it once and all follow. Pills stay inline-block so long content wraps
-    to a second inner line instead of forcing the table wider than the viewport."""
+def test_pills_and_dots_share_one_height_token():
+    """Every in-row pill and glyph-dot draws its height from one --pill-h token,
+    so they line up; change it once and all follow. Pills stay inline-block so
+    long content wraps to a second inner line instead of forcing the table wider
+    than the viewport. (The orbit-eclipse toggle keeps its own fixed geometry.)"""
     assert "--pill-h:" in _WEB_TEMPLATE, "no shared pill-height token"
 
     def rule(sel):
@@ -378,10 +378,38 @@ def test_pills_dots_and_toggle_share_one_height_token():
         assert m, f"no standalone rule for {sel}"
         return m.group(1)
 
-    for sel in (".cbadge", ".sdot", ".smt", ".tgl"):
+    for sel in (".cbadge", ".sdot", ".smt"):
         assert "var(--pill-h)" in rule(sel), f"{sel} does not use the shared height token"
     for sel in (".cbadge", ".smt"):
         assert "inline-block" in rule(sel), f"{sel} is not inline-block — long content won't wrap"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
+    """The power toggle renders in the orbit-eclipse markup: a .tgl with the
+    confirmed on/off class and the lbl/dot spans (label text comes from CSS).
+    Clicking adds .pending (the in-flight spinner) while keeping on/off, and the
+    handler fires the matching on/off op."""
+    import json
+    h = tmp_path / "tgl.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 f"\nconst S={json.dumps(_SAMPLE)};render(S);"
+                 "const html=global.__els['tb'].innerHTML;"
+                 # simulate a click on an OFF toggle
+                 "let done=null;doOn=(s,e)=>{done=['on',s];};"
+                 "const tel={classList:{_s:new Set(),add(c){this._s.add(c);},"
+                 "contains(c){return this._s.has(c);}}};"
+                 "pwrGo(tel,'1-2:2',true);"
+                 "console.log(JSON.stringify({html,pending:tel.classList.contains('pending'),done}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'class="tgl on"' in out["html"] or 'class="tgl off"' in out["html"], "not the orbit toggle"
+    assert 'class="lbl"' in out["html"] and 'class="dot"' in out["html"], "toggle spans missing"
+    assert "tgl-on" not in out["html"] and ">ON<" not in out["html"], "old toggle markup survives"
+    assert out["pending"] is True, "click did not add the .pending spinner"
+    assert out["done"] == ["on", "1-2:2"], "click did not fire the on op"
 
 
 def test_menu_trigger_is_a_markerless_pill():
@@ -753,16 +781,16 @@ def test_stale_endpoint_and_paintstale_are_wired():
     assert "/stale'" in JS, "paintStale does not hit the /stale endpoint"
 
 
-def test_action_buttons_pulse_on_click_for_instant_feedback():
-    """A clicked in-row action button (the power toggle, the cycle icon) must
-    give instant feedback while the command is in flight — pulseSelf(this) —
-    since the state only updates on the next refresh cycle. (Menu actions close
-    the menu and toast instead, so they do not pulse.)"""
+def test_action_buttons_give_instant_click_feedback():
+    """A clicked in-row control gives instant feedback while the command is in
+    flight, since state only updates on the next refresh. The cycle icon pulses
+    (pulseSelf); the power toggle shows the orbit-eclipse .pending spinner via
+    pwrGo."""
     assert "function pulseSelf(" in JS
-    # the persistent row toggles wire it — mapped and empty rows, power + cycle
-    assert JS.count("pulseSelf(this);") >= 3, "not all row toggles pulse on click"
-    assert "pulseSelf(this);${pwrFn}" in JS, "power toggle lacks instant feedback"
     assert "pulseSelf(this);doCy(" in JS, "cycle button lacks instant feedback"
+    assert "function pwrGo(" in JS and "classList.add('pending')" in JS, \
+        "power toggle lacks its in-flight pending state"
+    assert "pwrGo(this," in JS, "power toggle not wired to pwrGo"
 
 
 def test_failed_actions_flash_red():
