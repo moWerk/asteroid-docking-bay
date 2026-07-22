@@ -456,7 +456,13 @@ def _port_cycle(args):
                     _store_smart_verdict(hub, port, smart)
                     save_config(cfg)
                     break
-    _mark_booting(serial)   # a cycle cuts and restores VBUS — the watch reboots
+    if serial:
+        # A cycle cuts and restores VBUS: the watch re-enumerates on the bus.
+        # Stamp the boot marker so the wait is shown, and clear any safe_off
+        # marker so it reads as "reconnecting" (a re-power), not "booting up" —
+        # that state is reserved for powering on a genuinely shelved watch.
+        _mark_booting(serial)
+        last_seen.mark(serial, safe_off_ts=0)
     return {"ok": True, "smart": smart, "reason": reason}
 
 

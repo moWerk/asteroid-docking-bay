@@ -73,16 +73,20 @@ def test_port_set_ok(monkeypatch):
 
 
 def test_port_cycle_records_smart_verdict(monkeypatch):
-    saved = {}
+    saved, marked = {}, {}
     monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
     monkeypatch.setattr(rpcops, "test_port_power_switching",
                         lambda l, p, s: (True, "VBUS cut confirmed"))
     monkeypatch.setattr(rpcops, "load_config",
                         lambda: {"hubs": [{"location": "1-2", "port_smart": {}}]})
     monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg=cfg))
+    monkeypatch.setattr(rpcops.last_seen, "mark", lambda s, **k: marked.update(k))
     d = rpcops.DISPATCH._data["port.cycle"]({"loc": "1-2", "port": 2})
     assert d["ok"] is True and d["smart"] is True
     assert saved["cfg"]["hubs"][0]["port_smart"]["2"] is True
+    # A cycle stamps the boot marker and clears safe_off so it reads
+    # "reconnecting" (a re-power), not "booting up".
+    assert marked.get("booting_since") and marked.get("safe_off_ts") == 0, marked
 
 
 def test_port_cycle_inconclusive_does_not_save(monkeypatch):
