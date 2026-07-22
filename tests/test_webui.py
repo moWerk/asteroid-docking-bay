@@ -448,6 +448,25 @@ def test_boot_pill_shows_in_connection_column_and_outranks_no_link(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_powered_but_unconnected_says_no_link_not_a_cause(tmp_path):
+    """A powered port with nothing electrically connected reads "no link" — a
+    neutral statement of the observation. It must NOT say "not docked", which
+    claims a specific cause (the plug was pulled) we cannot tell apart from a
+    dead contact."""
+    import json
+    h = tmp_path / "nolink.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify(mkadbrow("
+                 "{adb:null,power:true,connected:false})));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert ">no link<" in out, out
+    assert "not docked" not in out, "still claims the plug was pulled"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_reopening_a_panel_paints_instantly_from_cache(tmp_path):
     """A previously-opened panel must repaint from the cached payload straight
     away — no 'loading…' flash while the (possibly slow, over-SSH) fetch runs."""
