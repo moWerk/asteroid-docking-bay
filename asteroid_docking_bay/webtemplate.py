@@ -53,7 +53,7 @@ _WEB_TEMPLATE = """\
     .cc-col{flex:1 1 210px;min-width:200px}
     .cc-sec{padding:8px 14px}
     .cc-sech{font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid #21262d;padding-bottom:3px;margin-bottom:5px}
-    .cc-hd{padding:8px 30px 8px 12px;background:#0d1117;border-bottom:1px solid #30363d;font-weight:700;color:#58a6ff;position:relative}
+    .cc-hd{padding:8px 30px 8px 12px;background:#0d1117;border-bottom:1px solid #30363d;font-weight:700;color:#58a6ff;position:relative;cursor:move;user-select:none}
     .cc-hd .dim{font-weight:400}
     .cc-x{position:absolute;right:10px;top:6px;cursor:pointer;color:#6e7681;font-weight:400;font-size:16px;line-height:1}
     .cc-x:hover{color:#fff}
@@ -810,6 +810,7 @@ function render(data){
 // and NO graphReset, so every tab's graph keeps filling across a switch.
 let ctlSerial=null, ctlName=null, ctlAX=0, ctlAY=0;
 let ctlTab='sys', ctlSshIp=null, ctlMode=null;
+let ctlMoved=false, _drag=null;   // a manual drag position, and the active drag
 // The tab bar. Order is System → Network → Battery here; Settings and Live join
 // in later steps, landing the final System · Settings · Network · Battery · Live.
 const CTL_TABS=[['sys','System'],['net','Network'],['bat','Battery']];
@@ -894,7 +895,23 @@ function placeOverlay(el,ax,ay){
   if(top+h>window.innerHeight-8) top=ay-h-10;
   el.style.left=Math.max(8,left)+'px'; el.style.top=Math.max(8,top)+'px';
 }
-function ctlPlace(){placeOverlay(document.getElementById('cc'),ctlAX,ctlAY);}
+function ctlPlace(){if(ctlMoved)return;placeOverlay(document.getElementById('cc'),ctlAX,ctlAY);}
+// Drag the window by its title bar to park it beside a toggle. The header is
+// rebuilt every render, so drag-start is an inline handler on it; a manual drag
+// sets ctlMoved, and ctlPlace() then leaves the window put across tab switches
+// and polls. mousemove/mouseup live on the document for the drag's duration.
+function ctlDragStart(e){
+  if(e.target.classList&&e.target.classList.contains('cc-x'))return;   // not the close X
+  const cc=document.getElementById('cc'), r=cc.getBoundingClientRect();
+  _drag={dx:e.clientX-r.left, dy:e.clientY-r.top}; ctlMoved=true; e.preventDefault();
+}
+document.addEventListener('mousemove',e=>{
+  if(!_drag)return;
+  const cc=document.getElementById('cc'), w=cc.offsetWidth, h=cc.offsetHeight;
+  cc.style.left=Math.min(Math.max(0,e.clientX-_drag.dx),window.innerWidth-w)+'px';
+  cc.style.top=Math.min(Math.max(0,e.clientY-_drag.dy),window.innerHeight-h)+'px';
+});
+document.addEventListener('mouseup',()=>{_drag=null;});
 // First open of a watch has no client cache, so instead of a "loading…" wait
 // paint the server's last-known values immediately — the /stale endpoint reads
 // them with no device I/O, so it returns at once (amber, marked stale). The
@@ -908,7 +925,7 @@ function paintStale(serial,curSerial,cacheHas,renderFn){
 function openControl(serial,name,ev,tab,sshIp,mode){
   ev.stopPropagation(); graphReset();      // fresh graphs for a fresh watch, not per tab
   ctlSerial=serial; ctlName=name; ctlAX=ev.clientX; ctlAY=ev.clientY;
-  ctlTab=tab||'sys';
+  ctlTab=tab||'sys'; ctlMoved=false;       // a new open re-anchors at the click
   if(sshIp!=null)ctlSshIp=sshIp; if(mode!=null)ctlMode=mode;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
@@ -955,7 +972,7 @@ function ctlFetch(){
 function ctlChrome(d,body){
   const stale=!!(d&&d.stale);
   const tabs=CTL_TABS.map(([id,label])=>`<button class="cc-tab${ctlTab===id?' on':''}" onclick="ctlTabTo('${id}')">${label}</button>`).join('');
-  return `<div class="cc-hd" id="cc-hd">${esc(ctlName)} <span class="dim">${esc((d&&d.os)||'')}</span>${pollTag(d)}`+
+  return `<div class="cc-hd" id="cc-hd" onmousedown="ctlDragStart(event)">${esc(ctlName)} <span class="dim">${esc((d&&d.os)||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeControl()">&times;</span></div>`+
     `<div class="cc-tabs">${tabs}</div>`+

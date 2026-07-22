@@ -937,3 +937,29 @@ def test_switching_tabs_keeps_the_graph_history(tmp_path):
     assert o["n"] == 3, "tab switch wiped the graph history (a graphReset on switch)"
     assert "Battery" in o["html"] and "Cycles" in o["html"], "did not switch to the Battery tab"
     assert "cc-tab" in o["html"], "the tab row is missing from the window"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_dragging_the_title_bar_parks_the_window(tmp_path):
+    """Grabbing the title bar moves the window and pins it there: ctlMoved makes
+    ctlPlace() a no-op, so a tab switch or a poll re-render cannot snap a parked
+    window back to the click anchor (the bug: ctlPlace re-anchoring over it)."""
+    import json
+    h = tmp_path / "drag.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "openControl('S9','sk',{stopPropagation(){},clientX:0,clientY:0},'sys');"
+                 "global.__els['cc'].getBoundingClientRect=()=>({left:100,top:100});"
+                 "ctlDragStart({target:{classList:{contains:()=>false}},"
+                 "clientX:150,clientY:130,preventDefault(){}});"
+                 "global.__h.mousemove({clientX:300,clientY:260});"   # drag to a new spot
+                 "const afterDrag=global.__els['cc'].style.left;"
+                 "ctlPlace();"                                        # a re-place must not move it
+                 "console.log(JSON.stringify({moved:ctlMoved,afterDrag,"
+                 "afterPlace:global.__els['cc'].style.left}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["moved"] is True, "dragging the header did not set the manual-position flag"
+    assert o["afterDrag"] == "250px", o           # clientX 300 − grab offset 50
+    assert o["afterPlace"] == o["afterDrag"], "ctlPlace re-anchored a parked window"
