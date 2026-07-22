@@ -123,7 +123,8 @@ _WEB_TEMPLATE = """\
     .sdot.dim{border-color:#3d4756;color:#8b949e}
     .sdot.chg{border-color:#238636;background:#238636;color:#f2cc60}   /* charging: yellow bolt on green */
     .sdot.drain{border-color:#3d4756;color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
-    .sdot.spark{cursor:pointer}.sdot.spark:hover{background:rgba(88,166,255,.12)}
+    .sdot[onclick]{cursor:pointer}
+    .sdot.spark:hover,.sdot[onclick]:hover{background:rgba(88,166,255,.12)}
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
     /* Last-seen age is not a pill — it trails the Stats dots as plain text. */
     .lastseen{color:#6e7681;font-size:11px;white-space:nowrap}
@@ -444,10 +445,13 @@ function pdot(p){
   // draining); orange = ambiguous (off with no graceful-shutdown marker — a raw
   // port cut that could equally be off or still running on battery).
   const st=p.power===true?'on':(p.lifecycle==='down'?'down':'amb');
-  const tip=st==='on'?'powered — the port is delivering power'
+  const tip=(st==='on'?'powered — the port is delivering power'
     :st==='down'?'safely powered down — gracefully halted, port off, not draining'
-    :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut';
-  return sdot(st==='on'?'on':st==='down'?'dim':'warn',POWERSVG,tip);
+    :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut')
+    +' · click for power actions';
+  const slot=p.slot_loc+':'+p.port;
+  const clk=`menuPwr(event,'${slot}',${p.adb==='fastboot'},${!!p.charging_active},${!!(p.drain&&p.drain.active)},${p.power===true},${p.smart===false})`;
+  return sdot(st==='on'?'on':st==='down'?'dim':'warn',POWERSVG,tip,clk);
 }
 function mklife(p){
   // Worn (off-rig via the wear toggle) is a marker on the name, so it keeps its
@@ -519,32 +523,37 @@ function mkstrip(p,wearH){
   let out='';
   // 0. power state — first, so it reads at the same spot on every row.
   if(p.codename)out+=pdot(p);
-  // 1. wearable verdict from the last drain test, or an untested "?".
+  const biClk=p.serial?`openBI('${p.serial}','${esc(p.codename||'')}',event)`:'';
+  const slot=p.slot_loc+':'+p.port;
+  const wearClk=`menuWear(event,'${slot}',${!!(p.drain&&p.drain.active)},'${esc(p.serial||'')}',${p.wear?1:0})`;
+  // 1. wearable verdict from the last drain test; an untested watch shows a
+  //    grey "?" (like the battery-graph dot is grey with no history yet).
+  //    Clicking it opens the drain-test / wear actions.
   const dl=p.drain_last;
   if(dl&&dl.est_h!=null){
     const ok=dl.est_h>=wearH;
     const when=new Date(dl.ts*1000).toLocaleDateString();
-    const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`);
-    out+=sdot(ok?'on':'err',svgicon(ok?'watch':'batterydead'),tip);
+    const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`)+' · click for drain/wear';
+    out+=sdot(ok?'on':'err',svgicon(ok?'watch':'batterydead'),tip,wearClk);
   }else if(p.codename){
-    out+=sdot('warn','?','never drain-tested — run a drain test to rate standby life');
+    out+=sdot('dim','?','never drain-tested — click to run a drain test',wearClk);
   }
   // 2. battery-graph dot — an always-present indicator that history exists;
-  //    clicking it opens the same Battery Info panel as the battery pill, which
-  //    carries the history chart at its foot.
-  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery info + history',`openBI('${p.serial}','${esc(p.codename||'')}',event)`);
+  //    clicking it opens the same Battery Info panel as the battery gauge.
+  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery info + history',biClk);
   // 3. charge state — last of the dots, because it only appears conditionally:
   //    an active dock op (charging = yellow bolt on a green disc; drain test =
-  //    a dim pulse), else the watch-side charge state (ground truth).
+  //    a dim pulse), else the watch-side charge state (ground truth). Like the
+  //    gauge and graph dot, clicking it opens Battery Info.
   if(p.charging_active){
-    out+=sdot('chg',svgicon('flash'),'charging to target');
+    out+=sdot('chg',svgicon('flash'),'charging to target',biClk);
   }else if(p.drain&&p.drain.active){
-    out+=sdot('drain',svgicon('batterydead'),'drain test running');
+    out+=sdot('drain',svgicon('batterydead'),'drain test running',biClk);
   }else if(p.adb==='device'&&p.charge_status){
     const cs=p.charge_status;
-    if(cs==='Charging')out+=sdot('on',svgicon('flash'),'charging (delivered power confirmed)');
-    else if(cs==='Full')out+=sdot('on','&#10003;','battery full');
-    else if(cs==='Discharging')out+=sdot('err','&#8595;','DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)');
+    if(cs==='Charging')out+=sdot('on',svgicon('flash'),'charging (delivered power confirmed)',biClk);
+    else if(cs==='Full')out+=sdot('on','&#10003;','battery full',biClk);
+    else if(cs==='Discharging')out+=sdot('err','&#8595;','DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)',biClk);
   }
   // 4. last-seen age when the watch is off the bus — plain trailing text.
   if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="lastseen" title="last live ${fmtAge(p.last_live_ts)} ago">${fmtAge(p.last_live_ts)}</span>`;
@@ -1319,6 +1328,17 @@ function menuExecute(ev,slot,isFb,charging,draining,powered,noSw,serial,wb,mode,
 // action, distinct from the plain text links around it.
 function wearItem(slot,wear){
   return `<button class="menu-wear${wear?' on':''}" onclick="pulseSelf(this);doWear('${slot}',${wear?0:1});closeMenu()" title="${wear?'wear armed — click to release and free the port':'top up and hold this port so the watch is ready to take off the rig'}">${wear?'Release wear':'Arm wear (hold band)'}</button>`;
+}
+// Contextual mini-menus reachable from the Stats dots — the same builders as
+// the full row menu, scoped to what each dot is about. The power dot opens just
+// the Power group; the wearability dot opens Drain test + a Wear button.
+function menuPwr(ev,slot,isFb,charging,draining,powered,noSw){
+  openMenu(ev,grpHd('Power')+grpBox(isFb?grpPowerFb(slot,powered):grpPower(slot,charging,draining,powered,noSw)));
+}
+function menuWear(ev,slot,draining,serial,wear){
+  openMenu(ev,
+    grpHd('Drain test')+grpBox(draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`))+
+    (serial?grpHd('Wear')+grpBox(wearItem(slot,wear)):''));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element

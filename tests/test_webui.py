@@ -356,6 +356,11 @@ def test_stats_items_are_dots_and_the_age_trails_as_text(tmp_path):
     assert out["charging"].index("sdot dim spark") < out["charging"].index("sdot chg"), \
         "the conditional charge dot must come after the battery-graph dot"
     assert 'class="sdot on"' in out["full"], "full-charge state is not a dot"
+    # The charge dot opens Battery Info too — gauge, graph dot and charge dot
+    # all lead to the same panel (spark dot + charge dot = two openBI here).
+    assert out["full"].count("openBI") >= 2, "charge dot does not open Battery Info"
+    # An untested wearability reads grey, not amber.
+    assert 'class="sdot dim"' in out["off"], "untested wearability is not grey"
     assert 'class="lastseen"' in out["off"], "last-seen age is not trailing text"
     assert "spill" not in out["off"], "last-seen age is still a pill"
     # The old icon-span classes are gone everywhere.
@@ -419,6 +424,31 @@ def test_menu_trigger_is_a_markerless_pill():
     assert ">menu</button>" in _WEB_TEMPLATE, "menu trigger lost its label or gained a marker"
     assert "&#9662;" not in _WEB_TEMPLATE and "▾" not in _WEB_TEMPLATE
     assert ".btn.ex{border-radius" in _WEB_TEMPLATE, "menu trigger is not pill-shaped"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_stats_dots_open_contextual_mini_menus(tmp_path):
+    """The power dot opens a short Power-only menu; the wearability dot opens a
+    Drain-test + Wear menu — the same builders as the full row menu, scoped."""
+    import json
+    assert "menuPwr(event," in JS, "power dot not wired to its menu"
+    assert "menuWear(event," in JS, "wearability dot not wired to its menu"
+    h = tmp_path / "dm.js"
+    ev = ("{stopPropagation(){},currentTarget:{getBoundingClientRect:()=>"
+          "({left:0,right:0,top:0,bottom:0})}}")
+    h.write_text(_DOM_CAPTURE + JS +
+                 f"\nmenuPwr({ev},'1-2:1',false,false,false,true,false);"
+                 "const pwr=global.__els['menu'].innerHTML;"
+                 f"menuWear({ev},'1-2:1',false,'S9',0);"
+                 "const wear=global.__els['menu'].innerHTML;"
+                 "console.log(JSON.stringify({pwr,wear}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'exgrp-hd">Power<' in out["pwr"] and "Reboot" in out["pwr"]
+    assert "Workbench" not in out["pwr"], "power dot menu should be power-only"
+    assert 'exgrp-hd">Drain test<' in out["wear"] and "Drain test" in out["wear"]
+    assert 'exgrp-hd">Wear<' in out["wear"] and "menu-wear" in out["wear"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
