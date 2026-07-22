@@ -716,6 +716,16 @@ function placeOverlay(el,ax,ay){
 function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
 function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
 function biPlace(){placeOverlay(document.getElementById('bi'),biAX,biAY);}
+// First open of a watch has no client cache, so instead of a "loading…" wait
+// paint the server's last-known values immediately — the /stale endpoint reads
+// them with no device I/O, so it returns at once (amber, marked stale). The
+// slow live fetch then follows and replaces it. cacheHas() guards the race: if
+// the live fetch already populated the cache, the late stale paint is dropped.
+function paintStale(serial,curSerial,cacheHas,renderFn){
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/stale').then(r=>r.json()).then(d=>{
+    if(curSerial()===serial && !cacheHas() && d && d.kernel)renderFn(d);
+  }).catch(()=>{});
+}
 function openCC(serial,name,ev){
   ev.stopPropagation(); graphReset();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
@@ -723,7 +733,8 @@ function openCC(serial,name,ev){
   cc.classList.remove('stale-cc');
   cc.style.display='block';
   if(ccCache[serial])renderCC(ccCache[serial]);   // instant, from the last open
-  else{cc.innerHTML=`<div class="cc-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`;ccPlace();}
+  else{cc.innerHTML=`<div class="cc-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`;ccPlace();
+       paintStale(serial,()=>ccSerial,()=>!!ccCache[serial],renderCC);}
   ccFetch();
 }
 function ccFetch(){
@@ -802,7 +813,8 @@ function openNC(serial,name,ev,sshIp,mode){
   nc.classList.remove('stale-cc');
   nc.style.display='block';
   if(ncCache[serial])renderNC(ncCache[serial]);
-  else{nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;ncPlace();}
+  else{nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;ncPlace();
+       paintStale(serial,()=>ncSerial,()=>!!ncCache[serial],renderNC);}
   ncFetch();
 }
 function ncFetch(){
@@ -870,7 +882,8 @@ function openBI(serial,name,ev){
   bi.classList.remove('stale-cc');
   bi.style.display='block';
   if(biCache[serial])renderBI(biCache[serial]);
-  else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();}
+  else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();
+       paintStale(serial,()=>biSerial,()=>!!biCache[serial],renderBI);}
   biFetch();
 }
 function biFetch(){

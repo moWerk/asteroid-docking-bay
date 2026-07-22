@@ -496,3 +496,13 @@ def test_poll_interval_and_tag_follow_the_transport(tmp_path):
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o["adbMs"] == 3000 and o["sshMs"] == 10000, o
     assert "3s" in o["adbTag"] and "10s" in o["sshTag"] and "ssh" in o["sshTag"]
+
+
+def test_stale_endpoint_and_paintstale_are_wired():
+    """First open paints instantly from the fast /stale endpoint. It must be a
+    registered route, and paintStale must call it."""
+    from asteroid_docking_bay.webapp import _JSON_ROUTES
+    stale = [r for r in _JSON_ROUTES if r[1].endswith("/stale")]
+    assert stale and stale[0][2] == "watch.cc" and stale[0][3] == {"stale": True}, stale
+    assert "function paintStale(" in JS
+    assert "/stale'" in JS, "paintStale does not hit the /stale endpoint"

@@ -94,6 +94,24 @@ def _status_get(args):
 
 # ── per-watch (Control Center) ──────────────────────────────────────────────
 
+def _stale_cc(serial, standby):
+    """The last-known Control Center blob for a watch, marked stale, or {} if
+    it was never seen. No device I/O — pure last_seen read, so it is instant."""
+    cached = last_seen.get(serial)
+    if not (cached and cached.get("cc")):
+        return {}
+    blob = dict(cached["cc"])
+    blob["stale"] = True
+    blob["last_live_ts"] = cached.get("cc_ts")
+    geo = cached.get("geometry")
+    if geo:
+        blob["geometry"] = geo
+        blob["resolution"] = geo.get("resolution")
+    if standby is not None:
+        blob["standby_measured"] = round(standby, 2)
+    return blob
+
+
 @DISPATCH.op("watch.cc")
 def _watch_cc(args):
     """Live Control Center stats, or the last-seen ones marked stale.
@@ -106,6 +124,11 @@ def _watch_cc(args):
     # Passive standby drain measured across power-off→boot (event log), honest
     # because it carries no charge-bump. Always current, so fold into either path.
     standby = event_log.standby_off_to_on_rate(serial, None)
+    # Fast path (stale=True): return the last-known values with NO device I/O,
+    # so a panel can paint instantly on open — amber and marked stale — while
+    # its live fetch (below, and slow over SSH) follows and replaces it.
+    if args.get("stale"):
+        return _stale_cc(serial, standby)
     tr = _reachable_transport(serial)
     # Tell the UI which link answered, so it can pace its live-poll to match:
     # adb is a warm channel (fast), SSH pays a fresh handshake per call (slow).
@@ -123,18 +146,8 @@ def _watch_cc(args):
             extra["resolution"] = geo.get("resolution")
         if standby is not None:
             extra["standby_measured"] = round(standby, 2)
-        return {**data, **extra} if extra else data
-    cached = last_seen.get(serial)
-    if cached and cached.get("cc"):
-        blob = dict(cached["cc"])
-        blob["stale"] = True
-        blob["last_live_ts"] = cached.get("cc_ts")
-        if cached.get("geometry"):
-            blob["geometry"] = cached["geometry"]
-            blob["resolution"] = cached["geometry"].get("resolution")
-        if standby is not None:
-            blob["standby_measured"] = round(standby, 2)
-        return blob
+        return {**data, **extra}
+    return _stale_cc(serial, standby)
     return {}
 
 

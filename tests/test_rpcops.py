@@ -560,3 +560,23 @@ def test_watch_cc_reports_the_transport_for_poll_pacing(monkeypatch):
     assert ro.DISPATCH._data["watch.cc"]({"serial": "S1"})["transport"] == "adb"
     monkeypatch.setattr(ro, "_reachable_transport", lambda s: SshTransport("1.2.3.4"))
     assert ro.DISPATCH._data["watch.cc"]({"serial": "S1"})["transport"] == "ssh"
+
+
+def test_watch_cc_stale_returns_cached_without_device_io(monkeypatch):
+    """The panel's instant-open path asks for the last-known values with no
+    device read. stale=True must serve the cached blob (marked stale) and
+    never touch the watch."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "last_seen",
+                        type("L", (), {"get": staticmethod(lambda s:
+                            {"cc": {"kernel": "3.18"}, "cc_ts": 1000.0})})())
+    monkeypatch.setattr(ro.event_log, "standby_off_to_on_rate", lambda *a, **k: None)
+    def _boom(*a, **k):
+        raise AssertionError("stale path touched the device")
+    monkeypatch.setattr(ro, "_reachable_transport", _boom)
+    monkeypatch.setattr(ro, "Watch", _boom)
+    d = ro.DISPATCH._data["watch.cc"]({"serial": "S1", "stale": True})
+    assert d["kernel"] == "3.18" and d["stale"] is True and d["last_live_ts"] == 1000.0
+    monkeypatch.setattr(ro, "last_seen",
+                        type("L", (), {"get": staticmethod(lambda s: None)})())
+    assert ro.DISPATCH._data["watch.cc"]({"serial": "X", "stale": True}) == {}
