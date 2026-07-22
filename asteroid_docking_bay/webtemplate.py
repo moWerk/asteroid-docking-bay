@@ -114,6 +114,7 @@ _WEB_TEMPLATE = """\
       width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
       line-height:1;vertical-align:middle;flex:none}
     .sdot .svgi{width:14px;height:14px;vertical-align:0}
+    .sdot .pwri{width:15px;height:15px}
     .sdot.on{border-color:#3fb950;color:#3fb950}
     .sdot.err{border-color:#f85149;color:#f85149}
     .sdot.warn{border-color:#d29922;color:#d29922}
@@ -377,9 +378,12 @@ function flashFail(el){
   setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
 }
 function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
+// The power symbol as a stroked ionicon (the same style AsteroidOS uses), not
+// the ⏻ Unicode glyph — thinner, crisp at any scale, and centred by its viewBox.
+const POWERSVG='<svg class="pwri" viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"><path d="M378.09 92.42a201.31 201.31 0 11-244.18 0"/><path d="M256 32v192"/></svg>';
 function pdot(p){
-  // Power state as the first Stats dot: the ⏻ glyph in a circle, recoloured by
-  // what we can positively assert. green = powered (the port is delivering
+  // Power state as the first Stats dot: the power icon in a circle, recoloured
+  // by what we can positively assert. green = powered (the port is delivering
   // power); grey = safely down (a confirmed graceful shutdown, port off, not
   // draining); orange = ambiguous (off with no graceful-shutdown marker — a raw
   // port cut that could equally be off or still running on battery).
@@ -387,7 +391,7 @@ function pdot(p){
   const tip=st==='on'?'powered — the port is delivering power'
     :st==='down'?'safely powered down — gracefully halted, port off, not draining'
     :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut';
-  return sdot(st==='on'?'on':st==='down'?'dim':'warn','&#9211;',tip);
+  return sdot(st==='on'?'on':st==='down'?'dim':'warn',POWERSVG,tip);
 }
 function mklife(p){
   // Worn (off-rig via the wear toggle) is a marker on the name, so it keeps its

@@ -530,7 +530,8 @@ def test_power_dot_is_the_first_stats_dot_coloured_by_state(tmp_path):
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert 'class="sdot on"' in out["on"] and "&#9211;" in out["on"]
+    assert 'class="sdot on"' in out["on"] and 'class="pwri"' in out["on"], "power icon missing"
+    assert "&#9211;" not in out["on"], "still the Unicode glyph, not an icon"
     assert 'class="sdot dim"' in out["down"], "safely-down must read grey"
     assert 'class="sdot warn"' in out["amb"], "ambiguous power must read orange"
     assert out["amb"] != "", "the power dot is persistent — never blank"
