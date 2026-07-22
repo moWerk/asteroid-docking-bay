@@ -358,3 +358,56 @@ def test_wear_makes_a_departed_watch_worn_not_down(monkeypatch):
     monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
     assert ws._lifecycle("S1", present=False, power=True) == "worn"  # port held, gone
     assert ws._lifecycle("S1", present=True, power=True) is None     # docked, topping up
+
+
+# ── battery over SSH (a watch on SSH must show a live reading) ────────────────
+
+def test_battery_and_screen_reads_over_a_given_shell():
+    """battery_and_screen runs its read through an injected shell, so the same
+    read works over SSH — the fix for a watch on SSH freezing at its last ADB %."""
+    from asteroid_docking_bay.adb import battery_and_screen
+    calls = []
+
+    def fake_shell(cmd):
+        calls.append(cmd)
+        return (0, "88\n---SCR---\ndisabled\n---CHG---\nCharging\n", "")
+
+    bat, forced, chg = battery_and_screen("S1", shell=fake_shell)
+    assert bat == 88 and forced is False and chg == "Charging"
+    assert calls, "the injected shell was not used"
+
+
+def test_battery_view_records_an_ssh_reading_as_live(monkeypatch, tmp_path):
+    """An SSH reading is live, not stale — _battery_view records it (so the row
+    shows it fresh) rather than dropping to the cached value."""
+    from asteroid_docking_bay import webstatus as ws
+    from asteroid_docking_bay.lastseen import LastSeen
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(ws, "last_seen", ls)
+    cached, lts = ws._battery_view("ssh", "S1", 88, False, None)
+    assert cached is None and lts is None                 # the live contract
+    assert ls.get("S1")["battery"] == 88, "SSH reading was not recorded"
+
+
+def test_ssh_battery_reads_over_the_ssh_link(monkeypatch):
+    from asteroid_docking_bay import webstatus as ws
+    monkeypatch.setattr(ws, "ssh_ip_for_serial", lambda cfg, s: "192.168.13.40")
+    monkeypatch.setattr(ws, "_detect_rndis", lambda ip: True)
+    seen = {}
+
+    class FakeTr:
+        def __init__(self, ip):
+            seen["ip"] = ip
+
+        def shell(self, cmd, timeout=8, check=False):
+            return (0, "77\n---SCR---\n\n---CHG---\nFull\n", "")
+
+    monkeypatch.setattr(ws, "SshTransport", FakeTr)
+    bat, forced, chg = ws._ssh_battery({}, "S1")
+    assert bat == 77 and chg == "Full" and seen["ip"] == "192.168.13.40"
+
+
+def test_ssh_battery_none_without_an_ip(monkeypatch):
+    from asteroid_docking_bay import webstatus as ws
+    monkeypatch.setattr(ws, "ssh_ip_for_serial", lambda cfg, s: None)
+    assert ws._ssh_battery({}, "S1") == (None, False, None)

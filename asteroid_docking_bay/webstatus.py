@@ -17,7 +17,8 @@ from .config import (_config_lock, charge_config, find_codename_for_serial,
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
-from .fastboot import _fastboot_getvar_product, _fastboot_list
+from .fastboot import _detect_rndis, _fastboot_getvar_product, _fastboot_list
+from .transport import SshTransport
 from .events import _latest_drain_summaries
 from .lastseen import last_seen
 from .variants import exact_codename
@@ -302,7 +303,10 @@ def _battery_view(adb_state: "str | None", serial: "str | None",
     show a stale value instead of a blank. The live `battery` contract is left
     untouched — the caller keeps it None when offline and prefers cached only
     for display, so nothing mistakes a cached number for a fresh one."""
-    if adb_state == "device":
+    if adb_state in ("device", "ssh"):
+        # SSH is a live link too — record its reading so the row shows it fresh
+        # and the cache stays current (os is read only over ADB, so it stays
+        # None here and record()'s None-filter leaves any prior value intact).
         last_seen.record(serial, battery=battery,
                          screen_forced=screen_forced, os=watch_os)
         return None, None
@@ -310,6 +314,17 @@ def _battery_view(adb_state: "str | None", serial: "str | None",
     if not cached:
         return None, None
     return cached.get("battery"), cached.get("last_live_ts")
+
+
+def _ssh_battery(cfg, serial) -> "tuple[int | None, bool, str | None]":
+    """Battery / screen / charge for a watch on SSH, read over its SSH link so
+    its row shows a live reading instead of the last ADB one. None when it has
+    no assigned SSH IP or isn't reachable there — the caller then falls back to
+    the cached value. Mirrors rpcops._reachable_transport's selection."""
+    ip = ssh_ip_for_serial(cfg, serial) if serial else None
+    if not ip or not _detect_rndis(ip):
+        return None, False, None
+    return battery_and_screen(serial, shell=SshTransport(ip).shell)
 
 
 def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | None":
@@ -418,6 +433,11 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             if adb_state == "device":
                 battery, screen_forced, charge_status = battery_and_screen(serial)
+            elif adb_state == "ssh":
+                # A watch on SSH must show a LIVE battery in the row, not freeze
+                # at its last ADB reading (mo: tunny stuck at 71% over SSH, jumped
+                # to 100% on ADB). Read the same values over its SSH link.
+                battery, screen_forced, charge_status = _ssh_battery(cfg, serial)
             else:
                 battery, screen_forced, charge_status = None, False, None
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None

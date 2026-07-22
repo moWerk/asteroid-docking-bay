@@ -149,7 +149,7 @@ def get_battery_level(serial: str) -> int | None:
     return None
 
 
-def battery_and_screen(serial: str) -> "tuple[int | None, bool, str | None]":
+def battery_and_screen(serial, shell=None) -> "tuple[int | None, bool, str | None]":
     """One adb round-trip for the status path: (battery_pct, screen_forced,
     charge_status).
     screen_forced = mce is holding the display on (a `mcetool -D on` demo mode
@@ -168,7 +168,11 @@ def battery_and_screen(serial: str) -> "tuple[int | None, bool, str | None]":
     remote = (f"cat {paths} 2>/dev/null | head -1; echo ---SCR---; "
               f"mcetool 2>/dev/null | grep '^Blank inhibit'; echo ---CHG---; "
               f"cat /sys/class/power_supply/*/status 2>/dev/null")
-    rc, out, _ = adb_shell(serial, f'"{remote}"')
+    # `shell` lets the same read run over any transport (an SshTransport.shell
+    # for a watch on SSH); default is ADB by serial. The quoting is identical
+    # for both back ends, so the pre-quoted remote command is passed as-is.
+    run = shell or (lambda c: adb_shell(serial, c))
+    rc, out, _ = run(f'"{remote}"')
     if rc != 0:
         return None, False, None
     bat_part, _, rest = out.partition("---SCR---")
