@@ -458,7 +458,7 @@ function openSpark(serial,name,ev){
 }
 function mkport(p){
   let s = p.socket!=null
-    ? `<b style="color:#c9d1d9">socket ${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
+    ? `<b style="color:#c9d1d9">s${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
     : `<span class="dim">p${p.port}</span>`;
   if(p.excluded) s = `<span class="err" title="${esc(p.excluded)}">avoid</span> ` + s;
   return s;
