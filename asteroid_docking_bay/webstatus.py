@@ -225,21 +225,30 @@ BOOT_FAIL_CAP = 300.0
 
 
 def _boot_state(ls: dict, power: "bool | None") -> "str | None":
-    """"booting" while a watch we deliberately (re)booted is expected to come
-    up, then "bootfail" once the definite-boot window lapses with still no OS
-    sighting — a question, not a verdict, since it can equally be a watch that
-    simply never enumerates (flat battery, contact/cable). Only meaningful with
-    the port powered; a real adb sighting bumps last_live_ts past booting_since
-    and ends both with no explicit clear. Beyond the cap it returns None."""
+    """The in-flight state after a (re)power we triggered. Distinguishes a real
+    boot from a mere re-enumeration:
+
+    - A gracefully-shelved watch (safe_off marker) we power on is OFF, so it
+      actually boots: "booting" in the window, then "bootfail" past it (a
+      question, since it can equally be a watch that never enumerates).
+    - A watch that was just RUNNING when its VBUS was cut keeps running on
+      battery; restoring power only makes it re-enumerate on the bus, not
+      reboot. That reads "reconnecting" for the window, then no claim.
+
+    Only meaningful with the port powered; a real adb sighting bumps
+    last_live_ts past booting_since and ends it with no explicit clear."""
     if not power:
         return None
     bs = ls.get("booting_since") or 0
-    if not bs or (ls.get("last_live_ts") or 0) >= bs:
+    llt = ls.get("last_live_ts") or 0
+    if not bs or llt >= bs:
         return None
+    so = ls.get("safe_off_ts") or 0
+    cold = bool(so and so >= llt)   # was shelved/down → a real boot
     dt = time.time() - bs
     if dt < BOOT_WINDOW:
-        return "booting"
-    if dt < BOOT_FAIL_CAP:
+        return "booting" if cold else "reconnecting"
+    if cold and dt < BOOT_FAIL_CAP:
         return "bootfail"
     return None
 

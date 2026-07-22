@@ -224,7 +224,9 @@ def test_lifecycle_tracks_a_triggered_boot_through_its_window(monkeypatch):
     from asteroid_docking_bay import webstatus as ws
     now = 10_000.0
     monkeypatch.setattr(ws.time, "time", lambda: now)
-    store = {"S1": {"booting_since": now, "last_live_ts": 500.0}}
+    # A cold boot: the watch was gracefully shelved (safe_off marker) before we
+    # powered it on, so it really boots.
+    store = {"S1": {"booting_since": now, "last_live_ts": 500.0, "safe_off_ts": 600.0}}
     monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
 
     # Just triggered, port powered, not up yet -> booting.
@@ -239,10 +241,28 @@ def test_lifecycle_tracks_a_triggered_boot_through_its_window(monkeypatch):
     store["S1"]["last_live_ts"] = 10_000.0 + 5
     now = 10_000.0 + 10
     assert ws._lifecycle("S1", present=False, power=True) is None
-    # The port powered off mid-boot cannot be "booting" — nothing is booting.
+    # Port off again on this shelved watch: nothing is booting — it reads "down".
     store["S1"]["last_live_ts"] = 500.0
     now = 10_000.0 + 5
-    assert ws._lifecycle("S1", present=False, power=False) is None
+    assert ws._lifecycle("S1", present=False, power=False) == "down"
+
+
+def test_powering_a_running_watch_reads_reconnecting_not_booting(monkeypatch):
+    """Toggling a running watch's port off then on does not reboot it — it keeps
+    running on battery and only re-enumerates. With no graceful-shutdown marker
+    (it was live, not shelved), the window reads "reconnecting", and past the
+    window it makes no claim rather than a false "boot failed?"."""
+    from asteroid_docking_bay import webstatus as ws
+    now = 10_000.0
+    monkeypatch.setattr(ws.time, "time", lambda: now)
+    # Live seconds before the power-on, no safe_off marker -> a warm re-enumerate.
+    store = {"S1": {"booting_since": now, "last_live_ts": now - 8}}
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: store.get(s))
+
+    assert ws._lifecycle("S1", present=False, power=True) == "reconnecting"
+    now = 10_000.0 + ws.BOOT_WINDOW + 1
+    assert ws._lifecycle("S1", present=False, power=True) is None, \
+        "a warm reconnect must not escalate to boot failed"
 
 
 def test_align_usb_mode_only_touches_a_stray_and_backs_off(monkeypatch):

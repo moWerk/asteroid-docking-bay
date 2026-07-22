@@ -618,6 +618,8 @@ function mkadbrow(p){
   // evidence a boot is under way, so we name it.
   if(p.adb===null&&p.lifecycle==='booting')
     return '<span class="cbadge life booting" title="just powered on / rebooted — waiting for it to come up (~40s)">booting up</span>';
+  if(p.adb===null&&p.lifecycle==='reconnecting')
+    return '<span class="cbadge life booting" title="port power was cut and restored on a running watch — it kept running on battery and is re-enumerating on the bus (not a reboot)">reconnecting</span>';
   if(p.adb===null&&p.lifecycle==='bootfail')
     return '<span class="cbadge life bootfail" title="triggered a boot but it has not come up in time — it may have failed to boot, or is simply not enumerating (flat battery, contact/cable)">boot failed?</span>';
   if(p.adb===null&&p.not_enumerating)
