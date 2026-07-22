@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import sys
 import time
 from pathlib import Path
@@ -15,16 +16,56 @@ from .util import log, setup_logging
 from .adb import (_adb_state, _wait_for_new_adb_device, adb_devices,
                   get_battery_level, get_watch_codename)
 from .config import (CONFIG_FILE, ChargeConfig, charge_config, flash_config,
-                     _resolve_targets, _store_smart_verdict,
-                     find_port_for_codename, find_serial_for_codename,
-                     find_serial_for_loc_port, is_port_smart, load_config,
+                     _resolve_targets, _store_smart_verdict, AmbiguousTargetError,
+                     find_port_for_codename, find_ports_for_target,
+                     find_serial_for_codename, resolve_single_port,
+                     find_serial_for_loc_port, is_port_smart, is_slot_smart,
+                     exact_codename_for_serial, load_config,
                      save_config)
 from .usb import (port_foreign_device, test_port_power_switching,
                   uhubctl_get_power, uhubctl_list, uhubctl_set_power)
 from .events import event_log
 from .fastboot import _fastboot_devices
 from .ops import _end_port, _flash_one_watch, charge_to_target
+from .tasks import active_op_on_slot
 from .watchctl import wait_for_adb
+
+
+def cmd_log(args, cfg: dict):
+    """Record an externally-driven event on a watch's timeline.
+
+    Flashes, boots and bench sessions run by other tools and sessions are
+    invisible to the per-watch log, which leaves unexplained gaps ("why did
+    this watch's uptime reset four times today?"). This lets an outside
+    driver keep the history complete.
+
+    Injected events are typed `external`, never a reading, so they cannot be
+    mistaken for measured data — and they deliberately break the standby-drain
+    chain, because an interval containing bench work was not passive standby.
+    """
+    codename = args.codename
+    serial = args.serial or find_serial_for_codename(cfg, codename)
+    if not serial:
+        log.error("%s: no serial known — run 'discover', or pass --serial",
+                  codename)
+        return 1
+    seats = [(hub["location"], port_str)
+             for hub in cfg.get("hubs", [])
+             for port_str, cname in (hub.get("ports") or {}).items()
+             if cname.lower() == codename.lower()]
+    if len(seats) > 1 and not args.serial:
+        # Config keys on the MACHINE/image name, which several physically
+        # different watches can share (tunny ships the skipjack image), so a
+        # bare codename can be ambiguous. Say so rather than writing the note
+        # to an arbitrary one of them.
+        log.warning("%s is mapped to %d ports (%s) — logging against serial %s; "
+                    "pass --serial to choose explicitly",
+                    codename, len(seats),
+                    ", ".join(f"{loc}:p{p}" for loc, p in seats), serial)
+    event_log.log(serial, codename, "external",
+                  note=args.message, source=args.source)
+    print(f"{codename} ({serial}): logged \u2014 {args.message}")
+    return 0
 
 
 def cmd_serve(args, cfg: dict):
@@ -66,7 +107,19 @@ def cmd_serve_backend(args, cfg: dict):
 
 
 def cmd_status(args, cfg: dict):
+    if getattr(args, "json", False):
+        # Serve the SAME document the web UI renders, rather than a second
+        # status implementation that can drift from it. It already resolves
+        # fastboot, exact codenames, cached batteries and running ops.
+        from . import rpcops
+        print(json.dumps(rpcops.DISPATCH._data["status.get"]({}), indent=2))
+        return
     devices = adb_devices()
+    # A watch in the bootloader is absent from `adb devices`, so consulting
+    # only adb reported it as "--" — indistinguishable from unplugged. During
+    # a flash cycle that reads as "gone" when it is in fact sitting in
+    # fastboot waiting, which is exactly the wrong conclusion.
+    fb_devices = _fastboot_devices()
     rows: list[tuple] = []
     seen_serials: set[str] = set()
     has_dumb_port = False
@@ -88,7 +141,10 @@ def cmd_status(args, cfg: dict):
                 smart_str = "?"
 
             serial = find_serial_for_codename(cfg, codename)
-            adb_state = (_adb_state(devices, serial) or "--") if serial else "--"
+            if serial and serial in fb_devices:
+                adb_state = "fastboot"
+            else:
+                adb_state = (_adb_state(devices, serial) or "--") if serial else "--"
             if serial:
                 seen_serials.add(serial)
 
@@ -97,7 +153,9 @@ def cmd_status(args, cfg: dict):
                 level = get_battery_level(serial)
                 battery_str = f"{level}%" if level is not None else "err"
 
-            rows.append((codename, f"{loc}:p{port}", power_str, smart_str, adb_state, battery_str))
+            exact = exact_codename_for_serial(cfg, serial)
+            shown = exact or codename
+            rows.append((shown, f"{loc}:p{port}", power_str, smart_str, adb_state, battery_str))
 
     # Show ADB-visible watches not yet mapped to a hub port.
     for serial, state in devices.items():
@@ -123,24 +181,67 @@ def cmd_status(args, cfg: dict):
         print("      or re-run 'asteroid-docking-bay test-ports' to recheck.")
 
 
+def _busy_guard(codename: str, loc: str, port: int) -> bool:
+    """True (and complains) when an operation owns this port.
+
+    The CLI talks to the hardware directly rather than through the op table,
+    so the web UI's protection does not cover it — and the registries live in
+    the web service's memory, invisible here. active_op_on_slot falls through
+    to the durable task store, which is the view a separate process has.
+
+    This matters because a charge/drain/workbench does not fail loudly when
+    disturbed: it keeps reporting, with falsified numbers. A drain test whose
+    port is powered mid-run recharges the watch and quietly invents its own
+    result — five hours of readings were destroyed exactly this way.
+    """
+    kind = active_op_on_slot(f"{loc}:{port}")
+    if kind is None:
+        return False
+    log.error("%s: a %s operation owns %s:p%d — refusing.\n"
+              "  Stop it first (web UI, or '%s stop'), otherwise its readings "
+              "are silently corrupted.", codename, kind, loc, port, kind)
+    return True
+
+
+def _label(d: dict) -> str:
+    """How to name a resolved port in output: the exact codename if known,
+    else the image name, else the serial."""
+    return d.get("exact") or d.get("machine") or d.get("serial") or "?"
+
+
+def _target_ports(codename_arg: str, cfg: dict) -> "list[dict]":
+    """Port descriptors for a CLI target. 'all' expands to every configured
+    port; anything else resolves to exactly one, addressed by serial, exact
+    codename, or a unique image name. A shared image name raises
+    AmbiguousTargetError (caught in main and shown as a pick-one message) —
+    never a silent first-match, which on a power command is a foot-gun."""
+    if codename_arg == "all":
+        return find_ports_for_target(cfg, "all")
+    d = resolve_single_port(cfg, codename_arg)
+    if d is None:
+        log.error("%s: no watch by that serial, exact codename, or image name",
+                  codename_arg)
+        return []
+    return [d]
+
+
 def cmd_on(args, cfg: dict):
-    for codename in _resolve_targets(args.codename, cfg):
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port (run: asteroid-docking-bay map)", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in _target_ports(args.codename, cfg):
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
-            log.warning("%s: port is NOT power-switchable — command will have no effect", codename)
+            log.warning("%s: port is NOT power-switchable — command will have no effect", label)
         elif smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify", codename)
-        log.info("%s: powering on hub %s port %d", codename, loc, port)
+            log.warning("%s: port switching not tested — run 'test-ports' to verify", label)
+        if _busy_guard(label, loc, port):
+            continue
+        log.info("%s: powering on hub %s port %d", label, loc, port)
         uhubctl_set_power(loc, port, True)
-        print(f"{codename}: hub {loc} port {port} → ON")
+        print(f"{label}: hub {loc} port {port} → ON")
 
 
 def cmd_off(args, cfg: dict):
-    targets = _resolve_targets(args.codename, cfg)
+    targets = _target_ports(args.codename, cfg)
 
     if args.codename == "all" and not args.force:
         ans = input(f"Power off ALL {len(targets)} configured watches? [y/N] ").strip().lower()
@@ -148,50 +249,48 @@ def cmd_off(args, cfg: dict):
             print("Aborted.")
             return
 
-    for codename in targets:
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in targets:
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
             # Aborting here is important: silently failing to power off a port
             # would leave the user thinking the watch is off when it is still on.
             log.error(
                 "%s: port is NOT power-switchable — refusing 'off' to avoid confusion.\n"
                 "  The watch would remain powered on. Move it to a smart hub port.",
-                codename,
+                label,
             )
             continue
         if smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
-        log.info("%s: powering off hub %s port %d", codename, loc, port)
+            log.warning("%s: port switching not tested — run 'test-ports' to verify first", label)
+        if _busy_guard(label, loc, port):
+            continue
+        log.info("%s: powering off hub %s port %d", label, loc, port)
         uhubctl_set_power(loc, port, False)
-        print(f"{codename}: hub {loc} port {port} → OFF")
+        print(f"{label}: hub {loc} port {port} → OFF")
 
 
 def cmd_cycle(args, cfg: dict):
     wait = args.wait
-    for codename in _resolve_targets(args.codename, cfg):
-        loc, port = find_port_for_codename(cfg, codename)
-        if loc is None:
-            log.error("%s: not mapped to any hub port", codename)
-            continue
-        smart = is_port_smart(cfg, codename)
+    for d in _target_ports(args.codename, cfg):
+        loc, port, label = d["loc"], d["port"], _label(d)
+        smart = is_slot_smart(cfg, loc, port)
         if smart is False:
             log.error(
                 "%s: port is NOT power-switchable — cycle has no effect. Skipping.",
-                codename,
+                label,
             )
             continue
         if smart is None:
-            log.warning("%s: port switching not tested — run 'test-ports' to verify first", codename)
-        log.info("%s: cycling hub %s port %d (off for %ds)", codename, loc, port, wait)
+            log.warning("%s: port switching not tested — run 'test-ports' to verify first", label)
+        if _busy_guard(label, loc, port):
+            continue
+        log.info("%s: cycling hub %s port %d (off for %ds)", label, loc, port, wait)
         uhubctl_set_power(loc, port, False)
-        print(f"{codename}: OFF — waiting {wait}s…", flush=True)
+        print(f"{label}: OFF — waiting {wait}s…", flush=True)
         time.sleep(wait)
         uhubctl_set_power(loc, port, True)
-        print(f"{codename}: ON")
+        print(f"{label}: ON")
 
 
 def cmd_charge(args, cfg: dict):
@@ -731,7 +830,11 @@ def main():
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
-    sub.add_parser("status", help="show all watches: port, power, ADB state, battery")
+    p_st = sub.add_parser("status",
+                          help="show all watches: port, power, ADB state, battery")
+    p_st.add_argument("--json", action="store_true",
+                      help="emit the full status document as JSON (same data "
+                           "the web UI uses) for scripts and agents")
 
     p_on = sub.add_parser("on", help="power on a watch's USB port")
     p_on.add_argument("codename", help="watch codename, or 'all'")
@@ -765,6 +868,14 @@ def main():
         "codename", nargs="?", default="all",
         help="watch codename, or 'all' (default)",
     )
+
+    p_lg = sub.add_parser(
+        "log", help="record an external event on a watch's timeline")
+    p_lg.add_argument("codename")
+    p_lg.add_argument("message", help="what happened, e.g. 'flashed asteroid-image 20260719'")
+    p_lg.add_argument("--source", default="external",
+                      help="who is logging (e.g. 'ui-track session')")
+    p_lg.add_argument("--serial", help="disambiguate when a codename maps to several watches")
 
     sub.add_parser("discover", help="scan for ADB-connected watches and show codenames")
 
@@ -838,6 +949,7 @@ def main():
         "map": cmd_map,
         "test-ports": cmd_test_ports,
         "discover": cmd_discover,
+        "log": cmd_log,
         "flash": cmd_flash_all,
         "serve": cmd_serve,
         "serve-backend": cmd_serve_backend,
@@ -848,6 +960,9 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(1)
+    except AmbiguousTargetError as e:
+        log.error("%s", e)
+        sys.exit(2)
     except RuntimeError as e:
         log.error("%s", e)
         sys.exit(1)

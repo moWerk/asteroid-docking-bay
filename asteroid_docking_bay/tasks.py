@@ -94,3 +94,33 @@ class TaskStore:
 task_store = TaskStore(Path.home() / ".local/state/asteroid-docking-bay/tasks")
 
 
+
+
+def active_op_on_slot(slot: str) -> "str | None":
+    """The kind of operation currently owning this slot, or None.
+
+    A running charge, drain or workbench owns its port's power state, and
+    changing it underneath silently falsifies the measurement rather than
+    failing loudly.
+
+    Two views, because there are two kinds of caller. Inside the web service
+    the in-memory registries are authoritative and current. A separate CLI
+    process sees empty registries — the ops live in another process — so it
+    falls through to the durable store, which is the only view it has. One
+    function for both keeps the answer identical whoever asks.
+
+    Fails closed: a stale file left by a crashed service refuses an operation
+    that would in fact have been safe. That is the right direction to be
+    wrong, and `_resume_persisted_tasks` clears it on the next web start.
+    """
+    for kind, registry in (("charge", _charge_tasks),
+                           ("drain", _drain_tasks),
+                           ("workbench", _workbench_tasks)):
+        task = registry.get(slot)
+        if task is not None and not task.get("done", True):
+            return kind
+    for payload in task_store.load_all():
+        if (payload.get("slot") == slot
+                and not (payload.get("task") or {}).get("done", True)):
+            return payload.get("kind")
+    return None

@@ -9,6 +9,7 @@ pins the exact unit; this test fails against the old codename-only match.
 """
 
 import asteroid_docking_bay.watchctl as wc
+import asteroid_docking_bay.transport as tp
 from asteroid_docking_bay.watchctl import wait_for_adb
 
 
@@ -54,7 +55,7 @@ def _geo_run(conf, modes):
 
 
 def test_geometry_round_watch(monkeypatch):
-    monkeypatch.setattr(wc, "_run", _geo_run(
+    monkeypatch.setattr(tp, "_run", _geo_run(
         "[Display]\nROUND = true\n\n[Identity]\nMACHINE = skipjack\n",
         "U:360x360p-2640\n"))
     geo = wc.Watch("S1").geometry()
@@ -65,12 +66,23 @@ def test_geometry_round_watch(monkeypatch):
 
 
 def test_geometry_square_watch(monkeypatch):
-    monkeypatch.setattr(wc, "_run", _geo_run(
+    monkeypatch.setattr(tp, "_run", _geo_run(
         "[Display]\nROUND = false\nFLAT_TIRE = 0\n", "U:320x320p-100\n"))
     geo = wc.Watch("S1").geometry()
     assert geo["round"] is False and geo["flat_tire"] == 0 and geo["width"] == 320
 
 
+def test_watch_routes_through_an_injected_ssh_transport(monkeypatch):
+    from asteroid_docking_bay.transport import SshTransport
+    calls = []
+    monkeypatch.setattr(tp, "_run",
+                        lambda cmd, check=True, timeout=None:
+                        calls.append(cmd) or (0, "", ""))
+    wc.Watch("S", SshTransport("1.2.3.4")).toggle("wifi", True)
+    assert calls and calls[0].startswith("ssh ")
+    assert "root@1.2.3.4 connmanctl enable wifi" in calls[0]
+
+
 def test_geometry_empty_when_unreachable(monkeypatch):
-    monkeypatch.setattr(wc, "_run", lambda *a, **k: (1, "", ""))
+    monkeypatch.setattr(tp, "_run", lambda *a, **k: (1, "", ""))
     assert wc.Watch("S1").geometry() == {}

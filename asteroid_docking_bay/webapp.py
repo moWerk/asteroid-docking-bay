@@ -35,6 +35,7 @@ from .webtemplate import _WEB_TEMPLATE
 _JSON_ROUTES = [
     # method, path,                                op,                static args,    bust
     ("GET",  "/api/watch/<serial>",                "watch.cc",        {},             False),
+    ("GET",  "/api/watch/<serial>/stale",          "watch.cc",        {"stale": True}, False),
     ("GET",  "/api/watch/<serial>/timeline",       "watch.timeline",  {},             False),
     ("POST", "/api/watch/<serial>/settime",        "watch.settime",   {},             False),
     ("POST", "/api/watch/<serial>/notify",         "watch.notify",    {},             False),
@@ -44,6 +45,8 @@ _JSON_ROUTES = [
     ("POST", "/api/poweroff/<loc>/<port:int>",     "port.poweroff",   {},             True),
     ("POST", "/api/reboot/<loc>/<port:int>",       "port.reboot",     {},             False),
     ("POST", "/api/bootloader/<loc>/<port:int>",   "port.bootloader", {},             False),
+    ("POST", "/api/recovery/<loc>/<port:int>",     "port.recovery",   {},             False),
+    ("POST", "/api/continue/<loc>/<port:int>",     "port.continue",   {},             False),
     ("POST", "/api/cycle/<loc>/<port:int>",        "port.cycle",      {},             True),
     ("POST", "/api/hide/<loc>/<port:int>",         "port.hide",       {},             True),
     ("POST", "/api/hide-hub/<loc>",                "hub.hide",        {},             True),
@@ -51,12 +54,18 @@ _JSON_ROUTES = [
     ("POST", "/api/charge/stop/<loc>/<port:int>",  "charge.stop",     {},             True),
     ("POST", "/api/workbench/<loc>/<port:int>",    "workbench.start", {},             True),
     ("POST", "/api/workbench/stop/<loc>/<port:int>", "workbench.stop", {},            True),
+    ("POST", "/api/wear/on/<loc>/<port:int>",       "wear.set", {"on": True},  True),
+    ("POST", "/api/wear/off/<loc>/<port:int>",      "wear.set", {"on": False}, True),
     ("POST", "/api/drain/<loc>/<port:int>",        "drain.start",     {},             True),
     ("POST", "/api/drain/stop/<loc>/<port:int>",   "drain.stop",      {},             True),
     ("POST", "/api/backup/<loc>/<port:int>",       "watch.backup",    {},             False),
     ("POST", "/api/restore/<loc>/<port:int>",      "watch.restore",   {},             False),
     ("POST", "/api/diagnostics/<loc>/<port:int>",  "watch.diagnostics", {},           False),
+    ("POST", "/api/fbreport/<loc>/<port:int>",     "watch.fbreport",  {},             False),
     ("POST", "/api/switch-adb",                    "ssh.switch_adb",  {},             True),
+    ("POST", "/api/switch-adb/<serial>",          "ssh.switch_adb",  {},             True),
+    ("POST", "/api/switch-ssh/<serial>",          "watch.switch_ssh", {},            True),
+    ("POST", "/api/usb-preference/<mode>",         "prefs.set_usb_mode", {},          True),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
 ]
@@ -176,11 +185,12 @@ def serve(args, cfg: dict):
         from .watchctl import DIAG_ROOT
         safe = Path(name).name
         f = DIAG_ROOT / safe
-        if not (safe.endswith(".tar.gz") and f.is_file()):
+        if not (safe.endswith((".tar.gz", ".txt")) and f.is_file()):
             resp.status = 404
             resp.content_type = "text/plain"
             return b""
-        resp.content_type = "application/gzip"
+        resp.content_type = ("text/plain" if safe.endswith(".txt")
+                             else "application/gzip")
         resp.set_header("Content-Disposition", f'attachment; filename="{safe}"')
         return f.read_bytes()
 

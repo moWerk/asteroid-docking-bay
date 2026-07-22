@@ -17,13 +17,23 @@ _WEB_TEMPLATE = """\
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@400;700&display=swap" rel="stylesheet">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:24px}
+    /* Side margin scales with the viewport: ~0 up to a 960px (half-FHD/tablet)
+       width so the table uses the whole screen, then grows on larger displays
+       so an FHD view is not stretched edge to edge. */
+    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:14px max(0px,calc((100vw - 960px) * 0.17)) 24px}
+    .topbar,.berr,.alert,.hdr{padding-left:10px;padding-right:10px}
     h1{font:700 22px/1.4 'Archivo Narrow',sans-serif;color:#58a6ff;margin-bottom:4px;letter-spacing:1px}
     .hdim{color:#30363d;font-weight:400;font-size:16px;letter-spacing:3px}
     .htxt{letter-spacing:3px}
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
     /* Fixed top bar: left/right pinned so varying string lengths (the
        update stamp) can never reposition their neighbours. */
+    /* Seeded starfield backdrop (moWerk's Depth Drift): a fixed full-viewport
+       layer behind everything, so the header and the side margins are painted
+       with drifting stars. The table sits on its own solid background. */
+    @keyframes drift{from{transform:translateX(-5px)}to{transform:translateX(5px)}}
+    #stars{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+    #stars span{position:absolute;line-height:1}
     .topbar{display:flex;justify-content:space-between;color:#6e7681;font-size:11px;margin-bottom:2px}
     .berr{color:#f85149;font-size:12px;margin-bottom:6px}
     .berr:empty{display:none}
@@ -35,6 +45,9 @@ _WEB_TEMPLATE = """\
     /* Control Center overlay */
     .cn{cursor:pointer;border-bottom:1px dotted #4d5561}
     .cn:hover{color:#58a6ff;border-bottom-color:#58a6ff}
+    /* A disconnected watch's name dims well down, so the connected (full-white)
+       ones stand out at a glance. */
+    .offname{opacity:.6}
     .cc{position:fixed;z-index:100;display:none;width:auto;min-width:340px;max-width:94vw;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 10px 34px rgba(0,0,0,.6);font-size:12px;overflow:hidden}
     .cc-cols{display:flex;flex-wrap:wrap}
     .cc-col{flex:1 1 210px;min-width:200px}
@@ -45,6 +58,9 @@ _WEB_TEMPLATE = """\
     .cc-x{position:absolute;right:10px;top:6px;cursor:pointer;color:#6e7681;font-weight:400;font-size:16px;line-height:1}
     .cc-x:hover{color:#fff}
     .cc-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
+    /* Rows a touch taller to seat the inline live graph beside the value. */
+    .cc-grid .cc-v{min-height:15px;display:flex;align-items:center;justify-content:flex-end;gap:7px}
+    .spark{flex:0 0 auto;vertical-align:middle}
     .cc-act.mini{width:auto;flex:1;padding:6px}
     .cc-k{color:#6e7681}
     .cc-v{color:#c9d1d9;text-align:right;font-variant-numeric:tabular-nums;word-break:break-all}
@@ -62,23 +78,32 @@ _WEB_TEMPLATE = """\
     .cc-act:hover{background:#0d1f3a}
     .cc-act.done{border-color:#3fb950;color:#3fb950}
     /* Row action floating menus */
-    .btn.pw{border-color:#f0883e;color:#fff}
-    .btn.pw:hover{background:#2a1a0e}
-    .menu{position:fixed;z-index:110;display:none;min-width:172px;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
-    .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
-    .menu-item:hover:not(:disabled){filter:brightness(1.4);border-color:#30363d}
+    .menu{position:fixed;z-index:110;display:none;min-width:172px;max-height:calc(100vh - 24px);overflow-y:auto;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
+    /* Menu items are slim text links (not chunky buttons), coloured by action,
+       indented under their category header. */
+    .menu-item{display:block;text-align:left;padding:2px 10px;border:none;background:none;color:#c9d1d9;cursor:pointer;font:inherit;line-height:1.6;white-space:nowrap}
+    .menu-item:hover:not(:disabled){text-decoration:underline;filter:brightness(1.35)}
     .menu-item:disabled{opacity:.38;cursor:default}
-    /* Per-action accent: coloured label on a faint band of the same hue, to
-       keep the colourful feel the flat buttons had. */
-    .menu-item.ch{color:#3fb950;background:rgba(63,185,80,.07)}
-    .menu-item.dr{color:#d29922;background:rgba(210,153,34,.07)}
-    .menu-item.po{color:#f85149;background:rgba(248,81,73,.07)}
-    .menu-item.rb{color:#f0883e;background:rgba(240,136,62,.07)}
-    .menu-item.bl{color:#d2a8ff;background:rgba(210,168,255,.07)}
-    .menu-item.wbx{color:#a371f7;background:rgba(163,113,247,.07)}
-    .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
+    .menu-item.ch{color:#3fb950}
+    .menu-item.dr{color:#d29922}
+    .menu-item.po{color:#f85149}
+    .menu-item.rb{color:#f0883e}
+    .menu-item.bl{color:#d2a8ff}
+    .menu-item.wbx{color:#a371f7}
+    .menu-item.info{color:#58a6ff}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
+    /* Wear is the one item that stays a button — pink, the off-rig action. */
+    .menu-wear{display:inline-flex;align-items:center;height:var(--pill-h);margin:3px 10px;padding:0 12px;border-radius:var(--pill-r);border:1px solid #e08a9e;background:none;color:#e0a5b5;cursor:pointer;font:inherit}
+    .menu-wear:hover{background:#2a1a1f}
+    .menu-wear.on{background:#e08a9e;color:#1a1416}
+    /* Execute menu: former buttons become group headers, items indented under. */
+    .exgrp-hd{padding:7px 10px 3px;font-size:10px;font-weight:700;color:#8b949e;
+      text-transform:uppercase;letter-spacing:.6px;border-top:1px solid #21262d;margin-top:3px}
+    .exgrp-hd:first-child{border-top:none;margin-top:0}
+    .exgrp{padding-left:9px}
+    /* Prominent, non-clickable IP banner at the top of the workbench menu —
+       the address you actually need to reach the watch over SSH/WiFi. */
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     /* Watch product-photo thumbnail + click-to-enlarge overlay */
@@ -90,14 +115,26 @@ _WEB_TEMPLATE = """\
     .svgi{width:15px;height:15px;fill:currentColor;vertical-align:-2px}
     td.stats{min-width:52px;white-space:nowrap}   /* >=2 icons wide so the base pair never wraps to two rows */
     td.stats .strip{margin-left:0}
-    .strip{margin-left:8px;display:inline-flex;gap:7px;align-items:center;vertical-align:middle}
-    .strip .svgw{cursor:default;line-height:0}
-    .strip .ib{font-size:12px;line-height:1;font-weight:700}
-    .strip .chgop{color:#f2cc60;background:#238636;border-radius:50%;padding:2px}
-    .strip .drainop{color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
+    .strip{margin-left:8px;display:inline-flex;gap:6px;align-items:center;vertical-align:middle}
+    /* Every stat is a dot — a glyph in a circle — for one visual language with
+       the power dot and the charging circle. The last-seen age, being text, is
+       a matching pill rather than a dot. */
+    .sdot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+      width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
+      line-height:1;vertical-align:middle;flex:none}
+    .sdot .svgi{width:14px;height:14px;vertical-align:0}
+    .sdot .pwri{width:15px;height:15px}
+    .sdot.on{border-color:#3fb950;color:#3fb950}
+    .sdot.err{border-color:#f85149;color:#f85149}
+    .sdot.warn{border-color:#d29922;color:#d29922}
+    .sdot.dim{border-color:#3d4756;color:#8b949e}
+    .sdot.chg{border-color:#238636;background:#238636;color:#f2cc60}   /* charging: yellow bolt on green */
+    .sdot.drain{border-color:#3d4756;color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
+    .sdot[onclick]{cursor:pointer}
+    .sdot.spark:hover,.sdot[onclick]:hover{background:rgba(88,166,255,.12)}
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
-    .strip .svgw.spark{cursor:pointer}
-    .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+    /* Last-seen age is not a pill — it trails the Stats dots as plain text. */
+    .lastseen{color:#6e7681;font-size:11px;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
     .wimg{position:fixed;z-index:120;display:none;
           background:#161b22;border:1px solid #30363d;border-radius:10px;
@@ -121,16 +158,29 @@ _WEB_TEMPLATE = """\
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
        positions may shift slightly with string length — that's fine. */
-    .tblwrap{overflow-x:auto}
+    /* Milk glass: the table frosts the starfield behind it and rows are only
+       semi-opaque, so the stars faintly shine through. Hub headers are a touch
+       more transparent than the watch rows; the hover stays light enough not to
+       hide the stars. */
+    .tblwrap{overflow-x:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
-    th:first-child,td.tc{width:22px;padding-right:0}
     td{padding:7px 8px;border-bottom:1px solid #161b22;vertical-align:middle}
-    .wr:hover td{background:#161b22}
-    .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
+    .wr td{background:rgba(13,17,23,.72)}
+    /* Port folds into the Power cell: the informative s#/p# label, then the
+       toggle — kept on one line. */
+    .pcell{white-space:nowrap}
+    .pcell .tgl{margin-right:8px}
+    /* Smart pills vary in width (ppps / NO! / cycle), so centre them in a
+       slightly tighter column. */
+    /* Centered columns (Smart/Connection/Battery/Actions); Port/Stats/Watch
+       stay left-aligned. */
+    .smtc,.batc,.connc,.actc{text-align:center}
+    td.smtc{padding-left:6px;padding-right:6px}
+    .wr:hover td{background:rgba(32,41,54,.6)}
+    .hub-hdr td{background:rgba(13,20,32,.5);color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
     .hub-hdr:first-child td{border-top:none;padding-top:0}
     .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
-    td.tc{color:#30363d;font-size:12px;user-select:none}
     tr.empty td{color:#6e7681}
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
@@ -143,20 +193,75 @@ _WEB_TEMPLATE = """\
     .cc.stale-cc .cc-tgl,.cc.stale-cc .cc-act{opacity:.4;pointer-events:none}   /* offline: controls do nothing, so block + dim them */
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
+    /* One set of tokens for every in-row pill, glyph-dot and the port toggle,
+       so they all share a height (widths stay content-driven) and a look.
+       --pill-h is the port-toggle height — the toggle is the reference size and
+       reads it back below. Single-line pills meet this height; a pill whose
+       content is too long still wraps to two inner lines and grows. */
+    :root{--pill-h:24px;--pill-r:12px;--pill-px:9px;--pill-fs:12px}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
-    .cbadge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid;vertical-align:middle}
+    /* Pills are inline-block, not flex, so long content (Connection, Battery)
+       wraps to a second inner line instead of forcing the column — and the
+       table — wider than the viewport. min-height (not height) holds the
+       single-line size; a wrapped pill grows past it. */
+    .cbadge{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;vertical-align:middle;background:transparent;font-family:inherit}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
-    .cbadge.ssh{border-color:#d29922;color:#d29922;cursor:pointer}
-    .cbadge.ssh:hover{background:#2a2113}
-    .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    .cbadge.adb{border-color:#3fb950;color:#3fb950}
+    .cbadge.ssh{border-color:#d29922;color:#d29922}
+    .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
+    .smt{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
+    /* Smart type is blue, not green — green is reserved for the power/charge
+       states so it keeps its weight. The known type (ppps) is the brighter
+       tone; the untested cycle is a darker shade of the same blue (it is an
+       action, so deliberately NOT orange — orange means ambiguous/stale here). */
+    .smt.ppps{border-color:#58a6ff;color:#58a6ff}
+    .smt.no{border-color:#f85149;color:#f85149}
+    .smt.unk{border-color:#1f6feb;color:#388bfd;cursor:pointer}
+    .smt.unk:hover:not(:disabled){background:#0d2136}
+    .smt.unk:disabled{opacity:.35;cursor:default}
+    .cbadge.life{margin-left:6px;letter-spacing:.3px}
+    .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
+    .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
+    .cbadge.life.booting{border-color:#c9d1d9;color:#f0f6fc;animation:bootpulse 1.2s ease-in-out infinite}
+    .cbadge.life.bootfail{border-color:#f85149;color:#f85149;animation:bootfail .5s ease-in-out infinite}
+    @keyframes bootpulse{0%,100%{opacity:1}50%{opacity:.3}}
+    @keyframes bootfail{0%,100%{background:transparent;color:#f85149}50%{background:rgba(248,81,73,.55);color:#fff}}
+    .cbadge.bat.ok{border-color:#3fb950;color:#3fb950}
+    .cbadge.bat.warn{border-color:#d29922;color:#d29922}
+    .cbadge.bat.low{border-color:#f85149;color:#f85149}
+    button.cbadge.bat:hover{background:rgba(255,255,255,.05)}
+    /* Battery gauge: fixed width (~the column title), grey outline, a fill that
+       grows left→right. The fill is coloured only when connected; grey when off. */
+    .batw{position:relative;display:inline-block;box-sizing:border-box;width:68px;height:var(--pill-h);
+      border-radius:var(--pill-r);border:1px solid rgba(240,246,252,.55);background:none;overflow:hidden;
+      cursor:pointer;font:var(--pill-fs) monospace;color:#c9d1d9;vertical-align:middle;padding:0}
+    .batw:hover{filter:brightness(1.18)}
+    .batfill{position:absolute;top:0;left:0;bottom:0;width:0;background:rgba(120,130,145,.28);transition:width .4s ease}
+    .batw.high .batfill{background:rgba(63,185,80,.32)}
+    .batw.ok .batfill{background:rgba(210,153,34,.30)}
+    .batw.low .batfill{background:rgba(248,81,73,.34)}
+    .batw.off .batfill{background:rgba(120,130,145,.28)}
+    .batlbl{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;height:100%}
+    /* Clickable badges are real <button>s so the cursor is a pointer, not a
+       text caret; the non-clickable ones stay <span>s. */
+    button.cbadge{cursor:pointer}
+    button.cbadge.ssh:hover{background:#2a2113}
+    button.cbadge.adb:hover{background:#122117}
+    /* The flat dot-toggle: a coloured dot + ON/OFF, in the page's language. The
+       in-flight EXEC state (added on click, cleared when the row rebuilds
+       confirmed) dim-phases the whole toggle amber and grows/shrinks the dot —
+       a livelier version of the plain cmd-pulse. */
+    .tgl{display:inline-flex;align-items:center;justify-content:flex-start;gap:4px;box-sizing:border-box;width:54px;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;transition:background .12s,transform .12s}
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
-    .ico{background:none;border:1px solid #30363d;color:#6e7681;width:1.8em;height:1.8em;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;cursor:pointer;font:13px monospace;vertical-align:middle;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
-    .ico:hover{background:#21262d;color:#c9d1d9}
-    .ico:active{transform:scale(.88);transition:transform 55ms ease-out}
-    .tgl:disabled,.ico:disabled{opacity:.35;cursor:default;pointer-events:none}
+    .tgl:disabled{opacity:.35;cursor:default;pointer-events:none}
+    .tgl .dot{transition:transform .2s}
+    .tgl.pending{border-color:#d29922;color:#d29922;animation:tglexec .9s ease-in-out infinite}
+    .tgl.pending .dot{background:#d29922!important;animation:tgldot .9s ease-in-out infinite}
+    @keyframes tglexec{0%,100%{opacity:1}50%{opacity:.4}}
+    @keyframes tgldot{0%,100%{transform:scale(1)}50%{transform:scale(2)}}
     .btn{background:none;color:#c9d1d9;border:1px solid #30363d;padding:3px 9px;border-radius:4px;cursor:pointer;font:12px monospace;margin:0 .36em;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .btn:hover{background:#21262d}
     .btn:active{transform:scale(.92);transition:transform 55ms ease-out}
@@ -167,8 +272,17 @@ _WEB_TEMPLATE = """\
     .hrb{border-color:#d29922;color:#d29922}.hrb:hover{background:#2a2113}
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn.dr{border-color:#388bfd;color:#388bfd}
-    .btn.wb{border-color:#bc8cff;color:#fff}.btn.wb:hover{background:#1d1430}
+    .btn.ex{border-radius:12px;padding:3px 15px;border-color:#58a6ff;color:#58a6ff}.btn.ex:hover{background:#122132}
+    /* A worn row dims but stays. */
+    .wr.worn td{opacity:.5}
+    .wr.worn:hover td{opacity:.62}
+    /* Instant feedback: a clicked action element pulses until the next update
+       cycle confirms the new state (which rebuilds the row without this class). */
+    .cmd-pending{animation:cmdpulse .8s ease-in-out infinite}
+    @keyframes cmdpulse{0%,100%{opacity:1}50%{opacity:.38}}
+    /* Failure: switch the pending pulse to a red flash, 3× at double the rate. */
+    .cmd-fail{animation:cmdfail .4s ease-in-out 3!important}
+    @keyframes cmdfail{0%,100%{background:transparent}50%{background:rgba(248,81,73,.6);border-color:#f85149;color:#fff}}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -179,13 +293,22 @@ _WEB_TEMPLATE = """\
     @keyframes bpulse{0%,100%{opacity:1}50%{opacity:.18}}
     @keyframes rpulse{0%,100%{background:transparent}50%{background:rgba(88,166,255,.06)}}
     .wr.refreshing td{animation:rpulse 1.1s ease-in-out infinite}
-    .wr.refreshing:hover td{background:transparent!important;animation:rpulse 1.1s ease-in-out infinite}
+    /* Hovering a refreshing row must not hide the pulse. A plain `background`
+       declaration would lose to :hover, and an !important one beats the
+       animation itself (important declarations outrank keyframes) — pinning
+       the row and killing the hint. So the hovered row gets its own keyframe
+       that pulses *from* the hover colour instead. */
+    @keyframes rpulsehover{0%,100%{background:#161b22}50%{background:rgba(88,166,255,.16)}}
+    .wr.refreshing:hover td{animation:rpulsehover 1.1s ease-in-out infinite}
     .btn-ref.pulsing{animation:bpulse .85s ease-in-out infinite!important;border-color:#58a6ff!important;color:#58a6ff!important}
     @keyframes pwrwarn{0%,100%{background:transparent}40%{background:rgba(248,81,73,.12)}}
     .wr.pwr-warn td{animation:pwrwarn 1.8s ease-in-out 2}
     /* Phones: stack each row into a slim card — one labelled line per field —
-       instead of a wide table that scrolls sideways. Column order is fixed, so
-       the field labels come from :nth-child; no markup change needed. */
+       instead of a wide table that scrolls sideways. The desktop column order
+       is the fleet's ground-truth order (port → power → … → watch); a card
+       reads better name-first, so the card is a flex column that pulls the
+       thumbnail and codename to the top with `order`, and the field labels
+       come from :nth-child renumbered to the new column positions. */
     @media (max-width:720px){
       /* One card per screen is expected, so size up for legibility and touch —
          desktop's 11-13px is unreadable on a phone. */
@@ -195,54 +318,53 @@ _WEB_TEMPLATE = """\
       table,tbody,tr,td{display:block;width:auto}
       thead{display:none}
       .hub-hdr td{padding:14px 4px 4px;font-size:13px}
-      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 12px;padding:4px 14px}
+      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 12px;padding:4px 14px;
+          display:flex;flex-direction:column}
       .wr:hover td{background:transparent}
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
-      .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(2){display:block;float:left;margin:8px 12px 0 0;padding:0;border:none}
-      .wr td:nth-child(2) .wthumb{width:44px;height:44px}       /* thumb beside the title */
-      .wr td:nth-child(3){display:block;text-align:left;font-weight:700;font-size:20px;
-                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}
-      .wr td:nth-child(4){clear:both}                            /* fields start below the thumb */
+      .wr td:nth-child(4){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
+      .wr td:nth-child(4) .wthumb{width:44px;height:44px}
+      .wr td:nth-child(5){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
+                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}  /* codename title */
       .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
-      .wr td:nth-child(4)::before{content:"Stats"}
-      .wr td:nth-child(5)::before{content:"Port"}
-      .wr td:nth-child(6)::before{content:"Power"}
-      .wr td:nth-child(7)::before{content:"Smart"}
-      .wr td:nth-child(8)::before{content:"Connection"}
-      .wr td:nth-child(9)::before{content:"Battery"}
+      .wr td:nth-child(1)::before{content:"Port"}
+      .wr td:nth-child(2)::before{content:"Smart"}
+      .wr td:nth-child(3)::before{content:"Connection"}
+      .wr td:nth-child(6)::before{content:"Stats"}
+      .wr td:nth-child(7)::before{content:"Battery"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(10){display:block;text-align:left;padding-top:10px}  /* actions span the card */
-      /* Bigger, tappable controls */
-      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
-      .wr .ico{font-size:15px;width:2.6em;height:2.6em;padding:0;margin:3px .3em}
+      .wr td:nth-child(8){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
+      /* Bigger, tappable controls (the toggle keeps its fixed 54px width). */
+      .wr .btn{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
-      .wr .dot{width:9px;height:9px}
       .lr td{padding:0}
     }
   </style>
 </head>
 <body>
+  <div id="stars"></div>
   <div class="topbar"><span id="ts">loading&hellip;</span><span id="ver"></span></div>
   <div id="berr" class="berr"></div>
   <div id="alert" class="alert"></div>
   <div class="hdr">
   <h1><span class="hdim">&#x2728;  &#x22C6;  &#x02DA; </span>&#x2726;<span class="htxt">  asteroid-docking-bay  </span>&#x2726;<span class="hdim"> &#x02DA;  &#x22C6;  &#x2728;</span></h1>
-  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a></p>
+  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a></p>
   </div>
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th></th><th>Watch</th><th>Stats</th><th>Port</th><th>Power</th><th>Smart</th>
-      <th>Connection</th><th>Battery</th><th>Actions</th>
+      <th>Port</th><th class="smtc">Smart</th><th class="connc">Connection</th>
+      <th></th><th>Watch</th><th>Stats</th><th class="batc">Battery</th><th class="actc">Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
   </div>
   <div id="hist" style="display:none"></div>
-  <div id="cc" class="cc" onmouseleave="ccLeave()" onmouseenter="ccEnter()"></div>
+  <div id="cc" class="cc"></div>
+  <div id="nc" class="cc"></div>
+  <div id="bi" class="cc"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
 <script>
@@ -260,11 +382,87 @@ function mkhide(slot,excluded){
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
-function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
-function mkbat(v,lo,hi){
-  if(v==null)return '<span class="dim">&mdash;</span>';
-  const cls=v<lo?'err':v<=hi?'on':'dim';
-  return `<span class="${cls}">${v}%</span>`;
+function mksmart(p,slot,dis){
+  // Smart = can the port switch VBUS. A known verdict is a pill (green yes /
+  // red NO!). Untested shows the power-cycle in its place, because the cycle
+  // IS the test — one click cuts and restores power and records the verdict —
+  // so the control lives exactly where its result will land.
+  if(p.smart===true)return '<span class="smt ppps" title="PPPS — this port switches its own VBUS (per-port power switching)">ppps</span>';
+  if(p.smart===false)return '<span class="smt no" title="port cannot switch its own power (not smart)">NO!</span>';
+  return `<button class="smt unk"${dis} onclick="pulseSelf(this);doCy('${slot}')" title="smart capability not tested — click to power-cycle the port and detect it">&#x21BA;</button>`;
+}
+function pulseSelf(el){
+  // Give a clicked action button instant feedback while the command is in
+  // flight. The status refresh that reflects the new state rebuilds the row
+  // (reconcile only rebuilds CHANGED rows) and the fresh button has no pulse —
+  // so it self-clears on confirmation. The timeout is only a safety net for a
+  // command that changes nothing (a no-op or a failure), where the row is
+  // reused and the class would otherwise linger.
+  if(!el)return;
+  el.classList.add('cmd-pending');
+  setTimeout(()=>{try{el.classList.remove('cmd-pending');}catch(e){}},8000);
+}
+function flashFail(el){
+  // Direct feedback that a command FAILED: stop any pending state and flash
+  // the element red three times. Used where the backend tells us the action
+  // did not take (a port that would not switch, a refused mode switch).
+  if(!el)return;
+  el.classList.remove('cmd-pending','pending');
+  el.classList.add('cmd-fail');
+  setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
+}
+// Port-toggle click: switch to the opposite of the current state. Add the
+// animated EXEC state while the command is in flight; on confirm, refresh so
+// the row rebuilds into the new state (a brief delay lets the exec animation be
+// seen). A refused switch flashes the toggle red.
+function pwrGo(el,slot){
+  if(el.classList.contains('pending'))return;
+  const on=!el.classList.contains('tgl-on');
+  el.classList.add('pending');
+  fetch((on?'/api/on/':'/api/off/')+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.confirmed===false){flashFail(el);_pwrFlash(slot);return;}
+    setTimeout(refresh,700);
+  }).catch(()=>flashFail(el));
+  setTimeout(()=>{try{el.classList.remove('pending');}catch(e){}},8000);
+}
+function connPill(serial){
+  // The connection cell carries the id; flash the badge INSIDE it, not the whole
+  // cell, so a failed switch reddens only the pill.
+  const td=serial?document.getElementById('conn-'+serial):null;
+  return td?(td.querySelector('.cbadge')||td):null;
+}
+// The power symbol as a stroked ionicon (the same style AsteroidOS uses), not
+// the ⏻ Unicode glyph — thinner, crisp at any scale, and centred by its viewBox.
+const POWERSVG='<svg class="pwri" viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"><path d="M378.09 92.42a201.31 201.31 0 11-244.18 0"/><path d="M256 32v192"/></svg>';
+function pdot(p){
+  // Power state as the first Stats dot: the power icon in a circle, recoloured
+  // by what we can positively assert. green = powered (the port is delivering
+  // power); grey = safely down (a confirmed graceful shutdown, port off, not
+  // draining); orange = ambiguous (off with no graceful-shutdown marker — a raw
+  // port cut that could equally be off or still running on battery).
+  const st=p.power===true?'on':(p.lifecycle==='down'?'down':'amb');
+  const tip=(st==='on'?'powered — the port is delivering power'
+    :st==='down'?'safely powered down — gracefully halted, port off, not draining'
+    :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut')
+    +' · click for power actions';
+  const slot=p.slot_loc+':'+p.port;
+  const clk=`menuPwr(event,'${slot}',${p.adb==='fastboot'},${!!p.charging_active},${!!(p.drain&&p.drain.active)},${p.power===true},${p.smart===false})`;
+  return sdot(st==='on'?'on':st==='down'?'dim':'warn',POWERSVG,tip,clk);
+}
+function mklife(p){
+  // Worn (off-rig via the wear toggle) is a marker on the name, so it keeps its
+  // own pink pill beside the codename; the power state lives in the Stats dot.
+  return p.lifecycle==='worn'?`<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>`:'';
+}
+function batBand(v,lo,hi){return v==null?'':(v<lo?'low':v<=hi?'ok':'');}
+function batPill(p,cls,inner,title){
+  // The battery cell as a pill: the charge percent, plus one line of appended
+  // detail (charge state, drain rate, …) in dim — like the mode badges carry
+  // the serial/IP. Clicking opens the Battery Info window; a watch with no
+  // serial (never seen) is a plain non-clickable pill.
+  const t=title?` title="${esc(title)}"`:'';
+  if(!p.serial)return `<span class="cbadge bat ${cls||''}"${t}>${inner}</span>`;
+  return `<button class="cbadge bat ${cls||''}" onclick="openBI('${esc(p.serial)}','${esc(p.codename||p.serial)}',event)"${t}>${inner}</button>`;
 }
 function fmtAge(ts){
   // Compact "how long ago" for a last-live timestamp (seconds since epoch).
@@ -277,12 +475,21 @@ function fmtAge(ts){
 function mkbatCell(p,lo,hi){
   // Prefer the live reading; when the watch is off the bus fall back to the
   // last-seen value shown stale (amber) with its age, not a blank cell.
-  if(p.battery!=null)return mkbat(p.battery,lo,hi);
-  if(p.battery_cached!=null){
-    const age=fmtAge(p.last_live_ts);
-    return `<span class="stale" title="watch off the bus — last reading${age?' '+age+' ago':''}">${p.battery_cached}%<span class="agec">${age?' '+age:''}</span></span>`;
-  }
-  return '<span class="dim">&mdash;</span>';
+  // A battery gauge: a fixed-width cell with a fill that grows left→right by
+  // charge level. Light grey by default; the fill is coloured by the real
+  // charge (red/amber/green) ONLY when the watch is connected. Offline shows
+  // the last level in grey — a level, not a colour claim. The charge STATE is
+  // carried by the Stats charge dot, so it is not repeated here.
+  const connected=p.battery!=null;
+  const pct=connected?p.battery:p.battery_cached;
+  if(pct==null)return '<span class="dim">&mdash;</span>';
+  const band=connected?(batBand(p.battery,lo,hi)||'high'):'off';
+  const age=fmtAge(p.last_live_ts);
+  const tip=connected?'battery — click for details'
+    :('watch off the bus — last reading'+(age?' '+age+' ago':''));
+  const clk=p.serial?` onclick="openBI('${esc(p.serial)}','${esc(p.codename||p.serial)}',event)"`:'';
+  const w=Math.max(0,Math.min(100,pct));
+  return `<button class="batw ${band}"${clk} title="${tip}"><span class="batfill" style="width:${w}%"></span><span class="batlbl">${pct}%</span></button>`;
 }
 function mkthumb(p){
   // Product photo thumbnail; removes itself if the watch has no image (404).
@@ -305,34 +512,47 @@ function onThumbLoad(img,codename,round){
 }
 const ICONS={watch:'<path d=\"M127.9 376c0-2 .7-4 2.2-5.5 3.1-3.2 8.1-3.3 11.3-.2 20.9 20 46.8 30.8 79.3 32.8 19 1.2 27.1 5.8 35 10.3 9.3 5.3 18.9 10.7 54.2 10.7 71.7 0 122-59.2 122-132v-56c0-24.7-3-48.9-16.1-69.8-12.8-20.4-26.9-37-48.3-47.9-3.9-2-5.5-6.8-3.5-10.8 2-3.9 6.8-5.5 10.8-3.5 24 12.2 40.2 30.8 54.6 53.6 14.8 23.5 18.5 50.6 18.5 78.3v56c0 81.6-57.5 148-138 148-39.4 0-51.4-6.8-62-12.8-7.2-4.1-12.8-7.3-28.2-8.2-36.4-2.3-65.6-14.4-89.3-37.2-1.6-1.6-2.5-3.7-2.5-5.8z\"/><path d=\"M272.7 402c0-.4 0-.9.1-1.3.7-4.4 4.8-7.3 9.2-6.6 35.5 5.8 66.1-2.4 88.5-23.9 3.2-3.1 8.3-2.9 11.3.2 3.1 3.2 2.9 8.3-.2 11.3-26.2 25.1-61.5 34.8-102.1 28.1-4-.6-6.8-4-6.8-7.8zM64 292v-56c0-27.7 3.8-54.8 18.5-78.3 14.3-22.8 30.6-41.4 54.6-53.6 3.9-2 8.8-.4 10.8 3.5s.4 8.8-3.5 10.8c-21.4 10.9-35.5 27.5-48.3 47.9-13.2 20.8-16.2 45-16.2 69.7v56c0 34.8 9 70.1 38.8 96.9 30.3 27.4 71 43.1 111.6 43.1 4.4 0 8 3.6 8 8s-3.6 8-8 8c-44.5 0-89-17.2-122.3-47.2-33.1-29.9-44-69.5-44-108.8z\"/><path d=\"M375.3 129c-1.9.6-3.9 1-6.1 1-10.5 0-19-8.5-19-19s8.5-19 19-19c5.7 0 10.7 2.4 14.2 6.3-3-19.4-19.8-34.3-40-34.3h-175c-19.6 0-36.1 14-39.8 32.7 3.4-3 7.8-4.7 12.6-4.7 10.5 0 19 8.5 19 19s-8.5 19-19 19c-1.5 0-2.9-.2-4.3-.5 7.4 8.9 18.8 14.5 31.5 14.5h175c12.9 0 24.6-5.8 31.9-15zm-98.1-25c0-14.9 12.1-27 27-27s27 12.1 27 27-12.1 27-27 27c-14.7 0-27-12.1-27-27z\"/>',batterydead:'<path d=\"M384 144H80c-17.6 0-32 14.4-32 32v160c0 17.6 14.4 32 32 32h304c17.6 0 32-14.4 32-32V176c0-17.6-14.4-32-32-32zm16 192c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V176c0-8.8 7.2-16 16-16h304c8.8 0 16 7.2 16 16v160zm32-135.4v110.8c19.1-11.1 32-31.7 32-55.4s-12.9-44.3-32-55.4z\"/>',flash:'<path d=\"M302.7 64 143 288h95.8l-29.5 160L369 224h-95.8l29.5-160z\"/>',moon:'<path d=\"M246.9 64c-12.6 1.4-24.9 4-36.6 7.7C132.4 96.4 76 169.3 76 255.4 76 361.8 162 448 268.2 448c58.7 0 111.2-26.4 146.5-67.9 8.1-9.5 15.2-19.8 21.4-30.8-11.4 2.8-23.1 4.5-35 5.1-2.9.1-5.9.2-8.8.2-48.4 0-94-18.9-128.2-53.2-34.3-34.3-53.1-80-53.1-128.5 0-27.6 6.1-54.3 17.7-78.5 4.9-10.7 11-20.9 18.2-30.4z\"/>',trend:'<path d=\"M472 128H360c-4.4 0-8 3.6-8 8s3.6 8 8 8h92L287.6 308.4l-83.9-84c-1.5-1.5-3.5-2.3-5.7-2.3-2.1 0-4.2.8-5.7 2.3L34.1 382.6c-1.6 1.6-2.1 3.7-2.1 5.9 0 2.1.6 3.9 2.1 5.5 1.6 1.6 3.6 2.3 5.7 2.3 2 0 4.1-.8 5.7-2.3L198 241.3l83.9 84c3.1 3.1 8.2 3.1 11.3 0L464 156v92c0 4.4 3.6 8 8 8s8-3.6 8-8V136c0-4.4-3.6-8-8-8z\"/>'};
 function svgicon(n){return `<svg class="svgi" viewBox="0 0 512 512">${ICONS[n]}</svg>`;}
+function sdot(cls,inner,title,click){
+  return `<span class="sdot ${cls}"${title?` title="${title}"`:''}${click?` onclick="${click}"`:''}>${inner}</span>`;
+}
 function mkstrip(p,wearH){
   let out='';
-  // 1. wearable verdict from the last drain test, or a "?" if never tested.
+  // 0. power state — first, so it reads at the same spot on every row.
+  if(p.codename)out+=pdot(p);
+  const biClk=p.serial?`openBI('${p.serial}','${esc(p.codename||'')}',event)`:'';
+  const slot=p.slot_loc+':'+p.port;
+  const wearClk=`menuWear(event,'${slot}',${!!(p.drain&&p.drain.active)},'${esc(p.serial||'')}',${p.wear?1:0})`;
+  // 1. wearable verdict from the last drain test; an untested watch shows a
+  //    grey "?" (like the battery-graph dot is grey with no history yet).
+  //    Clicking it opens the drain-test / wear actions.
   const dl=p.drain_last;
   if(dl&&dl.est_h!=null){
     const ok=dl.est_h>=wearH;
     const when=new Date(dl.ts*1000).toLocaleDateString();
-    const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`);
-    out+=`<span class="svgw ${ok?'on':'err'}" title="${tip}">${svgicon(ok?'watch':'batterydead')}</span>`;
+    const tip=`holds ~${fmtDur(dl.est_h)} standby (100&rarr;15%, drain test ${when})`+(ok?' — wearable':` — below ${wearH}h: battery swap candidate`)+' · click for drain/wear';
+    out+=sdot(ok?'on':'err',svgicon(ok?'watch':'batterydead'),tip,wearClk);
   }else if(p.codename){
-    out+=`<span class="ib dim" title="never drain-tested — run a drain test to rate standby life">?</span>`;
+    out+=sdot('dim','?','never drain-tested — click to run a drain test',wearClk);
   }
-  // 2. active dock op first (charging = yellow bolt on a green disc; drain
-  //    test = a dim pulse), else the watch-side charge state (ground truth).
+  // 2. battery-graph dot — an always-present indicator that history exists;
+  //    clicking it opens the same Battery Info panel as the battery gauge.
+  if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery info + history',biClk);
+  // 3. charge state — last of the dots, because it only appears conditionally:
+  //    an active dock op (charging = yellow bolt on a green disc; drain test =
+  //    a dim pulse), else the watch-side charge state (ground truth). Like the
+  //    gauge and graph dot, clicking it opens Battery Info.
   if(p.charging_active){
-    out+=`<span class="svgw chgop" title="charging to target">${svgicon('flash')}</span>`;
+    out+=sdot('chg',svgicon('flash'),'charging to target',biClk);
   }else if(p.drain&&p.drain.active){
-    out+=`<span class="svgw drainop" title="drain test running">${svgicon('batterydead')}</span>`;
+    out+=sdot('drain',svgicon('batterydead'),'drain test running',biClk);
   }else if(p.adb==='device'&&p.charge_status){
     const cs=p.charge_status;
-    if(cs==='Charging')out+=`<span class="svgw on" title="charging (delivered power confirmed)">${svgicon('flash')}</span>`;
-    else if(cs==='Full')out+=`<span class="ib on" title="battery full">&#10003;</span>`;
-    else if(cs==='Discharging')out+=`<span class="ib err" title="DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)">&#8595;</span>`;
+    if(cs==='Charging')out+=sdot('on',svgicon('flash'),'charging (delivered power confirmed)',biClk);
+    else if(cs==='Full')out+=sdot('on','&#10003;','battery full',biClk);
+    else if(cs==='Discharging')out+=sdot('err','&#8595;','DISCHARGING while docked — on ADB but not taking charge (dirty contact / bad cable)',biClk);
   }
-  // 3. sparkline launcher — click for the battery timeline (click, not hover).
-  if(p.serial)out+=`<span class="svgw dim spark" title="battery history — click for the timeline" onclick="openSpark('${p.serial}','${esc(p.codename||'')}',event)">${svgicon('trend')}</span>`;
-  // 4. last-seen age when the watch is off the bus.
-  if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="ib dim" title="last live ${fmtAge(p.last_live_ts)} ago">&#8226;${fmtAge(p.last_live_ts)}</span>`;
+  // 4. last-seen age when the watch is off the bus — plain trailing text.
+  if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="lastseen" title="last live ${fmtAge(p.last_live_ts)} ago">${fmtAge(p.last_live_ts)}</span>`;
   return out?`<span class="strip">${out}</span>`:'';
 }
 function sparkSvg(pts){
@@ -342,42 +562,109 @@ function sparkSvg(pts){
   const d=pts.map((p,i)=>(i?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.pct).toFixed(1)).join(' ');
   return `<svg class="spark-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><path d="${d}" fill="none" stroke="#58a6ff" stroke-width="1.5"/></svg>`;
 }
-function openSpark(serial,name,ev){
-  ev.stopPropagation();
-  openMenu(ev,`<div class="spark-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`);
+// Battery history for the Battery Info panel: fetched once when the panel opens
+// and stored per serial, so renderBI can append the chart at its foot.
+const biHist={};
+function biHistFetch(serial){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/timeline').then(r=>r.json()).then(d=>{
-    const m=document.getElementById('menu');
-    const pts=(d&&d.points)||[];
-    if(pts.length<2){m.innerHTML=`<div class="spark-hd">${esc(name)} <span class="dim">no history yet — readings accrue as it's checked/drained</span></div>`;placeMenu();return;}
-    m.innerHTML=`<div class="spark-hd">${esc(name)} battery history`+(d.rate?` <span class="dim">~${(+d.rate).toFixed(2)}%/h standby</span>`:'')+`</div>`+sparkSvg(pts);
-    placeMenu();   // reposition now the real (larger) chart size is known
+    if(biSerial!==serial)return;
+    biHist[serial]=d;
+    if(biCache[serial])renderBI(biCache[serial]);
   }).catch(()=>{});
 }
 function mkport(p){
   let s = p.socket!=null
-    ? `<b style="color:#c9d1d9">socket ${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
+    ? `<b style="color:#c9d1d9">s${p.socket}</b> <span class="dim" style="font-size:10px">p${p.port}</span>`
     : `<span class="dim">p${p.port}</span>`;
   if(p.excluded) s = `<span class="err" title="${esc(p.excluded)}">avoid</span> ` + s;
   return s;
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
-function mkadb(adb,fbprod,os){
+function mkadb(adb,fbprod,os,serial,sshIp,name){
+  const nm=esc(name||serial||'');
   if(adb==='device'){
-    if(os==='asteroidos')return `${AOSLOGO}<span class="on" title="AsteroidOS on ADB">ADB</span>`;
-    if(os&&os!=='unknown')return `<span class="on" title="${esc(os)} on ADB">ADB <span class="dim">${esc(os)}</span></span>`;
-    return '<span class="on">ADB</span>';
+    // Clicking the badge opens the Network Center (addresses, links, the USB
+    // mode toggle) rather than switching mode inline — an inline toggle here
+    // was too easy to misclick. A real <button> for the pointer cursor; a
+    // known non-AsteroidOS watch (e.g. WearOS) stays a plain status span.
+    // Shows the serial — the ADB address — mirroring the SSH pill's IP.
+    const known=os&&os!=='asteroidos'&&os!=='unknown';
+    const logo=os==='asteroidos'?AOSLOGO:'';
+    const ser=serial?` <span class="dim">${esc(serial)}</span>`:'';
+    const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(known?' — '+esc(os):'')}`;
+    if(!known&&serial)
+      return `<button class="cbadge adb" onclick="openNC('${esc(serial)}','${nm}',event,'${esc(sshIp||'')}','device')" title="${ttl} — click for network details">${logo}ADB${ser}</button>`;
+    return `<span class="cbadge adb" title="${ttl}">${logo}ADB${ser}</span>`;
   }
-  if(adb==='ssh')return `${os==='asteroidos'?AOSLOGO:''}<span class="cbadge ssh" onclick="switchAdb()" title="SSH/developer USB mode — no ADB functions. Click to switch this watch to ADB (via 192.168.2.15).">SSH</span>`;
+  if(adb==='ssh'){const ipl=sshIp?` <span class="dim">${esc(sshIp)}</span>`:'';return `<button class="cbadge ssh" onclick="openNC('${esc(serial||'')}','${nm}',event,'${esc(sshIp||'')}','ssh')" title="SSH/developer USB mode at ${esc(sshIp||'192.168.2.15')} — click for network details">${AOSLOGO}SSH${ipl}</button>`;}
   if(adb==='fastboot'){const l=fbprod?`fastboot: ${esc(fbprod)}`:'fastboot';return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
 }
 function mkadbrow(p){
+  // Highest-priority warning: the watch is almost certainly awake and
+  // draining right now, and nothing else on the row can show it. Cutting VBUS
+  // does not stop a watch in the bootloader — it keeps running on battery,
+  // invisible, until flat. That is how sturgeon reached 0%.
+  if(p.fb_draining)
+    return '<span class="err" title="last seen in FASTBOOT, port now unpowered — a watch in the bootloader does NOT stop when power is cut, it keeps running on battery until flat and is invisible while it does. Power the port back on, then either boot it or power it off from the on-screen fastboot menu.">draining in fastboot?</span>';
+  // A boot we deliberately triggered: white pulse while it is expected up,
+  // then a red-flashing "boot failed?" once the ~40s window lapses. Both beat
+  // the generic no-link/not-enumerating messages below — we have positive
+  // evidence a boot is under way, so we name it.
+  if(p.adb===null&&p.lifecycle==='booting')
+    return '<span class="cbadge life booting" title="just powered on / rebooted — waiting for it to come up (~40s)">booting up</span>';
+  if(p.adb===null&&p.lifecycle==='reconnecting')
+    return '<span class="cbadge life booting" title="port power was cut and restored on a running watch — it kept running on battery and is re-enumerating on the bus (not a reboot)">reconnecting</span>';
+  if(p.adb===null&&p.lifecycle==='bootfail')
+    return '<span class="cbadge life bootfail" title="triggered a boot but it has not come up in time — it may have failed to boot, or is simply not enumerating (flat battery, contact/cable)">boot failed?</span>';
   if(p.adb===null&&p.not_enumerating)
     return '<span class="err" title="port is powered and the hub sees a connection, but the device never enumerates — flat battery bootloop or bad cable. Tip: holding the watch in fastboot draws less than booting and lets a flat battery charge past the boot threshold.">not enumerating</span>';
   if(p.adb===null&&p.power===true&&p.connected===false)
-    return '<span class="warn" title="port is powered but nothing is electrically connected — watch not docked, or dead cable/contact">not docked</span>';
-  return mkadb(p.adb,null,p.os);
+    return '<span class="warn" title="port is powered but nothing is electrically connected — no watch docked, or a dead cable/contact. No claim which: the plug being pulled and a bad contact look identical from here.">no link</span>';
+  // A safely-down or worn watch is offline on purpose — say so here rather than
+  // a bare dash, so the connection column reads as intentional, not a fault.
+  if(p.adb===null&&p.lifecycle==='down')
+    return '<span class="cbadge life down" title="shelved — gracefully powered down, port off, not draining (a deliberate, safe off)">shelved</span>';
+  if(p.adb===null&&p.lifecycle==='worn')
+    return '<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>';
+  return mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename);
+}
+// Keyed row reconcile: replacing the whole tbody innerHTML every refresh
+// destroyed and recreated every product <img>, so each thumbnail reloaded and
+// blanked briefly — a visible flicker and wasted decode of the full-size
+// images. Instead, key each row (by its slot, or a hub header by location) and
+// only rebuild rows whose HTML actually changed; unchanged rows keep their
+// exact DOM node — moved, not recreated — so their images never reload.
+const _rowSig={};
+function _rowKey(html){
+  const m=html.match(/id="wr-([^"]+)"/);
+  if(m)return 'row:'+m[1];
+  const h=html.match(/class="hl">([^<]*)</);
+  if(h)return 'hub:'+h[1];
+  return 'x:'+html.length;
+}
+function reconcileRows(tb, htmls){
+  const existing={};
+  for(const el of Array.from(tb.children)){
+    const k=el.getAttribute('data-k'); if(k!==null)existing[k]=el;
+  }
+  const seen=new Set(), out=[];
+  for(const html of htmls){
+    const key=_rowKey(html);
+    if(seen.has(key))continue;
+    seen.add(key);
+    let el=existing[key];
+    if(!(el && _rowSig[key]===html)){          // new or changed → build fresh
+      const tmp=document.createElement('tbody');
+      tmp.innerHTML=html;
+      el=tmp.firstElementChild;
+      if(el){el.setAttribute('data-k',key); _rowSig[key]=html;}
+    }
+    if(el)out.push(el);                          // unchanged → reuse the node
+  }
+  for(const k in _rowSig)if(!seen.has(k))delete _rowSig[k];
+  tb.replaceChildren(...out);
 }
 function render(data){
   const tb=document.getElementById('tb');
@@ -392,16 +679,18 @@ function render(data){
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
   const wearH=(data&&data.wearable_min_hours)||24;
-  if(!hubs.length){tb.innerHTML='<tr><td colspan="10" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
+  usbPref=(data&&data.usb_mode_preference)==='ssh'?'ssh':'adb';
+  const upl=document.getElementById('usbpreflink');
+  if(upl)upl.textContent=usbPref==='ssh'?'prefer SSH':'prefer ADB';
+  if(!hubs.length){tb.innerHTML='<tr><td colspan="8" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
-    const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide this whole hub'}">${hub.hidden?'show':'hide'}</a>`;
-    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="10"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
+    const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide/show this hub'}">${hub.hidden?'&#x2295;':'&#x2296;'}</a>`;
+    rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
     visPorts.forEach((p,i)=>{
-      const tree=i===visPorts.length-1?'&#x2514;&#x2500;':'&#x251c;&#x2500;';
       if(p.empty){
         const slot=p.slot_loc+':'+p.port;
         const busy=!!(srcs[slot]||p.flashing);
@@ -414,22 +703,20 @@ function render(data){
           :mkadbrow(p);
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
-        const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
-        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power the port on, wait for the watch to boot (cycles once if it fails to enumerate), then identify and map it">Onboard</button>`;
+        const pwrFn=`pwrGo(this,'${slot}')`;
+        const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
-          `<td class="tc">${tree}</td>` +
+          `<td class="pcell"><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
+          `<td class="smtc">${mksmart(p,slot,d)}</td>` +
+          `<td class="connc">${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
-          `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${d} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
-          `<td>${mksmt(p.smart)}</td>` +
-          `<td>${adbCell}</td>` +
-          `<td class="dim">&mdash;</td>` +
-          `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
+          `<td class="dim batc">&mdash;</td>` +
+          `<td class="actc">`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }else{
         const slot=p.slot_loc+':'+p.port;
@@ -447,72 +734,125 @@ function render(data){
         const isFb=p.adb==='fastboot';
         const logActive=!!(srcs[slot]||p.flashing);
         const busy=!!(logActive||charging||draining||wb);
-        const d=(busy||p.excluded)?' disabled':'';
         const noSw=p.smart===false;
+        // Refresh doubles as "power on and identify" only where that is both
+        // possible and wanted: a switchable port that is currently off and not
+        // excluded (excluded ports are opted out of automatic power entirely).
+        const needPwr=(p.power!==true&&!noSw&&!p.excluded);
         const dp=(busy||noSw||p.excluded)?' disabled':'';
-        const noSwT=noSw?' title="port cannot switch power (not smart)"':'';
         const adb=mkadbrow(p);
         let bat;
         if(wb){
           const w=p.workbench;
           const pct=w.pct!=null?w.pct+'% ':'';
-          bat=`<span class="warn" title="workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}">${pct}${esc(w.phase||'')}</span>`;
+          // Name the holder: on a rig several sessions share, "workbench
+          // active" does not tell you whether to wait or take over.
+          const who=w.owner?` — held by ${esc(w.owner)}`:'';
+          bat=batPill(p,'warn',`${pct}<span class="dim">${esc(w.phase||'')}${w.owner?' ᴋ':''}</span>`,
+                      `workbench: battery held in the ${lo}–${hi}% band while you work over WiFi/SSH${w.blind?' (battery unreadable — blind duty cycle)':''}${who}`);
         }else if(charging){
-          if(p.charge_losing){bat=`<span class="err" title="battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).">${p.charge_pct!=null?p.charge_pct:'?'}% &#8595; losing power!</span>`;}
-          else if(p.charge_target!=null){bat=`<span class="warn">${p.charge_pct!=null?p.charge_pct:'?'}% &rarr; ${p.charge_target}%</span>`;}
-          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=`<span class="warn">${m}m${String(s).padStart(2,'0')}s</span>`;}
-          else{bat='<span class="warn">starting&hellip;</span>';}
+          if(p.charge_losing){bat=batPill(p,'low',`${p.charge_pct!=null?p.charge_pct:'?'}% <span class="dim">&#8595; losing</span>`,'battery is DROPPING while charging — losing power despite the charge attempt. Check contacts / cable / port (the dirty-contact failure).');}
+          else if(p.charge_target!=null){bat=batPill(p,'warn',`${p.charge_pct!=null?p.charge_pct:'?'}% <span class="dim">&rarr; ${p.charge_target}%</span>`,'charging');}
+          else if(chargeEnd[slot]){const rem=Math.max(0,Math.round((chargeEnd[slot]-Date.now())/1000));const m=Math.floor(rem/60),s=rem%60;bat=batPill(p,'warn',`<span class="dim">${m}m${String(s).padStart(2,'0')}s</span>`,'charging');}
+          else{bat=batPill(p,'warn','<span class="dim">starting&hellip;</span>','charging');}
         }
         else if(draining){
           const dr=p.drain;
-          let txt=(dr.last_pct!==null?dr.last_pct+'%':'?%')+' &#x2193;';
+          let txt=(dr.last_pct!==null?dr.last_pct+'%':'?%')+' <span class="dim">&#x2193;</span>';
           if(dr.drain_rate!==null&&dr.drain_rate>0){
-            txt=`${dr.last_pct}% &minus;${dr.drain_rate.toFixed(1)}%/h`;
+            txt=`${dr.last_pct}% <span class="dim">&minus;${dr.drain_rate.toFixed(1)}%/h`;
             if(dr.last_pct>floor){const estH=(dr.last_pct-floor)/dr.drain_rate;txt+=` (~${fmtDur(estH)})`;}
+            txt+='</span>';
           }
-          bat=`<span class="warn">${txt}</span>`;
+          bat=batPill(p,'warn',txt,'drain test running');
         }else if(p.drain&&p.drain.done&&p.drain.last_pct!==null){
           const dr=p.drain;
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
-          bat=`${mkbat(p.battery,lo,hi)}<span class="dim" style="font-size:10px"> (test: ${dr.last_pct}%${summary})</span>`;
+          bat=batPill(p,batBand(p.battery,lo,hi),`${p.battery!=null?p.battery+'%':'—'}<span class="dim"> (test: ${dr.last_pct}%${summary})</span>`,'battery — click for details');
         }else{
           bat=mkbatCell(p,lo,hi);
         }
-        const pwrFn=p.power===true?`doOff('${slot}')`:`doOn('${slot}')`;
+        const pwrFn=`pwrGo(this,'${slot}')`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const isRef=refreshing.has(slot);
         rows.push(
-          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}" id="wr-${slot}">` +
-          `<td class="tc">${tree}</td>` +
+          `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
+          `<td class="pcell"><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
+          `<td class="smtc">${mksmart(p,slot,dp)}</td>` +
+          `<td class="connc"${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
-            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            ?`<b class="cn${p.adb?'':' offname'}" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
+            :`<b class="${p.adb?'':'offname'}">${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
-          `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${dp}${noSwT} onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="Power-cycle port">&#x21BA;</button></td>` +
-          `<td>${mksmt(p.smart)}</td>` +
-          `<td>${adb}</td>` +
-          `<td id="bat-${slot}">${bat}</td>` +
-          `<td id="act-${slot}">` +
-          `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}')" title="refresh / re-identify this port">&#x21BB;</button>` +
-          (!isFb?`<button class="btn pw"${p.excluded?' disabled':''} onclick="menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})" title="power / charge / drain / reboot">Power &#9662;</button>`:'')+
-          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},${p.adb==='device'})" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
+          `<td class="batc" id="bat-${slot}">${bat}</td>` +
+          `<td class="actc" id="act-${slot}">` +
+          `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">menu</button>` +
           `</td></tr>` +
-          `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
+          `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
       }
     });
   });
-  tb.innerHTML=rows.join('');
+  reconcileRows(tb, rows);
   seenSerials=present; firstStatus=false;
   Object.keys(srcs).forEach(c=>{const b=document.getElementById('log-'+c);if(b)b.classList.add('show');});
   if(Object.keys(chargeEnd).length>0&&!countdownRunning)tickCountdown();
 }
 // ── Control Center overlay ──────────────────────────────────────────────────
-let ccSerial=null, ccName=null, ccTimer=null, ccAX=0, ccAY=0;
+let ccSerial=null, ccName=null, ccAX=0, ccAY=0;
+let ncSerial=null, ncName=null, ncAX=0, ncAY=0, ncSshIp=null, ncMode=null;
+let biSerial=null, biName=null, biAX=0, biAY=0;
+// Last-fetched payload per serial, so re-opening a panel paints instantly from
+// the previous values while the fresh fetch is in flight — and a self-cancelling
+// poll keeps an open panel live (important over SSH, where a fetch is slow).
+const ccCache={}, ncCache={}, biCache={};
+let ccPoll=null, ncPoll=null, biPoll=null;
+// adb is a warm channel (poll briskly); SSH pays a handshake per call, so a
+// 3s poll would never keep up — pace it to 10s. The panel header shows which.
+function panelPollMs(d){return (d&&d.transport==='ssh')?10000:3000;}
+function pollTag(d){return d?` <span class="dim" title="live refresh interval">&middot; ${d.transport==='ssh'?'10s &middot; ssh':'3s'}</span>`:'';}
+
+// ── live btop-style graphs ──────────────────────────────────────────────────
+// A temporary history that lives only while a panel is open — one shared store
+// (only one panel is ever open), reset on every open so each graph starts empty
+// and fills from the right. Each poll appends one sample per metric; we keep the
+// last GRAPH_N. Bars are filled blocks, height = the value on a FIXED per-metric
+// scale, colour green→red toward the metric's "bad" end (high battery is green,
+// high load/temp is red). Newest bar sits at the right by the value, rolling left.
+const GRAPH_N=20;
+let graphData={}, graphPrev={};
+function graphReset(){graphData={}; graphPrev={};}
+function graphPush(id,v){
+  if(v==null||isNaN(v))return;
+  (graphData[id]=graphData[id]||[]).push(+v);
+  if(graphData[id].length>GRAPH_N)graphData[id].shift();
+}
+function graphPushRate(id,cumulative){        // for counters (rx/tx bytes) → per-second rate
+  const v=+cumulative, now=Date.now();
+  const p=graphPrev[id];
+  if(p&&now>p.t&&v>=p.v)graphPush(id,(v-p.v)/((now-p.t)/1000));
+  graphPrev[id]={v:v,t:now};
+}
+function spark(id,min,max,bad){
+  const a=graphData[id]||[];
+  if(!a.length)return '';
+  const bw=3,gap=1,H=13,W=GRAPH_N*(bw+gap);
+  let bars='';
+  for(let i=0;i<a.length;i++){
+    let n=(a[i]-min)/(max-min); n=n<0?0:n>1?1:n;
+    const h=Math.max(1,Math.round(n*H));
+    const red=bad==='low'?1-n:n;            // fraction of the way to "bad"
+    const hue=Math.round(120*(1-red));      // 120=green … 0=red, through amber
+    const x=(GRAPH_N-a.length+i)*(bw+gap);  // right-aligned; newest at the far right
+    bars+=`<rect x="${x}" y="${H-h}" width="${bw}" height="${h}" fill="hsl(${hue},68%,48%)"/>`;
+  }
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bars}</svg>`;
+}
+function _ncpu(d){const m=(d.cores||'').match(/([0-9]+) *$/);return m?(+m[1]+1):1;}
+function _memPct(d){const t=+d.memtotal;return t?Math.round((t-(+d.memfree||0))/t*100):null;}
+function _load1(d){const x=parseFloat((d.load||'').split(/ +/)[0]);return isNaN(x)?null:x;}
 let wimgAX=0, wimgAY=0;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
@@ -530,28 +870,48 @@ function sizeComposite(){
 }
 window.addEventListener('resize',sizeComposite);
 function fmtUp(sec){sec=Math.floor(+sec||0);const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);return (d?d+'d ':'')+(h||d?h+'h ':'')+m+'m';}
-function ccPlace(){
+function placeOverlay(el,ax,ay){
   // Anchor to the click; flip ABOVE the anchor if the panel would run off the
   // bottom (its height only known after the async data renders). No page scroll.
-  const cc=document.getElementById('cc'), h=cc.offsetHeight, w=cc.offsetWidth;
-  let left=Math.min(ccAX, window.innerWidth-w-8);
-  let top=ccAY+10;
-  if(top+h>window.innerHeight-8) top=ccAY-h-10;
-  cc.style.left=Math.max(8,left)+'px'; cc.style.top=Math.max(8,top)+'px';
+  const h=el.offsetHeight, w=el.offsetWidth;
+  let left=Math.min(ax, window.innerWidth-w-8);
+  let top=ay+10;
+  if(top+h>window.innerHeight-8) top=ay-h-10;
+  el.style.left=Math.max(8,left)+'px'; el.style.top=Math.max(8,top)+'px';
+}
+function ccPlace(){placeOverlay(document.getElementById('cc'),ccAX,ccAY);}
+function ncPlace(){placeOverlay(document.getElementById('nc'),ncAX,ncAY);}
+function biPlace(){placeOverlay(document.getElementById('bi'),biAX,biAY);}
+// First open of a watch has no client cache, so instead of a "loading…" wait
+// paint the server's last-known values immediately — the /stale endpoint reads
+// them with no device I/O, so it returns at once (amber, marked stale). The
+// slow live fetch then follows and replaces it. cacheHas() guards the race: if
+// the live fetch already populated the cache, the late stale paint is dropped.
+function paintStale(serial,curSerial,cacheHas,renderFn){
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/stale').then(r=>r.json()).then(d=>{
+    if(curSerial()===serial && !cacheHas() && d && d.kernel)renderFn(d);
+  }).catch(()=>{});
 }
 function openCC(serial,name,ev){
-  ev.stopPropagation();
+  ev.stopPropagation(); graphReset();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
-  cc.innerHTML=`<div class="cc-hd">${name} <span class="dim">loading&hellip;</span></div>`;
-  cc.style.display='block'; ccPlace();
+  cc.style.display='block';
+  if(ccCache[serial])renderCC(ccCache[serial]);   // instant, from the last open
+  else{cc.innerHTML=`<div class="cc-hd">${esc(name)} <span class="dim">loading&hellip;</span></div>`;ccPlace();
+       paintStale(serial,()=>ccSerial,()=>!!ccCache[serial],renderCC);}
   ccFetch();
 }
 function ccFetch(){
   const s=ccSerial;
-  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{if(ccSerial===s)renderCC(d)}).catch(()=>{
-    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(ccSerial!==s)return;
+    ccCache[s]=d; graphPush('load',_load1(d)); graphPush('mem',_memPct(d)); renderCC(d);
+    clearTimeout(ccPoll); ccPoll=setTimeout(ccFetch,panelPollMs(d));   // keep live while open
+  }).catch(()=>{
+    if(ccSerial!==s)return;
+    const cc=document.getElementById('cc');cc.innerHTML=`<div class="cc-hd">${esc(ccName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;
   });
 }
 function renderCC(d){
@@ -560,43 +920,32 @@ function renderCC(d){
   cc.classList.toggle('stale-cc',stale);
   if(!d||!d.kernel){cc.innerHTML=`<div class="cc-hd">${ccName} <span class="err">no data (watch offline?)</span><span class="cc-x" onclick="closeCC()">&times;</span></div>`;ccPlace();return;}
   const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
   const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
   const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
   const mt=+d.memtotal,mf=+d.memfree,memU=mt?Math.round((mt-mf)/1024):null,memT=mt?Math.round(mt/1024):null;
-  const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt),freq=num(d.cpufreq);
+  const freq=num(d.cpufreq);
   const dfp=(d.df||'').trim().split(/[ \t]+/);
   const storage=dfp.length>=5?`${dfp[2]} / ${dfp[1]} (${dfp[4]})`:null;
-  const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
-  const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
-  // Real unicode arrows, not entities: this value passes through esc(),
-  // which would render an entity as literal "&#9660;" text.
-  const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
   const sys=sec('System',
     kv('Kernel',d.kernel)+kv('Qt',d.qt)+kv('SoC',(d.soc||'').trim())+
     kv('CPU',freq?(freq/1000).toFixed(0)+' MHz':null)+
     kv('Uptime',fmtUp(d.uptime))+kv('Boot',d.bootreason)+
-    kv('Load',d.load)+kv('Threads',d.threads)+
-    kv('Memory',memU!=null?`${memU} / ${memT} MB`:null)+kv('Storage',storage)+
-    kv('Resolution',d.resolution)+
-    kv('Machine (image)',d.geometry&&d.geometry.machine));
-  const bat=sec('Battery',
-    kv('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null)+kv('Status',d.bat_status)+
-    kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
-    kv('Voltage',bv?(bv/1e6).toFixed(3)+' V':null)+kv('Current',cur)+
-    kv('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null)+kv('Cycles',d.bat_cycles)+
-    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null)));
-  const net=sec('Network &amp; links',
-    kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('IP',d.ip)+
-    kv('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'))+
-    kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
-    kv('Timezone',d.tz)+kv('Clock',d.datetime)+kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
-  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ccToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
+    kvg('Load',d.load,spark('load',0,_ncpu(d),'high'))+kv('Threads',d.threads)+
+    kvg('Memory',memU!=null?`${memU} / ${memT} MB`:null,spark('mem',0,100,'high'))+kv('Storage',storage)+
+    kv('Resolution',d.resolution)+kv('Timezone',d.tz)+kv('Clock',d.datetime)+
+    kv('Machine (image)',d.geometry&&d.geometry.machine)+
+    // The bootloader version string names the true hardware, which is the only
+    // thing that distinguishes watches sharing an image (rover vs rubyfish).
+    // Worth showing verbatim: it is the field the porting community reads to
+    // identify a device, so a human can check our detection against it.
+    kv('Bootloader',d.geometry&&d.geometry.bootloader));
   cc.innerHTML=
-    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>`+
+    `<div class="cc-hd">${esc(ccName)} <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
       (stale?` <span class="warn" title="watch is off the bus — these are the last-known values">stale &middot; last live ${fmtAge(d.last_live_ts)} ago</span>`:'')+
       `<span class="cc-x" onclick="closeCC()">&times;</span></div>`+
-    `<div class="cc-cols"><div class="cc-col">${sys}</div><div class="cc-col">${bat}</div><div class="cc-col">${net}</div></div>`+
-    `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}`+
+    `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
+    `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
       `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
@@ -607,19 +956,142 @@ function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/buzz',{meth
 function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ccFetch();refresh();});}
 function releaseScreen(s){fetch('/api/watch/'+encodeURIComponent(s)+'/screen/off',{method:'POST'}).then(()=>{toast('screen released');refresh()});}
 function releaseAllScreens(){fetch('/api/screen/release-all',{method:'POST'}).then(r=>r.json()).then(d=>{toast('released '+((d.released||[]).length)+' screen(s)');refresh()});}
-function ccToggle(tech,on){
-  document.querySelectorAll('.cc-tgl').forEach(b=>b.classList.add('busy'));
-  fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
-    .then(()=>setTimeout(ccFetch,1600)).catch(()=>ccFetch());
-}
 function ccSyncTime(){
   const b=document.getElementById('cc-time');if(b)b.textContent='syncing…';
   fetch('/api/watch/'+encodeURIComponent(ccSerial)+'/settime',{method:'POST'})
     .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ccFetch();},700));
 }
-function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
-function ccLeave(){ccTimer=setTimeout(closeCC,600);}
-function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
+function closeCC(){const cc=document.getElementById('cc');cc.style.display='none';ccSerial=null;if(ccPoll){clearTimeout(ccPoll);ccPoll=null;}}
+
+// ── Network Center ──────────────────────────────────────────────────────────
+// A second Control-Center-like overlay, opened by clicking the ADB/SSH badge.
+// It gathers the network detail that used to crowd the Control Center — links,
+// addresses, the WiFi/BT toggles — and adds the USB IP, which lives nowhere
+// else. The USB mode toggle lives here too, a deliberate click in an overlay
+// rather than the misclick-prone inline badge.
+function openNC(serial,name,ev,sshIp,mode){
+  ev.stopPropagation(); graphReset();
+  ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
+  ncSshIp=sshIp||''; ncMode=mode||'';
+  const nc=document.getElementById('nc');
+  nc.classList.remove('stale-cc');
+  nc.style.display='block';
+  if(ncCache[serial])renderNC(ncCache[serial]);
+  else{nc.innerHTML=`<div class="cc-hd">${esc(name)} · Network <span class="dim">loading&hellip;</span></div>`;ncPlace();
+       paintStale(serial,()=>ncSerial,()=>!!ncCache[serial],renderNC);}
+  ncFetch();
+}
+function ncFetch(){
+  const s=ncSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(ncSerial!==s)return;
+    ncCache[s]=d; graphPushRate('rx',d.net_rx); graphPushRate('tx',d.net_tx); renderNC(d);
+    clearTimeout(ncPoll); ncPoll=setTimeout(ncFetch,panelPollMs(d));
+  }).catch(()=>{
+    if(ncSerial!==s)return;
+    const nc=document.getElementById('nc');nc.innerHTML=`<div class="cc-hd">${esc(ncName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeNC()">&times;</span></div>`;
+  });
+}
+function renderNC(d){
+  const nc=document.getElementById('nc');
+  const stale=!!(d&&d.stale);
+  nc.classList.toggle('stale-cc',stale);
+  d=d||{};
+  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
+  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
+  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
+  const mb=x=>{const n=num(x);return n==null?null:(n/1048576).toFixed(2)+' MB';};
+  const phone=(+d.btcount>0)?(d.btmac||'connected'):'none';
+  const usbip=ncSshIp||'192.168.2.15';
+  const net=sec('Addresses &amp; links',
+    kv('USB IP',usbip)+kv('USB mode',ncMode==='ssh'?'SSH (developer)':'ADB')+
+    kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+kv('WiFi IP',d.ip)+
+    kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
+    kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+kv('Phone',phone)+
+    kv('WLAN MAC',d.wlanmac)+kv('Serial',d.serial));
+  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
+  // The USB-mode toggle: the deliberate home for the switch the badge used to
+  // carry. Reaches the watch over whichever link it is currently on.
+  const modeToggle=ncMode==='ssh'
+    ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
+    : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ncSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
+  nc.innerHTML=
+    `<div class="cc-hd">${esc(ncName)} &middot; Network <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
+      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeNC()">&times;</span></div>`+
+    `<div class="cc-cols"><div class="cc-col">${net}</div></div>`+
+    `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}${modeToggle}</div>`;
+  ncPlace();
+}
+function ncToggle(tech,on){
+  document.querySelectorAll('#nc .cc-tgl').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(ncSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
+    .then(()=>setTimeout(ncFetch,1600)).catch(()=>ncFetch());
+}
+function closeNC(){const nc=document.getElementById('nc');nc.style.display='none';ncSerial=null;if(ncPoll){clearTimeout(ncPoll);ncPoll=null;}}
+
+// ── Battery Info ────────────────────────────────────────────────────────────
+// Opened by clicking the battery pill. There is nothing to *control* about a
+// battery, so this detail (voltage, current, temperature, cycles, health,
+// measured standby drain) moved out of the Control Center into its own
+// read-only window, leaving the pill to carry just the charge and one line of
+// appended detail.
+function openBI(serial,name,ev){
+  ev.stopPropagation(); graphReset();
+  biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
+  const bi=document.getElementById('bi');
+  bi.classList.remove('stale-cc');
+  bi.style.display='block';
+  biHistFetch(serial);
+  if(biCache[serial])renderBI(biCache[serial]);
+  else{bi.innerHTML=`<div class="cc-hd">${esc(name)} · Battery <span class="dim">loading&hellip;</span></div>`;biPlace();
+       paintStale(serial,()=>biSerial,()=>!!biCache[serial],renderBI);}
+  biFetch();
+}
+function biFetch(){
+  const s=biSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)).then(r=>r.json()).then(d=>{
+    if(biSerial!==s)return;
+    biCache[s]=d; graphPush('bcap',d.bat_cap==null?null:+d.bat_cap); graphPush('bvolt',d.bat_volt?+d.bat_volt/1e6:null); graphPush('bcur',d.bat_curr?+d.bat_curr/1000:null); graphPush('btemp',d.bat_temp==null?null:+d.bat_temp/10); renderBI(d);
+    clearTimeout(biPoll); biPoll=setTimeout(biFetch,panelPollMs(d));
+  }).catch(()=>{
+    if(biSerial!==s)return;
+    const bi=document.getElementById('bi');bi.innerHTML=`<div class="cc-hd">${esc(biName)} <span class="err">unreachable</span><span class="cc-x" onclick="closeBI()">&times;</span></div>`;
+  });
+}
+function renderBI(d){
+  const bi=document.getElementById('bi');
+  const stale=!!(d&&d.stale);
+  bi.classList.toggle('stale-cc',stale);
+  d=d||{};
+  const kv=(k,v)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}</div>`;
+  const kvg=(k,v,g)=>`<div class="cc-k">${k}</div><div class="cc-v">${esc(v==null||v===''?'—':String(v))}${g||''}</div>`;
+  const sec=(t,r)=>`<div class="cc-sec"><div class="cc-sech">${t}</div><div class="cc-grid">${r}</div></div>`;
+  const num=x=>(x==null||x===''||isNaN(+x))?null:+x;
+  const bv=num(d.bat_volt),ba=num(d.bat_curr),bt=num(d.bat_temp),uv=num(d.usb_volt);
+  const cur=ba==null?null:`${(ba/1000).toFixed(0)} mA ${ba<-5?'\\u25bc':ba>5?'\\u25b2':''}`;
+  const bat=sec('Battery',
+    kvg('Charge',d.bat_cap!=null&&d.bat_cap!==''?d.bat_cap+'%':null,spark('bcap',0,100,'low'))+kv('Status',d.bat_status)+
+    kv('Health',d.bat_health)+kv('Tech',d.bat_tech)+
+    kvg('Voltage',bv?(bv/1e6).toFixed(3)+' V':null,spark('bvolt',3.2,4.35,'low'))+kvg('Current',cur,spark('bcur',-600,600,'low'))+
+    kvg('Temp',bt!=null?(bt/10).toFixed(1)+' °C':null,spark('btemp',15,50,'high'))+kv('Cycles',d.bat_cycles)+
+    kv('USB in',uv!=null&&uv>0?(uv/1e6).toFixed(2)+' V':(+d.usb_online?'online':null))+
+    kv('Standby',d.standby_measured!=null?`${d.standby_measured} %/h · ~${fmtDur(85/d.standby_measured)}`:null));
+  const hist=biHist[biSerial], histPts=(hist&&hist.points)||[];
+  const histSec=histPts.length>=2
+    ? `<div class="cc-sec"><div class="cc-sech">Battery history`
+        +(hist.rate?` <span class="dim">~${(+hist.rate).toFixed(2)}%/h standby</span>`:'')
+        +`</div>${sparkSvg(histPts)}</div>`
+    : '';
+  bi.innerHTML=
+    `<div class="cc-hd">${esc(biName)} &middot; Battery <span class="dim">${esc(d.os||'')}</span>${pollTag(d)}`+
+      (stale?` <span class="warn" title="watch is off the bus — last-known values">stale &middot; ${fmtAge(d.last_live_ts)} ago</span>`:'')+
+      `<span class="cc-x" onclick="closeBI()">&times;</span></div>`+
+    `<div class="cc-cols"><div class="cc-col">${bat}</div></div>`+histSec;
+  biPlace();
+}
+function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biPoll){clearTimeout(biPoll);biPoll=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
 let _menuAnchor=null;
 function openMenu(ev,html){
@@ -768,36 +1240,103 @@ function loadShot(serial,res){
 function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
-function menuPower(ev,slot,charging,draining,powered,noSw){
-  openMenu(ev,
-    (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
+// The row's actions fold into one Execute menu: each former button becomes a
+// group header, its items listed indented beneath, all visible at once (no
+// nested submenus). Each group is a content-builder returning just its items;
+// menuExecute composes them under headers. grpHd is a header, grpBox indents a
+// group's items beneath it.
+function grpHd(label){return `<div class="exgrp-hd">${label}</div>`;}
+function grpBox(items){return `<div class="exgrp">${items}</div>`;}
+function grpPower(slot,charging,draining,powered,noSw){
+  return (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
     (draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`,noSw))+
     '<div class="menu-sep"></div>'+
     (powered?mi('po','Power off',`doPoweroff('${slot}')`):'')+
     mi('rb','Reboot',`doReboot('${slot}')`)+
-    mi('bl','Bootloader',`doBootloader('${slot}')`));
+    mi('bl','Bootloader',`doBootloader('${slot}')`);
 }
-function menuWorkbench(ev,slot,serial,wb,online){
-  openMenu(ev,
-    '<div class="menu-hd">watch stays on — power off when done</div>'+
+// A watch in the bootloader used to get no Power menu at all — a dead end in
+// the UI exactly where the watch needs steering. The same intents apply, they
+// just travel over fastboot; charge and drain are omitted because both need
+// battery reads the bootloader does not serve.
+function grpPowerFb(slot,powered){
+  return '<div class="menu-hd">in bootloader — fastboot actions</div>'+
+    mi('rb','Continue boot',`doContinue('${slot}')`)+
+    mi('rb','Reboot',`doReboot('${slot}')`)+
+    '<div class="menu-sep"></div>'+
+    mi('bl','Cycle bootloader',`doBootloader('${slot}')`)+
+    mi('bl','Recovery',`doRecovery('${slot}')`)+
+    // Deliberately disabled, not hidden: the watch CAN power off from the
+    // bootloader, just not over the wire. rover and rubyfish have no `oem
+    // poweroff` command at all, and cutting VBUS does not stop a fastboot
+    // watch — it keeps running on battery until flat (measured). The
+    // on-screen menu item works because a key press calls LK's shutdown
+    // directly. Showing it greyed with the manual route is honest; hiding it
+    // would imply the watch cannot be powered off, which is false.
+    (powered?'<div class="menu-sep"></div>'+mi('po','Power off',null,true,
+      'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):'');
+}
+function grpWorkbench(slot,serial,wb,mode,sshIp){
+  const online=mode==='device';
+  // (The USB IP used to be shown here as a banner; it now lives in the
+  // Connection column's Network Center, which is a better place to find it.)
+  // USB-mode toggle. Workbench work happens over WiFi/SSH, so switching the
+  // watch's USB gadget between adb and SSH/developer mode belongs here. The
+  // item flips with the current mode: on adb it offers SSH (delivered over
+  // adb, needs the watch online); in SSH mode it offers ADB (delivered over
+  // the watch's rndis link, which is up precisely because it's in SSH mode).
+  // Either switch re-enumerates the gadget and drops the current link.
+  let usbToggle;
+  if(mode==='ssh')
+    usbToggle=mi('info','Switch USB to ADB',`switchAdb('${serial}')`);
+  else
+    usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
+                 'watch must be on ADB to switch it to SSH mode');
+  return '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
+    '<div class="menu-sep"></div>'+
+    usbToggle+
     '<div class="menu-sep"></div>'+
     mi('info','Set time from host',`doSetTime('${serial}')`,!online)+
     mi('info','Screenshot',`doScreenshot('${serial}')`,!online)+
     mi('info','Test notification',`doNotify('${serial}')`,!online)+
-    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online));
+    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online);
 }
-function menuFlash(ev,slot){
-  openMenu(ev,
-    mi('','Backup data',`doBackup('${slot}')`)+
+function grpFlash(slot){
+  return mi('','Backup data',`doBackup('${slot}')`)+
     mi('','Restore data',`doRestore('${slot}')`)+
+    mi('info','Fastboot report',`doFbReport('${slot}')`)+
     '<div class="menu-sep"></div>'+
     mi('','Flash nightly',`doFl('${slot}')`)+
     mi('',"Flash 2.1",`doFlV('${slot}','2.1')`)+
     mi('',"Flash 2.0",`doFlV('${slot}','2.0')`)+
     '<div class="menu-sep"></div>'+
     mi('','Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
-    mi('','Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
+    mi('','Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented');
+}
+function menuExecute(ev,slot,isFb,charging,draining,powered,noSw,serial,wb,mode,sshIp,wear,needPwr){
+  openMenu(ev,
+    (!isFb&&serial?grpHd('Wear')+grpBox(wearItem(slot,wear)):'')+
+    grpHd('Power')+grpBox(isFb?grpPowerFb(slot,powered):grpPower(slot,charging,draining,powered,noSw))+
+    grpHd('Flashing')+grpBox(grpFlash(slot))+
+    (!isFb?grpHd('Workbench')+grpBox(grpWorkbench(slot,serial,wb,mode,sshIp)):'')+
+    grpHd('Refresh')+grpBox(mi('','Re-identify / power on',`doRefresh('${slot}',${needPwr})`)));
+}
+// Wear is the one menu item that stays a button — pink, the deliberate off-rig
+// action, distinct from the plain text links around it.
+function wearItem(slot,wear){
+  return `<button class="menu-wear${wear?' on':''}" onclick="pulseSelf(this);doWear('${slot}',${wear?0:1});closeMenu()" title="${wear?'wear armed — click to release and free the port':'top up and hold this port so the watch is ready to take off the rig'}">${wear?'Release wear':'Arm wear (hold band)'}</button>`;
+}
+// Contextual mini-menus reachable from the Stats dots — the same builders as
+// the full row menu, scoped to what each dot is about. The power dot opens just
+// the Power group; the wearability dot opens Drain test + a Wear button.
+function menuPwr(ev,slot,isFb,charging,draining,powered,noSw){
+  openMenu(ev,grpHd('Power')+grpBox(isFb?grpPowerFb(slot,powered):grpPower(slot,charging,draining,powered,noSw)));
+}
+function menuWear(ev,slot,draining,serial,wear){
+  openMenu(ev,
+    grpHd('Drain test')+grpBox(draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`))+
+    (serial?grpHd('Wear')+grpBox(wearItem(slot,wear)):''));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element
@@ -811,7 +1350,15 @@ function doSetTime(s){toast('syncing time…');fetch('/api/watch/'+encodeURIComp
 function doNotify(s){fetch('/api/watch/'+encodeURIComponent(s)+'/notify',{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'notification sent to watch':'notify failed'));}
 function doScreenshot(s){toast('capturing…');window.open('/api/watch/'+encodeURIComponent(s)+'/screenshot.jpg?t='+Date.now(),'_blank');}
 function doFlV(s,v){if(!confirm('Flash AsteroidOS '+v+' to this watch?\\nThis wipes its data — back up first if you need it.'))return;doFl(s,v);}
-function switchAdb(){toast('switching to ADB…');fetch('/api/switch-adb',{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating…':'no SSH watch reachable at 192.168.2.15');setTimeout(refresh,5000)});}
+function switchAdb(serial){toast('switching to ADB…');fetch('/api/switch-adb'+(serial?'/'+encodeURIComponent(serial):''),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating on ADB…':('Switch to ADB failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'adb',null);setTimeout(refresh,5000);}else flashFail(connPill(serial))});}
+function switchSsh(serial){toast('switching to SSH…');fetch('/api/switch-ssh/'+encodeURIComponent(serial),{method:'POST'}).then(r=>r.json()).then(d=>{toast(d.ok?'switching — watch re-enumerating as SSH…':('Switch to SSH failed — '+(d.error||'unknown')));if(d.ok){ncSet(serial,'ssh',d.ip);setTimeout(refresh,6000);}else flashFail(connPill(serial))});}
+// Keep an open Network Center in sync with a USB-mode switch made from it: the
+// mode and assigned IP change immediately, before the watch re-enumerates.
+function ncSet(serial,mode,ip){
+  if(ncSerial!==serial)return;
+  ncMode=mode; if(ip)ncSshIp=ip;
+  if(ncCache[serial])renderNC(ncCache[serial]);
+}
 function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.name){
     toast(d.ok?'diagnostics ready — downloading':'diagnostics partial — downloading what we have');
@@ -819,14 +1366,30 @@ function doDiag(c){toast('collecting diagnostics…');fetch('/api/diagnostics/'+
     a.download=d.name;document.body.appendChild(a);a.click();a.remove();
   }else{toast(d.error||'diagnostics failed');}
 }).catch(()=>toast('diagnostics failed'));}
+function doFbReport(c){toast('reading bootloader…');fetch('/api/fbreport/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>{
+  if(d.name){
+    toast('fastboot report ('+d.lines+' lines) — downloading');
+    const a=document.createElement('a');a.href='/api/diagnostics/download/'+encodeURIComponent(d.name);
+    a.download=d.name;document.body.appendChild(a);a.click();a.remove();
+  }else{toast(d.error||'fastboot report failed');}
+}).catch(()=>toast('fastboot report failed'));}
 function doBackup(c){toast('backing up…');fetch('/api/backup/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'backup saved':'backup incomplete — see log')).catch(()=>toast('backup failed'));}
 function doRestore(c){if(!confirm('Restore backed-up data onto this watch?\\nOverwrites its current settings + WiFi credentials with the last backup.'))return;toast('restoring…');fetch('/api/restore/'+_api(c),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'restore done — reconnecting WiFi':(d.error||'restore incomplete — see log'))).catch(()=>toast('restore failed'));}
 function doDump(s){} function doRestoreDump(s){}
-document.addEventListener('click',e=>{
-  const cc=document.getElementById('cc');if(cc.style.display==='block'&&!cc.contains(e.target)&&!e.target.classList.contains('cn'))closeCC();
-  const m=document.getElementById('menu');if(m.style.display==='block'&&!m.contains(e.target))closeMenu();
-  const wi=document.getElementById('wimg');if(wi.style.display==='block'&&!wi.contains(e.target))closeWatchImg();
-});
+// One floating window at a time, each persisting until a click lands OUTSIDE
+// it. Handled on mousedown in the CAPTURE phase, so it runs before any
+// trigger's onclick: the very click that opens a new window first closes
+// whatever it landed outside of. This one check gives both behaviours — the
+// outside-click close and mutual exclusivity — so openers need do nothing, and
+// there is no hover-close to make a window vanish when the pointer drifts off.
+document.addEventListener('mousedown',e=>{
+  const overlays=[['cc',closeCC],['nc',closeNC],['bi',closeBI],
+                  ['menu',closeMenu],['wimg',closeWatchImg]];
+  for(const [id,close] of overlays){
+    const el=document.getElementById(id);
+    if(el&&el.style.display==='block'&&!el.contains(e.target))close();
+  }
+},true);
 function showBackendError(msg){
   // Split mode: the page is served but the backend RPC failed, so status.get
   // came back as an {ok:false,error} envelope with no hubs. Keep the last table
@@ -844,25 +1407,23 @@ function refresh(){
   }).catch(()=>{document.getElementById('ts').textContent='connection error'});
 }
 function _api(s){return s.replace(':','/');}
-function doRefresh(c){
-  if(c){refreshing.add(c);setTimeout(()=>refreshing.delete(c),10000);}
-  refresh();
+function doRefresh(c,needPwr){
+  // A powered-down port has nothing to identify — a watch plugged in while the
+  // port was down stays invisible, and the row keeps showing whoever sat there
+  // last. So when the port is off, bring VBUS up first and give the watch time
+  // to boot and enumerate; the pulse runs for that whole window, not just the
+  // instant client-side re-read that a live port needs.
+  if(c){refreshing.add(c);setTimeout(()=>refreshing.delete(c),needPwr?45000:10000);}
+  if(!needPwr){refresh();return;}
+  fetch('/api/on/'+_api(c),{method:'POST'})
+    .then(()=>{[0,5000,15000,30000,44000].forEach(t=>setTimeout(refresh,t));})
+    .catch(()=>refresh());
 }
 function _pwrFlash(c){
   const r=document.getElementById('wr-'+c);
   if(!r)return;
   r.classList.add('pwr-warn');
   setTimeout(()=>{r.classList.remove('pwr-warn');refresh();},3800);
-}
-function doOn(c){
-  fetch('/api/on/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false)_pwrFlash(c);else setTimeout(refresh,2000);
-  });
-}
-function doOff(c){
-  fetch('/api/off/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false)_pwrFlash(c);else refresh();
-  });
 }
 function doPoweroff(c){
   fetch('/api/poweroff/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
@@ -877,6 +1438,16 @@ function doReboot(c){
 }
 function doBootloader(c){
   fetch('/api/bootloader/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,3000));
+}
+function doRecovery(c){
+  fetch('/api/recovery/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,4000));
+}
+function doContinue(c){
+  // Resuming the boot chain takes the watch all the way to the OS, so give
+  // adb time to come up before re-reading rather than showing a bare gap.
+  fetch('/api/continue/'+_api(c),{method:'POST'}).then(()=>{
+    [3000,15000,30000].forEach(t=>setTimeout(refresh,t));
+  });
 }
 function doCy(c){
   const r=document.getElementById('wr-'+c);
@@ -973,6 +1544,11 @@ function toggleShowHidden(){
   if(l)l.textContent=showHidden?'hide avoided ports':'show all ports';
   refresh();
 }
+let usbPref='adb';   // fleet USB-mode preference, mirrored from status
+function toggleUsbPref(){
+  const next=usbPref==='ssh'?'adb':'ssh';
+  fetch('/api/usb-preference/'+next,{method:'POST'}).then(()=>refresh());
+}
 function doHidePort(c){
   fetch('/api/hide/'+_api(c),{method:'POST'}).then(()=>refresh());
 }
@@ -981,6 +1557,11 @@ function doHideHub(loc){
 }
 function doWb(c){
   fetch('/api/workbench/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
+}
+function doWear(c,on){
+  toast(on?'wear armed — topping up, port held':'wear released — port freed');
+  const url=on?('/api/wear/on/'+_api(c)):('/api/wear/off/'+_api(c));
+  fetch(url,{method:'POST'}).then(()=>setTimeout(refresh,1500));
 }
 function doStopWb(c){
   fetch('/api/workbench/stop/'+_api(c),{method:'POST'}).then(()=>setTimeout(refresh,2200));
@@ -1011,6 +1592,29 @@ function doRemap(c){
   es.addEventListener('done',()=>{box.textContent+='\\n\\u2500\\u2500 done \\u2500\\u2500\\n';box.scrollTop=box.scrollHeight;es.close();delete srcs[c];setTimeout(refresh,1000)});
   es.onerror=()=>{box.textContent+='\\n\\u2500\\u2500 connection lost \\u2500\\u2500\\n';es.close();delete srcs[c];refresh()};
 }
+// Seeded starfield (mulberry32 PRNG → same field every load), painted once into
+// the fixed backdrop. Ported from moWerk's Depth Drift generator: 150 stars,
+// size/opacity/drift-speed by depth for parallax.
+function seedStars(){
+  const seed=33,density=1,speed=1;
+  let a=seed>>>0;
+  const rng=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};
+  const pal=()=>{const t=rng();return t<0.08?'#e3b341':t<0.26?'#539bf5':t<0.6?'#8b96a5':'#5b6470';};
+  const chars=['·','·','⋆','˚','.','✦'];
+  // Count scales with viewport AREA so the density is constant regardless of
+  // screen size (a fixed count spread over a full page reads far too sparse).
+  const area=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth*window.innerHeight:1e6;
+  const N=Math.round(area/2125*density);let html='';
+  for(let i=0;i<N;i++){
+    const x=(rng()*100).toFixed(2),y=(rng()*100).toFixed(2),depth=rng();
+    const ch=chars[Math.floor(rng()*chars.length)],c=pal();
+    const fs=(7.8+depth*9.6).toFixed(1),o=Math.min(1,0.3+depth*0.72).toFixed(2);
+    const an='drift '+((28+(1-depth)*45)/speed).toFixed(0)+'s ease-in-out '+(rng()*10).toFixed(1)+'s infinite alternate';
+    html+=`<span style="left:${x}%;top:${y}%;font-size:${fs}px;color:${c};opacity:${o};animation:${an}">${ch}</span>`;
+  }
+  const el=document.getElementById('stars');if(el)el.innerHTML=html;
+}
+seedStars();
 refresh();setInterval(refresh,15000);
 </script>
 </body>

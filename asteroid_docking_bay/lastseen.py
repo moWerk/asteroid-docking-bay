@@ -70,6 +70,27 @@ class LastSeen:
             if changed or now - self._last_write >= self.min_write_interval:
                 self._flush_locked(now)
 
+    def mark(self, serial: "str | None", **fields) -> None:
+        """Store state that is NOT a live sighting — a power-off marker, the
+        wear flag — WITHOUT advancing last_live_ts. A graceful power-off is the
+        opposite of seeing the watch on the bus, so stamping last_live_ts here
+        would land it a hair above safe_off_ts and defeat the "down" check that
+        compares the two."""
+        if not serial:
+            return
+        fields = {k: v for k, v in fields.items() if v is not None}
+        if not fields:
+            return
+        with self._lock:
+            entry = self._data.get(serial)
+            changed = entry is None or any(entry.get(k) != v
+                                           for k, v in fields.items())
+            if entry is None:
+                entry = self._data[serial] = {}
+            entry.update(fields)
+            if changed:
+                self._flush_locked(time.time())
+
     def get(self, serial: "str | None") -> "dict | None":
         """A copy of the stored values for a serial, or None if never seen."""
         if not serial:

@@ -29,23 +29,50 @@ import time
 
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
-from .config import (_config_lock, _store_smart_verdict, charge_config,
+from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
+                     charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
-from .watchctl import Watch
+from .watchctl import DIAG_ROOT, Watch
 from .ops import ChargeOp, DrainOp, WorkbenchOp, _flash_one_watch
-from .fastboot import _switch_ssh_to_adb
+from .fastboot import (_switch_ssh_to_adb, _usb_moded_switch_failed,
+                       _detect_rndis, _fastboot_list, fastboot_getvar_all)
+from .transport import SshTransport
 from .watchimg import watch_image_bytes
+from .variants import image_of
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
-from .tasks import _adb_lock, _charge_tasks, _flash_tasks, _remap_tasks
+from .tasks import (_adb_lock, _charge_tasks, _flash_tasks, _remap_tasks,
+                    active_op_on_slot)
 from .rpc import Dispatcher
 from . import __version__
 
 DISPATCH = Dispatcher()
+
+
+def _reachable_transport(serial: str):
+    """How to reach a watch right now: adb when it is on adb, else SSH at its
+    assigned address when it is in SSH/developer mode there. Returns None to
+    mean "the default AdbTransport", which is also the right fallback for an
+    offline watch — the op then returns empty/stale as before.
+
+    This is what lets SSH be a full replacement for adb: the Control Center
+    and the other per-watch ops read and toggle over whichever link is up,
+    with no change at the call site beyond going through _watch()."""
+    if _adb_state(adb_devices(), serial) == "device":
+        return None
+    ip = ssh_ip_for_serial(load_config(), serial)
+    if ip and _detect_rndis(ip):
+        return SshTransport(ip)
+    return None
+
+
+def _watch(serial: str) -> Watch:
+    """A Watch bound to whichever transport currently reaches it."""
+    return Watch(serial, transport=_reachable_transport(serial))
 
 
 # ── status ──────────────────────────────────────────────────────────────────
@@ -59,13 +86,47 @@ def _status_get(args):
         "thresholds": {"low": cc.low_threshold, "high": cc.high_threshold},
         "drain_floor": _DRAIN_FLOOR_PCT,
         "wearable_min_hours": cfg.get("wearable_min_hours", 24),
+        "usb_mode_preference": usb_mode_preference(cfg),
         # The version of the process running the ops — in split mode the
         # backend's, which is what an upgrade check cares about.
         "version": __version__,
     }
 
 
+@DISPATCH.op("prefs.set_usb_mode")
+def _prefs_set_usb_mode(args):
+    """Set the fleet USB-mode preference (adb|ssh) — the situational top-bar
+    toggle. It drives how a watch that self-enumerates in the wrong mode is
+    auto-corrected; see webstatus._maybe_align_usb_mode."""
+    mode = args.get("mode")
+    if mode not in ("adb", "ssh"):
+        return {"ok": False, "error": "mode must be 'adb' or 'ssh'"}
+    with _config_lock:
+        cfg = load_config()
+        cfg["usb_mode_preference"] = mode
+        save_config(cfg)
+    return {"ok": True, "mode": mode}
+
+
 # ── per-watch (Control Center) ──────────────────────────────────────────────
+
+def _stale_cc(serial, standby):
+    """The last-known Control Center blob for a watch, marked stale, or {} if
+    it was never seen. No device I/O — pure last_seen read, so it is instant."""
+    cached = last_seen.get(serial)
+    if not (cached and cached.get("cc")):
+        return {}
+    blob = dict(cached["cc"])
+    blob["stale"] = True
+    blob["last_live_ts"] = cached.get("cc_ts")
+    geo = cached.get("geometry")
+    if geo:
+        blob["geometry"] = geo
+        blob["resolution"] = geo.get("resolution")
+    if standby is not None:
+        blob["standby_measured"] = round(standby, 2)
+    return blob
+
 
 @DISPATCH.op("watch.cc")
 def _watch_cc(args):
@@ -76,25 +137,33 @@ def _watch_cc(args):
     ever saw it) stamped stale + last_live_ts, so the CC shows dimmed old
     values with an age rather than a bare 'no data'."""
     serial = args["serial"]
-    data = Watch(serial).cc_data()
+    # Passive standby drain measured across power-off→boot (event log), honest
+    # because it carries no charge-bump. Always current, so fold into either path.
+    standby = event_log.standby_off_to_on_rate(serial, None)
+    # Fast path (stale=True): return the last-known values with NO device I/O,
+    # so a panel can paint instantly on open — amber and marked stale — while
+    # its live fetch (below, and slow over SSH) follows and replaces it.
+    if args.get("stale"):
+        return _stale_cc(serial, standby)
+    tr = _reachable_transport(serial)
+    # Tell the UI which link answered, so it can pace its live-poll to match:
+    # adb is a warm channel (fast), SSH pays a fresh handshake per call (slow).
+    tkind = "ssh" if isinstance(tr, SshTransport) else "adb"
+    data = Watch(serial, transport=tr).cc_data()
     if data:
         last_seen.record(serial, cc=data, cc_ts=time.time())
         # Screen geometry/resolution is cached separately (probed by the status
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
         geo = (last_seen.get(serial) or {}).get("geometry")
+        extra = {"transport": tkind}
         if geo:
-            data = {**data, "geometry": geo, "resolution": geo.get("resolution")}
-        return data
-    cached = last_seen.get(serial)
-    if cached and cached.get("cc"):
-        blob = dict(cached["cc"])
-        blob["stale"] = True
-        blob["last_live_ts"] = cached.get("cc_ts")
-        if cached.get("geometry"):
-            blob["geometry"] = cached["geometry"]
-            blob["resolution"] = cached["geometry"].get("resolution")
-        return blob
+            extra["geometry"] = geo
+            extra["resolution"] = geo.get("resolution")
+        if standby is not None:
+            extra["standby_measured"] = round(standby, 2)
+        return {**data, **extra}
+    return _stale_cc(serial, standby)
     return {}
 
 
@@ -103,27 +172,65 @@ def _watch_toggle(args):
     tech = args["tech"]
     if tech not in ("wifi", "bluetooth"):
         return {"ok": False, "error": f"unknown toggle {tech}"}
-    return {"ok": Watch(args["serial"]).toggle(tech, bool(args["on"]))}
+    return {"ok": _watch(args["serial"]).toggle(tech, bool(args["on"]))}
 
 
 @DISPATCH.op("watch.settime")
 def _watch_settime(args):
-    return {"ok": True, "timezone": Watch(args["serial"]).set_time_from_host()}
+    return {"ok": True, "timezone": _watch(args["serial"]).set_time_from_host()}
 
 
 @DISPATCH.op("watch.notify")
 def _watch_notify(args):
-    return {"ok": Watch(args["serial"]).notify()}
+    return {"ok": _watch(args["serial"]).notify()}
 
 
 @DISPATCH.op("watch.buzz")
 def _watch_buzz(args):
-    return {"ok": Watch(args["serial"]).buzz()}
+    return {"ok": _watch(args["serial"]).buzz()}
 
 
 @DISPATCH.op("watch.screen")
 def _watch_screen(args):
-    return {"ok": Watch(args["serial"]).screen(bool(args["on"]))}
+    return {"ok": _watch(args["serial"]).screen(bool(args["on"]))}
+
+
+@DISPATCH.op("wear.set")
+def _wear_set(args):
+    """Arm or release the wear marker on a watch's port.
+
+    On: power the port up to top the watch off, and flag it wear-held so the
+    port is not auto-cycled and is kept lit even after the watch leaves — the
+    LED then marks exactly where to re-dock. A wear event breaks the standby
+    chain, because the coming off→bus interval is the watch being *worn*, not
+    resting on the shelf. Manual release only: off clears the flag and frees
+    the port so another watch can use it."""
+    loc, port = args["loc"], args["port"]
+    on = bool(args.get("on"))
+    serial = find_serial_for_loc_port(load_config(), loc, port)
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    if on:
+        try:
+            uhubctl_set_power(loc, port, True)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
+        last_seen.mark(serial, wear=True)
+        cn = find_codename_for_loc_port(load_config(), loc, port)
+        event_log.log(serial, cn, "wear")
+    else:
+        last_seen.mark(serial, wear=False)
+        # Free the port only if the watch is actually gone (the normal worn
+        # case). If it re-docked and is present, leave it powered — a raw cut
+        # would strand a running watch on battery, the ambiguous-off hazard.
+        present = (_adb_state(adb_devices(), serial) == "device"
+                   or serial in _fastboot_list())
+        if not present:
+            try:
+                uhubctl_set_power(loc, port, False)
+            except RuntimeError:
+                pass
+    return {"ok": True, "wear": on}
 
 
 @DISPATCH.op("screen.release_all")
@@ -161,7 +268,16 @@ def _watch_restore(args):
 def _watch_image(args):
     """The watch's product photo (cached from asteroidos.org) as base64 PNG.
     ok=False means no image for this codename."""
-    data = watch_image_bytes(args.get("codename"))
+    codename = args.get("codename")
+    data = watch_image_bytes(codename)
+    if not data:
+        # Exact-codename detection can name a variant that has no photo of its
+        # own — rover is physically a rubyfish and asteroidos.org carries one
+        # image for the pair. Fall back to the image the family ships, so
+        # naming a watch more precisely never costs it its picture.
+        base = image_of(codename)
+        if base:
+            data = watch_image_bytes(base)
     if not data:
         return {"ok": False}
     return {"ok": True, "png_b64": base64.b64encode(data).decode()}
@@ -169,9 +285,43 @@ def _watch_image(args):
 
 @DISPATCH.op("ssh.switch_adb")
 def _ssh_switch_adb(args):
-    """Switch a watch stuck in SSH/developer USB mode (reachable at 192.168.2.15)
-    over to ADB. ok=False means nothing was reachable there to switch."""
-    return {"ok": _switch_ssh_to_adb()}
+    """Switch a watch in SSH/developer USB mode back to ADB. Reaches it at its
+    assigned SSH address (per-watch, so each has a unique one), falling back to
+    the default 192.168.2.15 for a watch that predates IP assignment. ok=False
+    means nothing was reachable there, or a broken usb-moded refused it."""
+    serial = args.get("serial")
+    ip = (ssh_ip_for_serial(load_config(), serial) if serial else None) \
+        or "192.168.2.15"
+    return _switch_ssh_to_adb(ip)
+
+
+@DISPATCH.op("watch.switch_ssh")
+def _watch_switch_ssh(args):
+    """The reverse of ssh.switch_adb: put an adb watch into SSH/developer USB
+    mode. usb_moded re-enumerates the gadget as rndis reachable at
+    192.168.2.15, which drops the adb connection — so a non-zero return from
+    the command is expected; success is the command being delivered before the
+    link goes. Per serial, because only one watch can hold the fixed
+    192.168.2.15, so exactly one may be in SSH mode at a time."""
+    serial = args.get("serial")
+    if not serial:
+        return {"ok": False, "error": "no serial for this port"}
+    # Give this watch its own SSH-mode IP before switching, so two watches sent
+    # to SSH on the same rig never both land on the default 192.168.2.15. The
+    # assignment is sticky and persisted, so the watch keeps this address.
+    with _config_lock:
+        cfg = load_config()
+        ip = allocate_ssh_ip(cfg, serial)
+        save_config(cfg)
+    _run(f"adb -s {serial} shell usb_moded_util -n set:ip,{ip}",
+         check=False, timeout=10)
+    _, out, err = _run(f"adb -s {serial} shell usb_moded_util -s developer_mode",
+                       check=False, timeout=15)
+    if _usb_moded_switch_failed(out, err):
+        return {"ok": False,
+                "error": "usb-moded did not switch mode — its service may be "
+                         "down on this watch (a known device-specific issue)"}
+    return {"ok": True, "ip": ip}
 
 
 @DISPATCH.op("watch.diagnostics")
@@ -185,6 +335,29 @@ def _watch_diagnostics(args):
     if res.get("path"):
         res["name"] = res["path"].rsplit("/", 1)[-1]
     return res
+
+
+@DISPATCH.op("watch.fbreport")
+def _watch_fbreport(args):
+    """Save `fastboot getvar all` as a downloadable text report — the
+    bootloader's ground truth (identity, boardid, BT/WLAN MACs, bootloader
+    version, unlock/secure state, live battery-voltage + battery-soc-ok,
+    partition table). Works on a watch too flat to boot, so it's the one
+    report you can still take from a bricked or bootlooping unit."""
+    loc, port = args["loc"], int(args["port"])
+    cfg = load_config()
+    serial = find_serial_for_loc_port(cfg, loc, port)
+    if not serial:
+        return {"ok": False, "error": "no watch mapped to this port"}
+    text = fastboot_getvar_all(serial)
+    if not text or ":" not in text:
+        return {"ok": False,
+                "error": "no fastboot device — put the watch in bootloader first"}
+    codename = find_codename_for_loc_port(cfg, loc, port) or serial
+    DIAG_ROOT.mkdir(parents=True, exist_ok=True)
+    name = f"{codename}-{time.strftime('%Y%m%d-%H%M%S')}-fastboot.txt"
+    (DIAG_ROOT / name).write_text(text + "\n")
+    return {"ok": True, "name": name, "lines": len(text.splitlines())}
 
 
 @DISPATCH.op("watch.screenshot")
@@ -210,18 +383,61 @@ def _watch_screenshot(args):
 
 # ── port power ──────────────────────────────────────────────────────────────
 
+def _op_owning(loc, port) -> "str | None":
+    """The kind of operation currently owning this port, or None.
+
+    A running charge/drain/workbench test owns its port's power state, and
+    changing it underneath silently corrupts the measurement. The UI already
+    disables these controls on a busy row, but the UI is not a safety
+    boundary: any direct API caller — a script, a curl, a compromised
+    frontend (see docs/CONTAINERS.md) — bypasses it entirely.
+
+    This is not hypothetical. On 2026-07-18 a direct `POST /api/on` to test an
+    unrelated feature re-powered a port mid-drain-test, recharged the watch
+    from 96% back to 100%, and destroyed five hours of readings. The row was
+    correctly greyed out in the browser at the time."""
+    return active_op_on_slot(f"{loc}:{port}")
+
+
+def _refuse_if_busy(loc, port) -> "dict | None":
+    kind = _op_owning(loc, port)
+    if kind is None:
+        return None
+    return {"ok": False, "busy": kind,
+            "error": f"a {kind} operation owns this port — stop it first, "
+                     f"otherwise its readings are silently corrupted"}
+
+
 @DISPATCH.op("port.set")
 def _port_set(args):
+    busy = _refuse_if_busy(args["loc"], args["port"])
+    if busy:
+        return busy
     try:
         confirmed = uhubctl_set_power(args["loc"], args["port"], bool(args["on"]))
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
+    if confirmed:
+        serial = find_serial_for_loc_port(load_config(), args["loc"], args["port"])
+        if args["on"]:
+            # Powering a docked watch's port on boots it; a watch already up just
+            # re-asserts and the marker self-clears on its next live sighting.
+            _mark_booting(serial)
+        elif serial:
+            # A raw power cut via the toggle is NOT a graceful shutdown, so it
+            # must not read as "shelved": clear any (possibly stale) safe_off
+            # marker so the watch reads ambiguous, not down. Only port.poweroff
+            # (which delivers a real shutdown) sets that marker.
+            last_seen.mark(serial, safe_off_ts=0)
     return {"ok": True, "confirmed": confirmed}
 
 
 @DISPATCH.op("port.cycle")
 def _port_cycle(args):
     loc, port = args["loc"], args["port"]
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
     # A power-cycle IS a PPPS test — it cuts VBUS and restores it while checking
     # whether the device dropped — so use it to (re)assess and record the port's
@@ -240,56 +456,155 @@ def _port_cycle(args):
                     _store_smart_verdict(hub, port, smart)
                     save_config(cfg)
                     break
+    if serial:
+        # A cycle cuts and restores VBUS: the watch re-enumerates on the bus.
+        # Stamp the boot marker so the wait is shown, and clear any safe_off
+        # marker so it reads as "reconnecting" (a re-power), not "booting up" —
+        # that state is reserved for powering on a genuinely shelved watch.
+        _mark_booting(serial)
+        last_seen.mark(serial, safe_off_ts=0)
     return {"ok": True, "smart": smart, "reason": reason}
 
 
 @DISPATCH.op("port.poweroff")
 def _port_poweroff(args):
-    """Graceful OS shutdown then cut VBUS immediately — adb shell is
-    synchronous, so the command is delivered before power is cut and the
-    watch finishes halting on battery. Any delay here races the halt: cutting
-    while the watch is still up lets a watch without offmode charging bounce
-    back on."""
+    """Graceful shutdown then cut VBUS immediately — the shutdown command is
+    synchronous, so it is delivered before power is cut and the watch
+    finishes halting on battery. Any delay here races the halt: cutting while
+    the watch is still up lets a watch without offmode charging bounce back
+    on.
+
+    From the bootloader the equivalent is `fastboot oem poweroff`. LK cannot
+    complete a shutdown while USB is attached and instead gives ~5s to
+    disconnect — which is normally a cable yank, but here the rig cuts VBUS
+    programmatically well inside that window. Same order, same guarantee."""
     loc, port = args["loc"], args["port"]
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
-    adb_ok = False
+    graceful = False   # was a graceful shutdown actually delivered?
     if serial:
-        rc, _, err = _run(f"adb -s {serial} shell poweroff", check=False,
-                          timeout=10)
-        adb_ok = (rc == 0)
-        if not adb_ok:
-            log.warning("poweroff %s:%s (%s): adb shutdown failed: %s",
-                        loc, port, serial, err.strip() or f"rc={rc}")
+        ip = ssh_ip_for_serial(load_config(), serial)
+        if serial in _fastboot_list():
+            rc, _, err = _run(f"fastboot -s {serial} oem poweroff",
+                              check=False, timeout=10)
+            graceful = (rc == 0)
+            if not graceful:
+                # `oem poweroff` is NOT universal — rover's bootloader has no
+                # such command. Cutting VBUS after a failed shutdown would
+                # strand the watch running on battery in the bootloader,
+                # invisible to the host. Leaving it powered is the safe failure.
+                log.warning("poweroff %s:%s (%s): fastboot shutdown failed: %s",
+                            loc, port, serial, err.strip() or f"rc={rc}")
+                return {"ok": False, "adb_shutdown": False,
+                        "error": "this bootloader has no 'oem poweroff' — "
+                                 "power left on so the watch is not stranded "
+                                 "running on battery"}
+        elif _adb_state(adb_devices(), serial) == "device":
+            rc, _, err = _run(f"adb -s {serial} shell poweroff",
+                              check=False, timeout=10)
+            graceful = (rc == 0)
+            if not graceful:
+                log.warning("poweroff %s:%s (%s): adb shutdown failed: %s",
+                            loc, port, serial, err.strip() or f"rc={rc}")
+        elif ip and _detect_rndis(ip):
+            # SSH/developer mode: reach it over SSH like every other watch op.
+            # The halt drops the ssh session, so a non-zero return is expected —
+            # delivery to a reachable watch is the success signal, as for the
+            # mode switch.
+            SshTransport(ip).shell("poweroff", timeout=12)
+            graceful = True
+        else:
+            # Known serial but reachable on no transport (already off, or a
+            # wedged/booting watch). Fall through to the raw VBUS cut, as
+            # before — no graceful marker, so no "down" claim.
+            log.warning("poweroff %s:%s (%s): not on adb/ssh/fastboot — "
+                        "cutting power only", loc, port, serial)
     else:
         log.warning("poweroff %s:%s: no serial known — cutting power only",
                     loc, port)
     try:
         confirmed = uhubctl_set_power(loc, port, False)
     except RuntimeError as e:
-        return {"ok": False, "error": str(e), "adb_shutdown": adb_ok}
-    return {"ok": True, "adb_shutdown": adb_ok, "confirmed": confirmed}
+        return {"ok": False, "error": str(e), "adb_shutdown": graceful}
+    # Mark a *confirmed graceful* shutdown — over adb, ssh, or fastboot — as the
+    # one off-state we can vouch for: the watch was told to halt and it went, so
+    # it is safely down and not draining. A raw port toggle never reaches here,
+    # so its ambiguous off-state stays unmarked; the status build turns this
+    # into the "down" pill.
+    if serial and graceful:
+        last_seen.mark(serial, safe_off_ts=time.time())
+    return {"ok": True, "adb_shutdown": graceful, "confirmed": confirmed}
 
 
-def _adb_action(loc, port, cmd, fail_msg):
+def _mark_booting(serial):
+    """Stamp when we deliberately (re)boot a known watch, so the connection
+    column can show "booting up" through the ~40s window and a hedged "boot
+    failed?" past it. Only a real OS sighting (last_live_ts) clears it — see
+    webstatus._boot_state. A None serial (empty/unmapped port) stamps nothing."""
+    if serial:
+        last_seen.mark(serial, booting_since=time.time())
+
+
+def _watch_action(loc, port, adb_cmd, fb_cmd, fail_msg, boots_os=False):
+    """Run a power action against whichever protocol the watch is speaking.
+
+    A docked watch is reachable over adb when it is booted and over fastboot
+    when it is in the bootloader — the same intent ("reboot", "go to the
+    bootloader") just needs a different command. Dispatching here keeps one
+    op per concept instead of a parallel fastboot family, and lets the UI
+    offer the same menu in both states. Either command may be None where the
+    action has no equivalent in that protocol. boots_os marks the actions that
+    send the watch off to boot the OS (reboot, continue) so the UI can track
+    the boot — not the ones that land in another mode (bootloader, recovery)."""
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
     serial = find_serial_for_loc_port(load_config(), loc, port)
     if not serial:
         return {"ok": False, "error": "no serial found for port"}
-    rc, _, err = _run(f"adb -s {serial} {cmd}", check=False)
+    in_fb = serial in _fastboot_list()
+    cmd = fb_cmd if in_fb else adb_cmd
+    if cmd is None:
+        return {"ok": False,
+                "error": f"action not available over {'fastboot' if in_fb else 'adb'}"}
+    tool = "fastboot" if in_fb else "adb"
+    rc, _, err = _run(f"{tool} -s {serial} {cmd}", check=False, timeout=20)
     if rc != 0:
         return {"ok": False, "error": err or fail_msg}
-    return {"ok": True}
+    if boots_os:
+        _mark_booting(serial)
+    return {"ok": True, "via": tool}
 
 
 @DISPATCH.op("port.reboot")
 def _port_reboot(args):
-    return _adb_action(args["loc"], args["port"], "reboot",
-                       "adb reboot failed")
+    return _watch_action(args["loc"], args["port"], "reboot", "reboot",
+                         "reboot failed", boots_os=True)
 
 
 @DISPATCH.op("port.bootloader")
 def _port_bootloader(args):
-    return _adb_action(args["loc"], args["port"], "reboot bootloader",
-                       "adb reboot bootloader failed")
+    # From adb this enters the bootloader; from fastboot it cycles it, which
+    # is also how a fastboot battery reading gets re-sampled (the bootloader
+    # snapshots it on entry and never refreshes within a session).
+    return _watch_action(args["loc"], args["port"], "reboot bootloader",
+                         "reboot bootloader", "reboot to bootloader failed")
+
+
+@DISPATCH.op("port.recovery")
+def _port_recovery(args):
+    return _watch_action(args["loc"], args["port"], "reboot recovery",
+                         "reboot recovery", "reboot to recovery failed")
+
+
+@DISPATCH.op("port.continue")
+def _port_continue(args):
+    """Resume the boot chain from the bootloader. Fastboot-only — a booted
+    watch has nothing to continue."""
+    return _watch_action(args["loc"], args["port"], None, "continue",
+                         "fastboot continue failed", boots_os=True)
 
 
 # ── config visibility ───────────────────────────────────────────────────────
@@ -354,7 +669,8 @@ def _register_lifecycle(op_cls, name, stop_error):
     if name != "charge":
         @DISPATCH.op(f"{name}.start")
         def _start(args):
-            err = op_cls.start(args["loc"], args["port"], load_config())
+            err = op_cls.start(args["loc"], args["port"], load_config(),
+                               owner=args.get("owner"))
             return {"ok": False, "error": err} if err else {"ok": True}
 
     @DISPATCH.op(f"{name}.stop")

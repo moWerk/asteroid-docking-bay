@@ -12,7 +12,8 @@ from .util import log
 from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
 from .config import (_config_lock, charge_config, find_codename_for_serial,
-                     load_config, save_config)
+                     load_config, record_exact_codename, save_config,
+                     ssh_ip_for_serial, usb_mode_preference)
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
@@ -22,7 +23,8 @@ from .lastseen import last_seen
 from .variants import exact_codename
 from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     _workbench_tasks)
-from .watchctl import Watch, _watch_os, _watch_os_for
+from .watchctl import (GEOMETRY_PROBE_VERSION, Watch, _watch_os,
+                       _watch_os_for)
 
 
 # Serials that could not be identified via ADB — don't re-probe every refresh.
@@ -62,6 +64,68 @@ def _maybe_self_heal_fake_power(slot: str, loc: str, port: int,
     log.info("%s: fake-power wedge (powered, no connect >%ds) — auto-cycling",
              slot, _FAKE_POWER_GRACE_SEC)
     threading.Thread(target=uhubctl_cycle, args=(loc, port), daemon=True).start()
+
+
+# Stray SSH watches: a watch that self-enumerated in developer/SSH mode without
+# going through switch_ssh has no allocated IP, so it is on the shared default
+# 192.168.2.15 — the address every such watch takes, the source of the conflict.
+# Track the last time we acted on one, so an in-flight relocation (a mode
+# round-trip spanning several polls) does not re-fire and a failed attempt backs
+# off rather than churning.
+_STRAY_SSH_IP = "192.168.2.15"
+_ssh_align_attempt: dict[str, float] = {}
+_SSH_ALIGN_BACKOFF_SEC = 90
+
+
+def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
+                          cfg: dict) -> None:
+    """Correct a stray SSH watch to match the fleet USB-mode preference: under
+    "adb" switch it back to the standard mode; under "ssh" relocate it to its
+    own IP so several watches can run SSH without colliding on the default.
+
+    Only the stray is ever touched — a watch WITH an allocated IP was switched
+    deliberately (switch_ssh allocates), so it is left alone, and a manual
+    per-watch SSH switch is never undone. Guarded (per-serial backoff), runs in
+    a daemon thread, never blocks the status path."""
+    if adb_state != "ssh" or not serial or ssh_ip_for_serial(cfg, serial):
+        if serial:
+            _ssh_align_attempt.pop(serial, None)
+        return
+    now = time.time()
+    if now - _ssh_align_attempt.get(serial, 0) < _SSH_ALIGN_BACKOFF_SEC:
+        return
+    _ssh_align_attempt[serial] = now
+    pref = usb_mode_preference(cfg)
+    log.info("%s: stray SSH watch on the default IP — aligning to '%s'",
+             serial, pref)
+    threading.Thread(target=_align_usb_mode_worker, args=(serial, pref),
+                     daemon=True).start()
+
+
+def _align_usb_mode_worker(serial: str, pref: str) -> None:
+    """The mode round-trip, off the poll path. Reuses the two proven ops: get
+    the stray off the shared IP onto adb, and under an SSH preference hand it a
+    unique IP via the adb-side switch_ssh (the IP cannot change under a live SSH
+    session, so it must be set while on adb, then applied on the switch back)."""
+    from .fastboot import _switch_ssh_to_adb
+    res = _switch_ssh_to_adb(_STRAY_SSH_IP)
+    if not res.get("ok"):
+        log.warning("%s: could not reach the stray SSH watch to align it: %s",
+                    serial, res.get("error"))
+        return
+    if pref == "adb":
+        return   # back on the standard mode — done
+    for _ in range(20):
+        time.sleep(1)
+        if serial in adb_devices():
+            break
+    else:
+        log.warning("%s: did not reappear on adb to receive its SSH IP", serial)
+        return
+    from . import rpcops   # local: rpcops imports this module
+    out = rpcops.DISPATCH._data["watch.switch_ssh"]({"serial": serial})
+    if not out.get("ok"):
+        log.warning("%s: SSH IP relocation failed: %s", serial, out.get("error"))
 
 
 def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
@@ -152,6 +216,73 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
     return None
 
 
+# A healthy watch enumerates within ~40s of a boot (30-40s observed), so a
+# port powered with a boot we triggered but still no watch is "booting up"
+# below the window and a hedged "boot failed?" above it — up to a cap, after
+# which we stop claiming anything and let the plain connection state show.
+BOOT_WINDOW = 45.0
+BOOT_FAIL_CAP = 300.0
+
+
+def _boot_state(ls: dict, power: "bool | None") -> "str | None":
+    """The in-flight state after a (re)power we triggered. Distinguishes a real
+    boot from a mere re-enumeration:
+
+    - A gracefully-shelved watch (safe_off marker) we power on is OFF, so it
+      actually boots: "booting" in the window, then "bootfail" past it (a
+      question, since it can equally be a watch that never enumerates).
+    - A watch that was just RUNNING when its VBUS was cut keeps running on
+      battery; restoring power only makes it re-enumerate on the bus, not
+      reboot. That reads "reconnecting" for the window, then no claim.
+
+    Only meaningful with the port powered; a real adb sighting bumps
+    last_live_ts past booting_since and ends it with no explicit clear."""
+    if not power:
+        return None
+    bs = ls.get("booting_since") or 0
+    llt = ls.get("last_live_ts") or 0
+    if not bs or llt >= bs:
+        return None
+    so = ls.get("safe_off_ts") or 0
+    cold = bool(so and so >= llt)   # was shelved/down → a real boot
+    dt = time.time() - bs
+    if dt < BOOT_WINDOW:
+        return "booting" if cold else "reconnecting"
+    if cold and dt < BOOT_FAIL_CAP:
+        return "bootfail"
+    return None
+
+
+def _lifecycle(serial: "str | None", present: bool, power: "bool | None") -> "str | None":
+    """The power-states we can positively assert, shown in the connection
+    column. "down": a confirmed graceful shutdown (safe_off_ts) with the watch
+    not seen live since and its port off — safely halted, not draining. A raw
+    port cut never stamps safe_off_ts, so its ambiguous off-state stays
+    unmarked — absence is "no claim", never "definitely off". "booting"/
+    "bootfail": a deliberate (re)boot in progress or overdue (see _boot_state).
+    Self-clears: the next time the watch is seen live, last_live_ts advances
+    past both markers and this returns None."""
+    if not serial:
+        return None
+    ls = last_seen.get(serial) or {}
+    if ls.get("wear"):
+        # Wear-held: while docked it is topping off (no pill — the button shows
+        # the armed state); once it leaves the bus it is being worn.
+        return None if present else "worn"
+    if present:
+        return None
+    boot = _boot_state(ls, power)
+    if boot:
+        return boot
+    if power:
+        return None
+    so = ls.get("safe_off_ts") or 0
+    llt = ls.get("last_live_ts") or 0
+    if so and so >= llt:
+        return "down"
+    return None
+
+
 def _battery_view(adb_state: "str | None", serial: "str | None",
                   battery: "int | None", screen_forced: bool,
                   watch_os: "str | None") -> "tuple[int | None, float | None]":
@@ -182,14 +313,19 @@ def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | Non
     if not serial:
         return None
     geo = (last_seen.get(serial) or {}).get("geometry")
-    if geo:
+    if geo and geo.get("probe_v", 1) >= GEOMETRY_PROBE_VERSION:
         return geo
+    # Either nothing cached, or cached before a field we now collect existed —
+    # re-probe while the watch is live so the cache catches up on its own.
     if adb_state == "device":
-        geo = Watch(serial).geometry()
-        if geo:
-            last_seen.record(serial, geometry=geo)
-            return geo
-    return None
+        fresh = Watch(serial).geometry()
+        if fresh:
+            fresh = {**fresh, "probe_v": GEOMETRY_PROBE_VERSION}
+            last_seen.record(serial, geometry=fresh)
+            return fresh
+    # Offline with an outdated cache: incomplete beats nothing (the screenshot
+    # mask only needs shape, which older probes already carry).
+    return geo or None
 
 
 def _web_status_data(cfg: dict) -> list[dict]:
@@ -201,6 +337,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
     webapp's background warmer.
     """
     _t0 = time.perf_counter()
+    # serial -> exact codename learned this pass (flushed to config at the end).
+    _detected_exact: dict[str, str] = {}
     devices = adb_devices()
     fb_devices = _fastboot_list()   # {serial: sysfs_path | None}
     # Reverse maps for empty-port detection: sysfs_path → serial
@@ -274,6 +412,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
             else:
                 battery, screen_forced, charge_status = None, False, None
             watch_os  = _watch_os_for(serial) if adb_state == "device" else None
+            # Remember that a watch was last seen in the bootloader. Cutting
+            # VBUS does NOT stop a watch in fastboot — measured 2026-07-18: it
+            # keeps running on battery, invisible to the host, until flat. That
+            # is how sturgeon reached 0%. Once the port is off the watch cannot
+            # be seen at all, so the only way to warn is to remember the state
+            # it was in when it vanished.
+            if adb_state in ("fastboot", "device", "ssh"):
+                last_seen.record(serial, last_conn_state=adb_state)
             # Store the live reading, or fall back to the last-seen one when
             # the watch is off the bus, so the row shows a stale value + age
             # rather than a blank cell.
@@ -286,9 +432,22 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # on the machine name (the local `codename`); only the display name
             # changes. Falls back to the machine name when it can't refine.
             machine = (geometry.get("machine") if geometry else None) or codename
-            observed = ({"resolution": geometry.get("resolution")}
+            observed = ({"resolution": geometry.get("resolution"),
+                         "bootloader": geometry.get("bootloader")}
                         if geometry else {})
             display_codename = exact_codename(machine, observed)
+            # Remember the exact codename so the CLI — which has no live
+            # detection — can address the watch by it. Record whenever the
+            # identity is TRUSTWORTHY: the bootloader named it (authoritative,
+            # even when it confirms the base name, so a real `skipjack` is
+            # addressable as itself and not lumped with the tunnys sharing its
+            # image), or resolution actively refined the image name. A bare
+            # base name with no bootloader is just "not yet refined" — low
+            # confidence, so it is not written as identity. Flushed once at end.
+            trustworthy = bool(geometry and geometry.get("bootloader")) \
+                or (display_codename and display_codename != machine)
+            if serial and display_codename and trustworthy:
+                _detected_exact[serial] = display_codename
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
@@ -300,6 +459,19 @@ def _web_status_data(cfg: dict) -> list[dict]:
             not_enumerating = (slot in _enum_stuck_since
                                and time.time() - _enum_stuck_since[slot]
                                    > _ENUM_STUCK_GRACE_SEC)
+            # A watch that vanished from an unpowered port while it was in the
+            # bootloader is almost certainly still running on battery, because
+            # LK does not shut down when USB goes away. Nothing else in the UI
+            # can show this: with the port off there is no watch to read, so it
+            # drains silently — the sturgeon failure. An op owning the port is
+            # excluded: a drain test powers the port off deliberately.
+            op_owns_slot = any(
+                not tasks.get(slot, {}).get("done", True)
+                for tasks in (_charge_tasks, _drain_tasks, _workbench_tasks))
+            fb_draining = bool(
+                serial and not power and adb_state is None and not op_owns_slot
+                and (last_seen.get(serial) or {}).get("last_conn_state")
+                    == "fastboot")
             flashing  = ((slot in _flash_tasks and not _flash_tasks[slot].get("done", True))
                          or (slot in _remap_tasks and not _remap_tasks[slot].get("done", True)))
             charging_active = (slot in _charge_tasks
@@ -319,7 +491,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
             if wb and not wb.get("done", True):
                 workbench = {"active": True, "pct": wb.get("pct"),
                              "phase": wb.get("phase"),
-                             "blind": wb.get("blind", False)}
+                             "blind": wb.get("blind", False),
+                             "owner": wb.get("owner")}
             drain_last = drain_summaries.get(codename.lower())
             if (drain_last and drain_last.get("serial") and serial
                     and drain_last["serial"] != serial):
@@ -337,22 +510,34 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 }
             # Powered but nothing ever connects = the stale-node/fake-power
             # wedge; self-heal it (opt-in) when the port is otherwise idle.
-            wedged = bool(power) and not connect and adb_state is None
+            # A wear-held port is powered with no watch on purpose (worn) —
+            # never auto-cycle it.
+            wear_held = bool((last_seen.get(serial) or {}).get("wear")) if serial else False
+            wedged = bool(power) and not connect and adb_state is None and not wear_held
             busy   = bool(flashing or charging_active
                           or (drain and drain["active"])
                           or (workbench and workbench["active"]))
             _maybe_self_heal_fake_power(slot, loc, port_num, wedged, busy, cfg)
+            if not busy:
+                _maybe_align_usb_mode(serial, adb_state, cfg)
             hub_ports.append({
                 "port": port_num, "codename": display_codename,
                 "machine": machine, "serial": serial,
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
+                # The watch's assigned SSH-mode address, so the row can show
+                # which watch holds which IP — most useful while it's in SSH
+                # mode, but shown whenever one has been allocated.
+                "ssh_ip": ssh_ip_for_serial(cfg, serial),
+                "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
+                "wear": bool((last_seen.get(serial) or {}).get("wear")) if serial else False,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,
                 "charge_status": charge_status,
                 "screen_forced": screen_forced,
                 "not_enumerating": not_enumerating,
+                "fb_draining": fb_draining,
                 "flashing": flashing, "empty": False,
                 "charging_active": charging_active,
                 "charge_end_ts": charge_end_ts,
@@ -415,9 +600,26 @@ def _web_status_data(cfg: dict) -> list[dict]:
         socks = [p["socket"] for p in h["ports"] if p.get("socket") is not None]
         return (h["location"].split(".")[0], min(socks) if socks else 9999)
     result.sort(key=_hub_key)
+    _persist_exact_codenames(_detected_exact)
     elapsed = time.perf_counter() - _t0
     if elapsed > 1.0:     # quiet when fast; flag only the occasional slow refresh
         log.info("slow status refresh: %.2fs", elapsed)
     return result
+
+
+def _persist_exact_codenames(detected: dict) -> None:
+    """Store newly-learned exact codenames in the config, once, under the lock.
+    record_exact_codename is change-gated, so a fleet whose identities are all
+    known writes nothing — the save happens only when something actually
+    changed this pass."""
+    if not detected:
+        return
+    with _config_lock:
+        cfg = load_config()
+        changed = False
+        for serial, exact in detected.items():
+            changed = record_exact_codename(cfg, serial, exact) or changed
+        if changed:
+            save_config(cfg)
 
 

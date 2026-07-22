@@ -1,0 +1,200 @@
+{
+ "meta": {
+  "title": "Fastboot power, charging, and exact watch identity",
+  "date": "2026-07-18",
+  "mode": "interactive session (~6h), mo present throughout",
+  "branch": "0.8",
+  "range": "90f9e69 -> 9a046b6 (9 commits)",
+  "tests": "191 -> 214",
+  "firmware_versions_measured": {
+   "rover": "AsteroidOS 2.1",
+   "rubyfish": "AsteroidOS 2.0",
+   "note": "rest of fleet mixed, mostly pre-2.0; nothing here is current for 2.2 nightlies without re-measurement"
+  },
+  "hardware_rules_observed": "lenok weak cell (mo powered it deliberately, reached 100%/Full); sturgeon was the experiment watch; no flash or mass power ops",
+  "incidents": "one of mo's drain tests destroyed by an operator error (F13); sturgeon deep-discharged to 0% before the session and recovered",
+  "status": "COMPLETE"
+ },
+ "confidence_key": {
+  "confirmed": "verified on live hardware this session, artifact named",
+  "confirmed-by-mo": "mo's direct hardware observation, stronger than any inference here",
+  "inferred": "two true facts connected; flagged as such",
+  "untested": "not attempted"
+ },
+ "findings": [
+  {
+   "id": "F1",
+   "sev": "major",
+   "area": "hardware/charging",
+   "confidence": "confirmed-by-mo",
+   "what": "Fastboot dwell DOES charge, reaching 100% over a day",
+   "detail": "Three successive wrong answers were produced before this settled: (1) 'charges' from a post-deep-discharge gauge 4%->10%, (2) 'net-drains' from 10%->6% read at uptime 20s (peak boot sag on a worn cell; recovered to 10% in 25min), (3) a power budget 'proving' 20mA cannot offset a lit display, in which EVERY figure was invented and presented as arithmetic.",
+   "lesson": "A plausible quantitative model is the most dangerous fabrication: the format signals rigour the content lacks. Short-window battery measurements on worn/deep-discharged cells are near-worthless.",
+   "status": "RAG corrected (61c3208), power-budget claim retracted"
+  },
+  {
+   "id": "F2",
+   "sev": "moderate",
+   "area": "hardware/fastboot",
+   "confidence": "confirmed",
+   "what": "fastboot getvar battery-voltage is a boot-time snapshot, never refreshed in-session",
+   "detail": "Flat at 3668mV over ~40min while the cell changed; moves only on bootloader re-entry. NOT universal and NOT uniformly formatted: sturgeon '3668mV', rover '4129872' (uV), lenok exposes no battery variables at all.",
+   "status": "documented; consumers must probe presence and normalise units"
+  },
+  {
+   "id": "F3",
+   "sev": "major",
+   "area": "hardware/fastboot",
+   "confidence": "confirmed",
+   "what": "Cutting VBUS does NOT power off a watch in fastboot - it runs on battery until flat",
+   "detail": "sturgeon: VBUS cut 60s in fastboot, reappeared at t+4s where a cold boot into fastboot takes ~20s. This is the fleet's deep-discharge mechanism and the likely history behind sturgeon reaching 0%.",
+   "wrong_inference_corrected": "rover's aboot contains 'Shutting down because USB is not present'; inferring from it that LK powers off on USB loss was wrong - that string belongs to the off-mode charging path. mo's prior (watches lie in fastboot for hours then die) was correct.",
+   "status": "documented (e676f74); tooling must never cut VBUS after a failed fastboot shutdown"
+  },
+  {
+   "id": "F4",
+   "sev": "moderate",
+   "area": "hardware/fastboot",
+   "confidence": "confirmed (scope-limited)",
+   "what": "No wire-reachable poweroff on rover or rubyfish",
+   "detail": "oem table extracted from aboot: device-info, {enable,disable}-charger-screen, off-mode-charge, select-display-panel, enter-ship-mode, lock/unlock/unlock-go. No poweroff. 'oem help' = unknown command. The ON-SCREEN menu does offer Power off (key press invokes LK shutdown directly), so the capability exists and only the wire path is missing.",
+   "scope_limit": "extraction returned NOTHING on sturgeon and lenok (2014-15 devices) - their tables are UNKNOWN, not empty",
+   "status": "OPEN investigation (18e0ff4); UI item greyed with manual route (d8ca74a)"
+  },
+  {
+   "id": "F5",
+   "sev": "major",
+   "area": "hardware/charging",
+   "confidence": "confirmed-by-mo",
+   "what": "off-mode-charge setting is inert fleet-wide, in BOTH directions",
+   "detail": "mo enabled it everywhere with no effect, and watches that DO off-mode charge did not stop when it was turned off. Whether a watch charges while off is a fixed firmware property; likely never wired up (no off-mode-charge screen on these watches).",
+   "consequence": "No rescue/charging design may depend on it. disable-charger-screen probably inert for the same reason. Presence of a command in getvar or a strings dump is NOT evidence of function.",
+   "status": "CLOSED NEGATIVE (824f1ee)"
+  },
+  {
+   "id": "F6",
+   "sev": "info",
+   "area": "hardware/fastboot",
+   "confidence": "untested",
+   "what": "oem enter-ship-mode exists on rover and rubyfish",
+   "detail": "Factory transport state, near-zero drain. Given F5 it is the only remaining candidate for the STORAGE deep-discharge problem.",
+   "status": "DELIBERATELY UNTESTED - exiting typically needs a charger insertion; operator must be present"
+  },
+  {
+   "id": "F7",
+   "sev": "info",
+   "area": "hardware/display",
+   "confidence": "recalled (mo)",
+   "what": "OLED burn-in during fastboot dwell is a real cost; assume the display stays lit",
+   "detail": "Exactly one fleet watch was ever seen blanking in fastboot (model unrecorded). Cycling the bootloader to blank it briefly is weak: burn-in accrues with lit time and black pauses rather than reverses it. No standard command blanks the fastboot menu.",
+   "status": "open question recorded"
+  },
+  {
+   "id": "F8",
+   "sev": "major",
+   "area": "identity",
+   "confidence": "confirmed",
+   "what": "androidboot.bootloader names the true hardware even under a shared image",
+   "detail": "rover reports bootloader=rover-03.02.39.03.16 while MACHINE, image and 454x454 resolution all say rubyfish; rubyfish reports rubyfish-03.02.04.02.16. androidboot.baseband (msm=modem / apq=none) independently corroborates and is a candidate LTE detector for sawfish/sawshark, catfish/catshark, belugaxl/orca.",
+   "parsing": "At least 4 formats in the fleet - rover-03.02.39.03.16, SKIPJACK.40010.19320, LENOKZ22b, STURGEONV4.4. Splitting on '-' fails 3 of 5 online watches. Matches longest case-insensitive codename PREFIX; also prevents catfish_ext reading as catfish.",
+   "status": "FIXED/SHIPPED bf7dff7 - primary detector, resolution demoted to fallback"
+  },
+  {
+   "id": "F9",
+   "sev": "moderate",
+   "area": "defect/caching",
+   "confidence": "confirmed",
+   "what": "Geometry cache was probe-once-keep-forever, so F8 changed nothing for cached watches",
+   "detail": "Every already-cached watch kept reporting no bootloader after the detector shipped. Caught on the first live check after deploy, NOT by tests.",
+   "status": "FIXED bf7dff7 - cached probes stamped with GEOMETRY_PROBE_VERSION; probe reports what it read, cache layer owns the stamp"
+  },
+  {
+   "id": "F10",
+   "sev": "info",
+   "area": "diagnosis",
+   "confidence": "confirmed",
+   "what": "rover: five hypotheses eliminated before the right one",
+   "eliminated": [
+    "stale-node adb wedge (reconnect + full server restart)",
+    "device node permissions (ACLs byte-identical to a working watch)",
+    "wrong USB mode (descriptor ff/42/01, identical to working adb watch)",
+    "WearOS with adb debugging off (mo: assume AsteroidOS unless stated)",
+    "bus contention / power budget (kernel log showed one clean enumeration, no retries)"
+   ],
+   "actual_cause": "rover was never booting. The d001 gadget was a non-booted watch advertising the interface with no adbd behind it, which is why adb skipped it silently instead of reporting unauthorized. Booted from fastboot, adb claimed it 1.3s after enumeration.",
+   "status": "resolved"
+  },
+  {
+   "id": "F11",
+   "sev": "moderate",
+   "area": "diagnosis",
+   "confidence": "confirmed",
+   "what": "USB fault taxonomy, and the correction of its middle case",
+   "detail": "power+connect+quiet = working. power, no connect, kernel 'Cannot enable / attempt power cycle' = link actively failing. power, no connect, SILENT = no data link, CAUSE NOT DETERMINABLE - an open data line and a powered-off watch produce identical silence because the hub never sees a D+ pull-up either way.",
+   "wrong_claim_corrected": "The silent case was first asserted to mean 'watch is off'. Splitting it needs an inline USB multimeter; software cannot. Correspondingly 'rover's dock is fine' from one enumeration was wrong - it was luck of the current seating.",
+   "status": "documented"
+  },
+  {
+   "id": "F12",
+   "sev": "info",
+   "area": "hardware/rig",
+   "confidence": "confirmed-by-mo",
+   "what": "bass cradle is mechanically dead - mini-USB connector failed, suspected broken in transport",
+   "detail": "An earlier suggestion that hub 1-2.3.4 might be at fault was wrong; rubyfish works on the same hub.",
+   "status": "replacement on order"
+  },
+  {
+   "id": "F13",
+   "sev": "CRITICAL",
+   "area": "defect/safety + operator error",
+   "confidence": "confirmed",
+   "what": "OPERATOR ERROR: a direct API call destroyed a running drain test, exposing a missing backend guard",
+   "detail": "POST /api/on/1-2.3/1 was issued at 12:59 to live-test an unrelated feature on catfish, which was mid-drain. Readings went 100..96 over five hours then jumped back to 100. Repeated service restarts compounded it (7 'drain test resumed' entries, each re-powering the port to read).",
+   "causes": [
+    "the port was chosen from a status line reading power=False adb=None, which is exactly what a mid-drain watch looks like",
+    "the UI's guard was bypassed by calling the endpoint directly - that protection existed ONLY in the frontend, while docs/CONTAINERS.md states the backend must hold the line"
+   ],
+   "status": "FIXED 9a046b6 - port.set/cycle/poweroff and the reboot/bootloader/recovery/continue family refuse while an op owns the port, naming the owner. No force flag. Verified by replaying the exact damaging call."
+  },
+  {
+   "id": "F14",
+   "sev": "major",
+   "area": "defect/safety",
+   "confidence": "confirmed",
+   "what": "Drain tests discharged blind when the battery became unreadable",
+   "detail": "The failed-read path was 'log.warning; continue' with no bound, and the floor check only runs on a SUCCESSFUL read - so losing the reading disabled the only stop. rubyfish (2026-07-14) froze at 71% and discharged to 0%/3.18V unseen.",
+   "fix": "Bounded two ways because the failure mode is a watch that gets harder to read as it weakens: a consecutive-miss cap, plus extrapolation from the measured drain rate for one coasting below the floor inside the cap. On abort the port is left POWERED - the normal end-of-test power-off would cause the very deep discharge the guard prevents.",
+   "test_note": "The test had to bound its own polling: reintroducing the bug made the suite HANG rather than fail, which is a worse signal than an assertion.",
+   "status": "FIXED f92b16f"
+  }
+ ],
+ "open": [
+  {
+   "id": "F4",
+   "next": [
+    "extract the full dispatch table, not just 'oem '-prefixed strings",
+    "probe candidate command names (unsupported fail harmlessly)",
+    "find the aboot path/format on 2014-15 devices",
+    "chickendrop89/fastboot-oem-extractor"
+   ]
+  },
+  {
+   "id": "F8",
+   "next": [
+    "confirm the baseband LTE detector within one of sawfish/sawshark, catfish/catshark, belugaxl/orca"
+   ]
+  },
+  {
+   "id": "F6",
+   "next": [
+    "ship mode test, operator present, understanding exit likely needs charger insertion"
+   ]
+  },
+  {
+   "id": "F13",
+   "next": [
+    "stop and restart catfish's drain for a clean measurement - contaminated from 12:37"
+   ]
+  }
+ ]
+}

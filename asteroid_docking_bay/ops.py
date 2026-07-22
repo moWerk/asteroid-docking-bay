@@ -19,7 +19,9 @@ from .usb import uhubctl_get_power, uhubctl_set_power
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _switch_ssh_to_adb,
                        _wait_for_fastboot)
-from .events import (_DRAIN_FLOOR_PCT, _DRAIN_POLL_SEC, event_log,
+from .lastseen import last_seen
+from .events import (_DRAIN_FLOOR_PCT, _DRAIN_MAX_BLIND_POLLS,
+                     _DRAIN_POLL_SEC, event_log,
                      _save_drain_results)
 from .tasks import (_charge_stop, _charge_tasks, _drain_stop,
                     _drain_tasks, _flash_tasks, task_store,
@@ -103,7 +105,20 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
                 uhubctl_set_power(loc, port, True)
                 wait_serial_online(serial, 5, 4)
             log.info("%s: graceful poweroff (%s)", serial, reason or "op end")
+            # Snapshot battery % at power-off: compared to the % at the next
+            # boot it yields a TRUE standby-drain rate — on battery the whole
+            # time with no reads, so none of the drain-test charge-bump that
+            # overrates standby. Best-effort. (A watch taken off the rig to be
+            # worn is excluded downstream by the battery-rise / wear guards.)
+            off_pct = get_battery_level(serial)
+            if off_pct is not None:
+                cn = find_codename_for_loc_port(load_config(), loc, port)
+                event_log.log(serial, cn, "power_off", pct=off_pct)
             _run(f"adb -s {serial} shell poweroff", check=False, timeout=10)
+            # Same graceful-shutdown marker as the manual Power-off — this ends
+            # an op the proven way, so the watch is safely down (the "down"
+            # pill), not ambiguously cut.
+            last_seen.mark(serial, safe_off_ts=time.time())
     except Exception as exc:
         log.debug("graceful poweroff of %s failed: %s", serial, exc)
     finally:
@@ -222,8 +237,13 @@ class Operation:
         return None
 
     @classmethod
-    def start(cls, loc: str, port: int, cfg: dict) -> "str | None":
-        """Begin the operation. Returns an error string, or None on success."""
+    def start(cls, loc: str, port: int, cfg: dict,
+              owner: "str | None" = None) -> "str | None":
+        """Begin the operation. Returns an error string, or None on success.
+
+        `owner` records who claimed the watch. Several sessions and people now
+        drive this rig, and an operation that says only "workbench active"
+        cannot tell you whether to wait or take over."""
         slot = f"{loc}:{port}"
         if cls.is_active(slot):
             return f"{cls.kind} already running"
@@ -232,7 +252,7 @@ class Operation:
             return err
         if is_slot_smart(cfg, loc, port) is False:
             return "non-smart port — power cannot be switched"
-        cls.tasks[slot] = {"done": False}
+        cls.tasks[slot] = {"done": False, "owner": owner}
         cls.stops[slot] = threading.Event()
         task_store.persist(cls.kind, slot, loc, port, cls.tasks[slot])
         threading.Thread(target=cls(slot, loc, port, cfg).run,
@@ -552,6 +572,7 @@ class DrainOp(Operation):
                 event_log.log(serial, codename, "drain_reading", pct=start_pct)
                 log.info("%s: drain test started at %d%%", codename, start_pct)
 
+            blind = 0   # consecutive failed battery reads
             while not stop_event.wait(timeout=_DRAIN_POLL_SEC):
                 # Reload config in case serial mapping changed.
                 serial  = find_serial_for_loc_port(load_config(), loc, port)
@@ -559,8 +580,34 @@ class DrainOp(Operation):
                 if stop_event.is_set():
                     break
                 if new_pct is None:
-                    log.warning("%s: drain test: poll failed — skipping", codename)
+                    # A drain test deliberately discharges the watch, so losing
+                    # the reading is not a cosmetic gap — it is the loop
+                    # discharging blind with no way to see the floor coming.
+                    # Two independent bounds, because a watch that stops
+                    # enumerating as it weakens is exactly the case that bit us:
+                    # a hard cap on consecutive misses, and an extrapolation
+                    # from the measured rate so a slow watch cannot coast under
+                    # the floor while still inside the cap.
+                    blind += 1
+                    est = None
+                    rate = task.get("drain_rate")
+                    if rate and rate > 0 and task.get("last_ts"):
+                        est = (task["last_pct"]
+                               - rate * (time.time() - task["last_ts"]) / 3600)
+                    if blind >= _DRAIN_MAX_BLIND_POLLS or (
+                            est is not None and est <= _DRAIN_FLOOR_PCT):
+                        task["blind_abort"] = True
+                        log.error("%s: drain test: %d consecutive failed reads "
+                                  "(last seen %s%%, estimated %s%%) — aborting "
+                                  "and restoring power rather than discharging "
+                                  "blind", codename, blind, task.get("last_pct"),
+                                  "?" if est is None else f"{est:.0f}")
+                        break
+                    log.warning("%s: drain test: poll failed (%d/%d blind) — "
+                                "retrying", codename, blind,
+                                _DRAIN_MAX_BLIND_POLLS)
                     continue
+                blind = 0
 
                 now = time.time()
                 task["readings"].append({"ts": now, "pct": new_pct})
@@ -591,16 +638,29 @@ class DrainOp(Operation):
             # so a completed test doesn't leave the watch stored near the floor.
             # Only when it ran to completion (a user stop leaves it as-is).
             serial = task.get("serial")
-            if (charge_cfg.drain_rest_recharge and serial
-                    and not stop_event.is_set()):
-                log.info("%s: recharging to rest band (%d%%) after drain",
-                         codename, charge_cfg.low_threshold)
-                _ensure_port_powered(codename, loc, port)
-                if wait_serial_online(serial, 5, 4):
-                    charge_to_target(codename, serial, charge_cfg, loc, port,
-                                     target=charge_cfg.low_threshold)
-            # Return the watch to rest: shut it down instead of leaving it on.
-            _end_port(loc, port, serial, charge_cfg, "drain ended")
+            if task.get("blind_abort"):
+                # The watch went unreadable while discharging. Leave the port
+                # powered so the cell recovers, and skip the usual end-of-test
+                # power-off — that would strand an already-low watch off charge,
+                # which is the deep-discharge path this guard exists to prevent.
+                log.warning("%s: leaving port powered after blind drain abort",
+                            codename)
+                try:
+                    uhubctl_set_power(loc, port, True)
+                except RuntimeError as e:
+                    log.warning("%s: could not restore power after blind "
+                                "drain abort: %s", codename, e)
+            else:
+                if (charge_cfg.drain_rest_recharge and serial
+                        and not stop_event.is_set()):
+                    log.info("%s: recharging to rest band (%d%%) after drain",
+                             codename, charge_cfg.low_threshold)
+                    _ensure_port_powered(codename, loc, port)
+                    if wait_serial_online(serial, 5, 4):
+                        charge_to_target(codename, serial, charge_cfg, loc, port,
+                                         target=charge_cfg.low_threshold)
+                # Return the watch to rest: shut it down instead of leaving it on.
+                _end_port(loc, port, serial, charge_cfg, "drain ended")
             _save_drain_results(task, slot, codename)
 
 

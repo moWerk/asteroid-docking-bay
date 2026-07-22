@@ -56,3 +56,20 @@ def test_identical_reread_is_throttled_but_memory_stays_live(tmp_path):
     mem_ts = ls.get("S1")["last_live_ts"]
     assert mem_ts >= disk_ts                        # memory advanced
     assert json.loads(path.read_text())["S1"]["last_live_ts"] == disk_ts  # disk held
+
+
+def test_mark_does_not_advance_last_live_ts(tmp_path):
+    """A power-off marker is not a live sighting: mark() must store the field
+    WITHOUT stamping last_live_ts, or safe_off_ts lands a hair below the
+    freshly-bumped last_live_ts and the "down" check (so >= llt) fails — the
+    real bug where a powered-down watch showed no pill."""
+    import time
+    from asteroid_docking_bay.lastseen import LastSeen
+    ls = LastSeen(tmp_path / "ls.json")
+    ls.record("S1", battery=80)           # a real sighting
+    live = ls.get("S1")["last_live_ts"]
+    time.sleep(0.005)
+    ls.mark("S1", safe_off_ts=time.time())
+    e = ls.get("S1")
+    assert e["last_live_ts"] == live, "mark() advanced last_live_ts — it must not"
+    assert e["safe_off_ts"] >= e["last_live_ts"], "safe_off must be >= last live"

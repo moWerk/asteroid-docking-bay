@@ -15,6 +15,11 @@ from .config import charge_config
 
 _DRAIN_FLOOR_PCT   = 15   # stop test when battery reaches this level
 _DRAIN_POLL_SEC    = 30 * 60  # poll interval: 30 minutes
+# A failed battery read costs a whole poll interval of blind discharge, so the
+# drain loop cannot keep retrying forever: rubyfish (2026-07-14) stopped
+# enumerating mid-test, froze the displayed reading at 71%, and discharged past
+# the floor to 0% / 3.18V unseen. Cap consecutive blind polls.
+_DRAIN_MAX_BLIND_POLLS = 3
 _DRAIN_RESULTS_DIR = Path.home() / ".local/share/asteroid-docking-bay/drain-tests"
 
 
@@ -102,8 +107,14 @@ class EventLog:
                         if 0 < r < 50:          # ignore absurd spikes
                             rates.append(r)
                 prev = (pct, ts)
-            elif ev in ("charge_start", "charge_end"):
-                prev = None                     # charging breaks the standby chain
+            elif ev in ("charge_start", "charge_end", "external", "wear"):
+                # Charging obviously breaks a standby chain. So does an
+                # externally logged event: it means somebody did something to
+                # this watch — a flash, a bench session, an app test — and the
+                # interval spanning it was never passive standby. Breaking the
+                # chain discards that interval rather than reporting a rate
+                # measured across work, which is the safe direction to err.
+                prev = None
         if rates:
             rates.sort()
             return rates[len(rates) // 2]
@@ -112,6 +123,37 @@ class EventLog:
         if summ and summ.get("rate") and (not summ.get("serial") or summ["serial"] == serial):
             return summ["rate"]
         return None
+
+    def standby_off_to_on_rate(self, serial: "str | None",
+                               codename: "str | None",
+                               events: "list[dict] | None" = None) -> "float | None":
+        """True standby %/hour from the last graceful power-off to the next
+        boot reading.
+
+        The watch is on battery the whole interval with NO reads between, so
+        this carries none of the drain-test charge-bump that overrates standby
+        (only the single ~40s boot-read bump at the far end). Pairs each
+        power_off with the first battery reading after it and returns the most
+        recent such drop. A period where the battery ROSE is excluded — standby
+        only falls, so a rise means it was charged off the rig (worn). None
+        until a usable pair exists."""
+        evs = events if events is not None else self.read(serial, codename)
+        off: "tuple[float, float] | None" = None   # (pct, ts) of last power_off
+        rate: "float | None" = None
+        for e in evs:
+            ev = e.get("event")
+            if ev == "power_off" and e.get("pct") is not None and e.get("ts") is not None:
+                off = (e["pct"], e["ts"])
+            elif off is not None and ev in ("check_reading", "drain_reading",
+                                            "charge_start"):
+                pct, ts = e.get("pct"), e.get("ts")
+                if pct is not None and ts is not None:
+                    dt_h = (ts - off[1]) / 3600.0
+                    drop = off[0] - pct
+                    if dt_h > 0.05 and drop > 0:   # exclude off-rig charge + too-short
+                        rate = drop / dt_h
+                    off = None                      # this power_off is paired
+        return rate
 
     def next_due_ts(self, serial: "str | None", codename: "str | None",
                     cfg: dict) -> "float | None":

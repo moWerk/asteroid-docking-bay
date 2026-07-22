@@ -135,12 +135,163 @@ def save_config(cfg: dict) -> None:
 # ── Config lookups ────────────────────────────────────────────────────────────
 
 def find_port_for_codename(cfg: dict, codename: str) -> tuple[str | None, int | None]:
-    """Return (hub_location, port) for a codename, or (None, None)."""
+    """Return (hub_location, port) for a codename, or (None, None).
+
+    Machine-name only and returns the FIRST match, so it cannot address one
+    of several watches that share an image. New code should route through
+    find_ports_for_target / resolve_single_port, which understand exact
+    codenames and serials; this stays for the map/test-ports paths that
+    genuinely operate per machine-image."""
     for hub in cfg.get("hubs", []):
         for port_str, cname in hub.get("ports", {}).items():
             if cname.lower() == codename.lower():
                 return hub["location"], int(port_str)
     return None, None
+
+
+# ── exact codenames ──────────────────────────────────────────────────────────
+# The config keys ports and serials on the MACHINE (image) name — the thing
+# that gets flashed — which several physically different watches share (a
+# TicWatch E2 ships and reports `skipjack` but is really `tunny`). The exact
+# per-device codename is detected live from androidboot.bootloader (see
+# variants.exact_codename) and stored here per serial, so it survives across
+# processes and is available to the CLI, which has no live detection of its
+# own. Exact codenames are globally unique, so they make an unambiguous
+# address where a shared machine name cannot.
+
+def exact_codename_for_serial(cfg: dict, serial: "str | None") -> "str | None":
+    return cfg.get("exact_codenames", {}).get(serial) if serial else None
+
+
+# ── SSH-mode IP allocation ───────────────────────────────────────────────────
+# A watch in developer/SSH USB mode brings up an rndis link and, by default,
+# takes 192.168.2.15 — a fixed address inherited from SailfishOS. Every watch
+# uses the same one, so two watches switched to SSH in quick succession on the
+# same rig would both claim 192.168.2.15 on different host interfaces, and the
+# host could no longer tell them apart by address. We hand each watch a unique
+# IP instead (set via usb_moded_util -n before the switch), starting at
+# 192.168.13.37 — the "LEET" address, chosen to avoid the common 192.168.2.x
+# home-network clash too. Assignment is sticky per serial, so a watch keeps its
+# address across sessions.
+
+SSH_IP_BASE = "192.168.13.37"
+
+
+def ssh_ip_for_serial(cfg: dict, serial: "str | None") -> "str | None":
+    return cfg.get("ssh_ips", {}).get(serial) if serial else None
+
+
+def usb_mode_preference(cfg: dict) -> str:
+    """The fleet's preferred USB mode for auto-correcting a watch that comes up
+    on its own in the wrong one: "adb" (standard) or "ssh". This is the
+    situational top-bar toggle, not a hard install setting — defaults to "adb"
+    (stock, and how a fresh flash enumerates), and ignores any junk value."""
+    pref = cfg.get("usb_mode_preference")
+    return pref if pref in ("adb", "ssh") else "adb"
+
+
+def allocate_ssh_ip(cfg: dict, serial: str) -> str:
+    """The SSH-mode IP for a serial, assigning the next free one from the base
+    up on first use. Sticky: a serial always gets back the same address."""
+    import ipaddress
+    table = cfg.setdefault("ssh_ips", {})
+    if serial in table:
+        return table[serial]
+    used = set(table.values())
+    base = int(ipaddress.ip_address(SSH_IP_BASE))
+    for offset in range(0, 200):          # 192.168.13.37 .. .236
+        cand = str(ipaddress.ip_address(base + offset))
+        if cand not in used:
+            table[serial] = cand
+            return cand
+    # Pool exhausted (200 watches on one rig is not a real scenario); fall back
+    # to the base rather than raising, so a switch is never blocked by this.
+    return SSH_IP_BASE
+
+
+def record_exact_codename(cfg: dict, serial: "str | None",
+                          exact: "str | None") -> bool:
+    """Persist a detected exact codename for a serial. Returns True only when
+    it actually changed, so a hot-path caller can skip the config write on the
+    common case where identity is already known and stable."""
+    if not serial or not exact:
+        return False
+    table = cfg.setdefault("exact_codenames", {})
+    if table.get(serial) == exact:
+        return False
+    table[serial] = exact
+    return True
+
+
+class AmbiguousTargetError(ValueError):
+    """A machine/image name that maps to several physical watches, with
+    nothing given to pick one. Carries the candidates so the caller can tell
+    the user exactly what to type instead of guessing."""
+
+    def __init__(self, target: str, candidates: "list[dict]"):
+        self.target = target
+        self.candidates = candidates
+        # Always show the serial: two watches can share an exact codename (two
+        # tunnys), so the serial is the only guaranteed disambiguator. Lead
+        # with the exact codename when it adds anything over the target name.
+        lines = "\n".join(
+            f"    {c['serial'] or '(no serial)'}"
+            f"{'' if not c.get('exact') or c['exact'].lower() == target.lower() else '  (' + c['exact'] + ')'}"
+            f"  at {c['loc']}:p{c['port']}"
+            for c in candidates)
+        super().__init__(
+            f"'{target}' matches {len(candidates)} watches — name one by its "
+            f"serial (or exact codename where it differs):\n{lines}")
+
+
+def _port_descriptors(cfg: dict) -> "list[dict]":
+    """Every configured port as {loc, port, machine, serial, exact}. serial
+    comes from the per-port binding (port_serials); exact is looked up from
+    that serial. Both are None when unknown, which is fine — only the address
+    kinds that need them fail to match."""
+    out: "list[dict]" = []
+    for hub in cfg.get("hubs", []):
+        loc = hub["location"]
+        bound = hub.get("port_serials", {})
+        for port_str, machine in hub.get("ports", {}).items():
+            serial = bound.get(port_str)
+            out.append({
+                "loc": loc, "port": int(port_str), "machine": machine,
+                "serial": serial,
+                "exact": exact_codename_for_serial(cfg, serial),
+            })
+    return out
+
+
+def find_ports_for_target(cfg: dict, target: str) -> "list[dict]":
+    """Resolve an address to matching port descriptors. An address is 'all',
+    a serial, an exact codename, or a machine/image name, tried in that order
+    of specificity. Serials and exact codenames are globally unique so they
+    match at most one port; a shared machine name may match several — that is
+    the ambiguity resolve_single_port turns into an actionable error."""
+    descs = _port_descriptors(cfg)
+    if target == "all":
+        return descs
+    t = target.lower()
+    by_serial = [d for d in descs if d["serial"] and d["serial"].lower() == t]
+    if by_serial:
+        return by_serial
+    by_exact = [d for d in descs if d["exact"] and d["exact"].lower() == t]
+    if by_exact:
+        return by_exact
+    return [d for d in descs if d["machine"] and d["machine"].lower() == t]
+
+
+def resolve_single_port(cfg: dict, target: str) -> "dict | None":
+    """One port descriptor for a command that acts on a single watch, or None
+    if nothing matches. Raises AmbiguousTargetError when a shared machine name
+    matches several and no exact codename/serial was given to pick one."""
+    hits = find_ports_for_target(cfg, target)
+    if not hits:
+        return None
+    if len(hits) > 1:
+        raise AmbiguousTargetError(target, hits)
+    return hits[0]
 
 
 def find_serial_for_codename(cfg: dict, codename: str) -> str | None:
