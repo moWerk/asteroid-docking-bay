@@ -1142,3 +1142,23 @@ def test_quickpanel_toggle_pulses_until_confirmed(tmp_path):
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o["first"] and o["pending"], "the toggle did not pulse on click"
     assert o["afterPoll"], "the pulse was wiped by a poll re-render"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_network_toggle_also_pulses_while_in_flight(tmp_path):
+    """The Network tab's WiFi/BT toggles pulse in flight too — every Control
+    Center toggle got the same pending-pulse, not just the quick panel (mo:
+    recheck all buttons)."""
+    import json
+    h = tmp_path / "netpulse.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlSerial='S9';ctlTab='net';ctlMode='adb';ctlSshIp='192.168.2.15';"
+                 "ctlCache['S9']={serial:'S9',wifi:1,transport:'adb'};"
+                 "ncToggle('wifi',0);"
+                 "console.log(JSON.stringify({pulsing:global.__els['cc'].innerHTML.indexOf('cmd-pending')>=0,"
+                 "pending:ctlPending.has('net:wifi')}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["pulsing"] and o["pending"], "the network toggle did not pulse in flight"

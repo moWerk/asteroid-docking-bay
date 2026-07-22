@@ -75,7 +75,6 @@ _WEB_TEMPLATE = """\
        benign green of wifi/bt) — a forced-on screen is a drain, so its ON
        state should read as an alert. Off state is the plain greyed pill. */
     .cc-tgl.scrnon{border-color:#f0b429;color:#f0b429;background:rgba(240,180,41,.15);font-weight:700}
-    .cc-tgl.busy{opacity:.5;cursor:progress}
     .cc-tgl:hover{background:#0d1117}
     .set-tgl{flex:0 0 auto;padding:3px 10px;min-width:46px;font-size:11px}
     .spins{display:flex;gap:5px;align-items:flex-end;justify-content:center;padding:4px 0 10px}
@@ -1038,11 +1037,11 @@ function bodySys(d){
   return `<div class="cc-cols"><div class="cc-col">${sys}</div></div>`+
     `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
-      `<button class="cc-tgl${d.screen_forced?' scrnon':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
+      `<button class="cc-tgl${d.screen_forced?' scrnon':''}${ctlPending.has('sys:screen')?' cmd-pending':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
       `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`;
 }
 function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
-function ccScreen(on){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ctlFetch();refresh();});}
+function ccScreen(on){ctlPending.add('sys:screen');renderControl(ctlCache[ctlSerial]||{});setTimeout(()=>{ctlPending.delete('sys:screen');},2600);fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ctlFetch();refresh();});}
 function releaseScreen(s){fetch('/api/watch/'+encodeURIComponent(s)+'/screen/off',{method:'POST'}).then(()=>{toast('screen released');refresh()});}
 function releaseAllScreens(){fetch('/api/screen/release-all',{method:'POST'}).then(r=>r.json()).then(d=>{toast('released '+((d.released||[]).length)+' screen(s)');refresh()});}
 function ccSyncTime(){
@@ -1069,7 +1068,7 @@ function bodyNet(d){
     _kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
     _kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+_kv('Phone',phone)+
     _kv('WLAN MAC',d.wlanmac)+_kv('Serial',d.serial));
-  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
+  const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}${ctlPending.has('net:'+t)?' cmd-pending':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
   const modeToggle=isSsh
     ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
     : `<button class="cc-tgl" onclick="switchSsh('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget to SSH/developer mode">USB &#8594; SSH</button>`;
@@ -1077,7 +1076,8 @@ function bodyNet(d){
     `<div class="cc-tgls">${tgl('wifi','WiFi',d.wifi)}${tgl('bluetooth','BT',d.bluetooth)}${modeToggle}</div>`;
 }
 function ncToggle(tech,on){
-  document.querySelectorAll('#cc .cc-tgl').forEach(b=>b.classList.add('busy'));
+  ctlPending.add('net:'+tech); renderControl(ctlCache[ctlSerial]||{});   // pulse until the read reflects it
+  setTimeout(()=>{ctlPending.delete('net:'+tech);},2600);
   fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/toggle/'+tech+'/'+(on?'on':'off'),{method:'POST'})
     .then(()=>setTimeout(ctlFetch,1600)).catch(()=>ctlFetch());
 }
