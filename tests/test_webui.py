@@ -312,6 +312,32 @@ def test_smart_column_is_pills_with_the_cycle_as_the_untested_state(tmp_path):
     assert JS.count("doCy('") == 1, "doCy wired in more than one place — cycle not consolidated"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_stats_items_are_dots_and_the_age_is_a_pill(tmp_path):
+    """Every stat icon is a dot — a glyph in a circle — for one visual language
+    with the power dot and the charging circle. The last-seen age, being text,
+    is a matching pill rather than a bare trailing string. No legacy icon spans
+    survive."""
+    import json
+    h = tmp_path / "strip.js"
+    h.write_text(_DOM_STUBS + JS +
+                 "\nconsole.log(JSON.stringify({"
+                 "charging:mkstrip({codename:'x',charging_active:true,serial:'S9'},24),"
+                 "off:mkstrip({codename:'x',adb:null,last_live_ts:1000},24),"
+                 "full:mkstrip({codename:'x',adb:'device',charge_status:'Full',serial:'S9'},24)}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'class="sdot chg' in out["charging"], "charging op is not a dot"
+    assert 'class="sdot dim spark"' in out["charging"], "sparkline is not a dot"
+    assert 'class="sdot on"' in out["full"], "full-charge state is not a dot"
+    assert 'class="spill"' in out["off"], "last-seen age is not a pill"
+    # The old icon-span classes are gone everywhere.
+    for html in out.values():
+        assert "svgw" not in html and 'class="ib' not in html, f"legacy icon span left: {html}"
+
+
 def test_execute_trigger_is_a_markerless_pill():
     """Execute spawns a panel like the badges/battery do, so it reads as one of
     them: a pill, and no dropdown ▾ marker (which also stopped it wrapping to
