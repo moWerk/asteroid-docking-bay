@@ -123,9 +123,8 @@ _WEB_TEMPLATE = """\
     .sdot.drain{border-color:#3d4756;color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
     .sdot.spark{cursor:pointer}.sdot.spark:hover{background:rgba(88,166,255,.12)}
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
-    .spill{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);line-height:1.5;
-      padding:2px var(--pill-px);border-radius:var(--pill-r);border:1px solid #3d4756;
-      color:#8b949e;font-size:var(--pill-fs);vertical-align:middle}
+    /* Last-seen age is not a pill — it trails the Stats dots as plain text. */
+    .lastseen{color:#6e7681;font-size:11px;white-space:nowrap}
     .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
     .wimg{position:fixed;z-index:120;display:none;
@@ -425,8 +424,9 @@ function mkbatCell(p,lo,hi){
     return batPill(p,batBand(p.battery,lo,hi),`${p.battery}%${det}`,'battery — click for details');
   }
   if(p.battery_cached!=null){
+    // Age is NOT shown in the pill — it trails the Stats row as plain text.
     const age=fmtAge(p.last_live_ts);
-    return batPill(p,'warn',`${p.battery_cached}%<span class="dim">${age?' '+age:''}</span>`,
+    return batPill(p,'warn',`${p.battery_cached}%`,
                    'watch off the bus — last reading'+(age?' '+age+' ago':''));
   }
   return '<span class="dim">&mdash;</span>';
@@ -484,7 +484,7 @@ function mkstrip(p,wearH){
   // 3. sparkline launcher — click for the battery timeline (click, not hover).
   if(p.serial)out+=sdot('dim spark',svgicon('trend'),'battery history',`openSpark('${p.serial}','${esc(p.codename||'')}',event)`);
   // 4. last-seen age when the watch is off the bus — a pill, since it is text.
-  if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="spill" title="last live ${fmtAge(p.last_live_ts)} ago">${fmtAge(p.last_live_ts)}</span>`;
+  if(p.adb!=='device'&&p.last_live_ts)out+=`<span class="lastseen" title="last live ${fmtAge(p.last_live_ts)} ago">${fmtAge(p.last_live_ts)}</span>`;
   return out?`<span class="strip">${out}</span>`:'';
 }
 function sparkSvg(pts){

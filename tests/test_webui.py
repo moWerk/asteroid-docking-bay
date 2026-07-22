@@ -313,11 +313,10 @@ def test_smart_column_is_pills_with_the_cycle_as_the_untested_state(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_stats_items_are_dots_and_the_age_is_a_pill(tmp_path):
+def test_stats_items_are_dots_and_the_age_trails_as_text(tmp_path):
     """Every stat icon is a dot — a glyph in a circle — for one visual language
-    with the power dot and the charging circle. The last-seen age, being text,
-    is a matching pill rather than a bare trailing string. No legacy icon spans
-    survive."""
+    with the power dot and the charging circle. The last-seen age is NOT a pill
+    or a dot; it trails the dots as plain text. No legacy icon spans survive."""
     import json
     h = tmp_path / "strip.js"
     h.write_text(_DOM_STUBS + JS +
@@ -332,7 +331,8 @@ def test_stats_items_are_dots_and_the_age_is_a_pill(tmp_path):
     assert 'class="sdot chg' in out["charging"], "charging op is not a dot"
     assert 'class="sdot dim spark"' in out["charging"], "sparkline is not a dot"
     assert 'class="sdot on"' in out["full"], "full-charge state is not a dot"
-    assert 'class="spill"' in out["off"], "last-seen age is not a pill"
+    assert 'class="lastseen"' in out["off"], "last-seen age is not trailing text"
+    assert "spill" not in out["off"], "last-seen age is still a pill"
     # The old icon-span classes are gone everywhere.
     for html in out.values():
         assert "svgw" not in html and 'class="ib' not in html, f"legacy icon span left: {html}"
@@ -353,9 +353,9 @@ def test_pills_dots_and_toggle_share_one_height_token():
         assert m, f"no standalone rule for {sel}"
         return m.group(1)
 
-    for sel in (".cbadge", ".sdot", ".smt", ".spill", ".tgl"):
+    for sel in (".cbadge", ".sdot", ".smt", ".tgl"):
         assert "var(--pill-h)" in rule(sel), f"{sel} does not use the shared height token"
-    for sel in (".cbadge", ".smt", ".spill"):
+    for sel in (".cbadge", ".smt"):
         assert "inline-block" in rule(sel), f"{sel} is not inline-block — long content won't wrap"
 
 
