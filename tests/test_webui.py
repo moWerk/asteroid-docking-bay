@@ -1064,3 +1064,29 @@ def test_settings_clock_spinners_and_persistence(tmp_path):
     assert o["spins"] == 5, "expected five spinners (hr min day mon year)"
     assert o["h"] == 11 and '<div class="spin-v">11</div>' in o["html"], \
         "the dialled spinner value did not survive a re-render"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_settings_quickpanel_icons_reflect_enable_state(tmp_path):
+    """The Quick panel group renders one icon-in-a-circle per toggle, full when
+    enabled and dimmed (no .on) when disabled, each with a name tooltip and a
+    click that flips it to the opposite state."""
+    import json
+    h = tmp_path / "qp.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "ctlSerial='S9';ctlName='sk';ctlTab='set';"
+                 "ctlSettings['S9']={ok:true,settings:[],quickpanel:["
+                 "{id:'wifiToggle',label:'Wifi',enabled:true,is_set:false},"
+                 "{id:'musicButton',label:'Music',enabled:false,is_set:true}]};"
+                 "renderControl({});"
+                 "console.log(JSON.stringify(global.__els['cc'].innerHTML));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "Quick panel" in html
+    assert 'title="Wifi"' in html and 'title="Music"' in html, "toggle name tooltips missing"
+    assert "quickpanelSet('wifiToggle',0)" in html, "enabled toggle should click to off"
+    assert "quickpanelSet('musicButton',1)" in html, "disabled toggle should click to on"
+    assert 'class="qpb on"' in html, "the enabled toggle is not shown active"
+    assert 'class="qpb"' in html, "the disabled toggle is not shown dimmed"

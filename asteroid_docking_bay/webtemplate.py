@@ -85,6 +85,12 @@ _WEB_TEMPLATE = """\
     .spin-v{font-variant-numeric:tabular-nums;font-size:15px;color:#c9d1d9;padding:1px 3px;min-width:24px;text-align:center}
     .spin-l{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.4px}
     .spin-sep{width:8px}
+    .qp{display:flex;flex-wrap:wrap;gap:8px;padding:6px 2px 10px}
+    .qpb{width:29px;height:29px;border-radius:50%;background:#30363d;border:0;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;color:#fff;opacity:.5}
+    .qpb.on{opacity:1}
+    .qpb:hover{background:#3a4149}
+    .qpb.busy{cursor:progress}
+    .qpi{width:80%;height:80%;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
     .cc-acts{padding:0 12px 12px}
     .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
     .cc-act:hover{background:#0d1f3a}
@@ -1121,6 +1127,37 @@ function settingsWrite(key,on){
     .then(r=>r.json()).then(d=>{if(!d.ok)toast('setting write failed');setTimeout(()=>settingsFetch(s),400);})
     .catch(()=>{toast('setting write failed');settingsFetch(s);});
 }
+// Quick-panel toggle mirror: each toggle is an icon in a grey circle, dimmed
+// when the toggle is disabled in the watch's quick panel and full when enabled;
+// a click flips it (the backend rewrites the whole dconf dict). Icons approximate
+// the watch's ios-* set (stroke, 24-grid); tooltips carry the toggle name (mo).
+const QPICONS={
+ lockButton:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+ settingsButton:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="7" cy="17" r="2"/>',
+ brightnessToggle:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+ bluetoothToggle:'<path d="M7 8l10 8-5 4V4l5 4L7 16"/>',
+ hapticsToggle:'<rect x="9" y="5" width="6" height="14" rx="1.5"/><path d="M5 9v6M19 9v6"/>',
+ wifiToggle:'<path d="M4.5 10.5a11 11 0 0 1 15 0M7.5 13.5a7 7 0 0 1 9 0M10.5 16.5a3 3 0 0 1 3 0"/><circle cx="12" cy="19" r=".7" fill="#fff" stroke="none"/>',
+ soundToggle:'<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9.5a4 4 0 0 1 0 5"/>',
+ cinemaToggle:'<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 9.5h16M4 14.5h16M9 5v14M15 5v14"/>',
+ aodToggle:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.4" fill="#fff" stroke="none"/>',
+ powerOffToggle:'<path d="M12 4v8"/><path d="M7.5 6.5a8 8 0 1 0 9 0"/>',
+ rebootToggle:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>',
+ musicButton:'<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5" fill="#fff" stroke="none"/><circle cx="16.5" cy="16" r="2.5" fill="#fff" stroke="none"/>',
+ flashlightButton:'<path d="M8 3h8l-1.5 5h-5L8 3z"/><path d="M9.5 8h5v8l-2.5 5-2.5-5V8z"/>'
+};
+function bodyQuickpanel(qp){
+  if(!qp||!qp.length)return '';
+  const btns=qp.map(t=>`<button class="qpb${t.enabled?' on':''}" title="${esc(t.label)}" onclick="quickpanelSet('${t.id}',${t.enabled?0:1})"><svg class="qpi" viewBox="0 0 24 24">${QPICONS[t.id]||''}</svg></button>`).join('');
+  return `<div class="cc-sec"><div class="cc-sech">Quick panel</div><div class="qp">${btns}</div></div>`;
+}
+function quickpanelSet(id,on){
+  const s=ctlSerial;
+  document.querySelectorAll('#cc .qpb').forEach(b=>b.classList.add('busy'));
+  fetch('/api/watch/'+encodeURIComponent(s)+'/quickpanel/'+id+'/'+(on?'on':'off'),{method:'POST'})
+    .then(r=>r.json()).then(d=>{if(!d.ok)toast('quickpanel write failed');setTimeout(()=>settingsFetch(s),400);})
+    .catch(()=>{toast('quickpanel write failed');settingsFetch(s);});
+}
 // ── Clock (arbitrary time) — the top of the Settings tab ────────────────────
 // Spinners for hour/min and day/month/year, each reacting to the mouse wheel
 // and to its ▲▼, matching the watch's own spinner UI. The dialled value lives
@@ -1163,7 +1200,7 @@ function bodyClock(d){
       `<button class="cc-act mini" id="cc-time" onclick="ccSyncTime()" title="reset the watch clock + timezone to the host">Sync from host</button>`+
     `</div></div>`;
 }
-function bodySet(d){return bodyClock(d)+bodySetGroups();}
+function bodySet(d){return bodyClock(d)+bodyQuickpanel((ctlSettings[ctlSerial]||{}).quickpanel)+bodySetGroups();}
 function bodySetGroups(){
   const st=ctlSettings[ctlSerial];
   if(!st)return `<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`;
