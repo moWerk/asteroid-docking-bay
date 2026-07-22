@@ -204,7 +204,7 @@ _WEB_TEMPLATE = """\
     .smt.unk{border-color:#1f6feb;color:#388bfd;cursor:pointer}
     .smt.unk:hover:not(:disabled){background:#0d2136}
     .smt.unk:disabled{opacity:.35;cursor:default}
-    .cbadge.life{font-size:10px;margin-left:6px;letter-spacing:.3px}
+    .cbadge.life{margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
     .cbadge.life.booting{border-color:#c9d1d9;color:#f0f6fc;animation:bootpulse 1.2s ease-in-out infinite}
