@@ -65,9 +65,7 @@ _WEB_TEMPLATE = """\
     .cc-act:hover{background:#0d1f3a}
     .cc-act.done{border-color:#3fb950;color:#3fb950}
     /* Row action floating menus */
-    .btn.pw{border-color:#f0883e;color:#fff}
-    .btn.pw:hover{background:#2a1a0e}
-    .menu{position:fixed;z-index:110;display:none;min-width:172px;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
+    .menu{position:fixed;z-index:110;display:none;min-width:172px;max-height:calc(100vh - 24px);overflow-y:auto;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
     .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
     .menu-item:hover:not(:disabled){filter:brightness(1.4);border-color:#30363d}
     .menu-item:disabled{opacity:.38;cursor:default}
@@ -82,6 +80,12 @@ _WEB_TEMPLATE = """\
     .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
+    .menu-item.wear{color:#e0a5b5;background:rgba(224,138,158,.07)}
+    /* Execute menu: former buttons become group headers, items indented under. */
+    .exgrp-hd{padding:7px 10px 3px;font-size:10px;font-weight:700;color:#8b949e;
+      text-transform:uppercase;letter-spacing:.6px;border-top:1px solid #21262d;margin-top:3px}
+    .exgrp-hd:first-child{border-top:none;margin-top:0}
+    .exgrp{padding-left:9px}
     /* Prominent, non-clickable IP banner at the top of the workbench menu —
        the address you actually need to reach the watch over SSH/WiFi. */
     .menu-ip{display:block;width:100%;text-align:center;padding:7px 10px;margin:1px 0 3px;
@@ -200,11 +204,8 @@ _WEB_TEMPLATE = """\
     .hrb{border-color:#d29922;color:#d29922}.hrb:hover{background:#2a2113}
     .hbl{border-color:#58a6ff;color:#58a6ff}.hbl:hover{background:#111d2e}
     .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
-    .btn.dr{border-color:#388bfd;color:#388bfd}
-    .btn.wb{border-color:#bc8cff;color:#fff}.btn.wb:hover{background:#1d1430}
-    /* Wear: pinkish (skin). Filled when armed. A worn row dims but stays. */
-    .btn.wear{border-color:#e08a9e;color:#e0a5b5}.btn.wear:hover{background:#2a1a1f}
-    .btn.wear.on{background:#e08a9e;color:#1a1416;border-color:#e08a9e}
+    .btn.ex{border-color:#58a6ff;color:#58a6ff}.btn.ex:hover{background:#122132}
+    /* A worn row dims but stays. */
     .wr.worn td{opacity:.5}
     .wr.worn:hover td{opacity:.62}
     /* Instant feedback: a clicked action element pulses until the next update
@@ -618,7 +619,6 @@ function render(data){
         const isFb=p.adb==='fastboot';
         const logActive=!!(srcs[slot]||p.flashing);
         const busy=!!(logActive||charging||draining||wb);
-        const d=(busy||p.excluded)?' disabled':'';
         const noSw=p.smart===false;
         // Refresh doubles as "power on and identify" only where that is both
         // possible and wanted: a switchable port that is currently off and not
@@ -675,11 +675,7 @@ function render(data){
             :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td id="act-${slot}">` +
-          `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
-          `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
-          `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
-          (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}','${p.ssh_ip||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
-          (!isFb&&p.serial?`<button class="btn wear${p.wear?' on':''}"${p.excluded?' disabled':''} onclick="pulseSelf(this);doWear('${slot}',${p.wear?0:1})" title="${p.wear?'wear armed — port held for re-docking; click to release and free the port':'wear: top up and hold this port so the watch is ready to take off the rig'}">Wear</button>`:'')+
+          `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute &#9662;</button>` +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -1124,22 +1120,27 @@ function loadShot(serial,res){
 function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeCC();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
-function menuPower(ev,slot,charging,draining,powered,noSw){
-  openMenu(ev,
-    (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
+// The row's actions fold into one Execute menu: each former button becomes a
+// group header, its items listed indented beneath, all visible at once (no
+// nested submenus). Each group is a content-builder returning just its items;
+// menuExecute composes them under headers. grpHd is a header, grpBox indents a
+// group's items beneath it.
+function grpHd(label){return `<div class="exgrp-hd">${label}</div>`;}
+function grpBox(items){return `<div class="exgrp">${items}</div>`;}
+function grpPower(slot,charging,draining,powered,noSw){
+  return (charging?mi('ch','Stop charge',`doStopCharge('${slot}')`):mi('ch','Charge',`doCharge('${slot}')`,noSw))+
     (draining?mi('dr','Stop drain test',`doStopDrain('${slot}')`):mi('dr','Drain test',`doDrain('${slot}')`,noSw))+
     '<div class="menu-sep"></div>'+
     (powered?mi('po','Power off',`doPoweroff('${slot}')`):'')+
     mi('rb','Reboot',`doReboot('${slot}')`)+
-    mi('bl','Bootloader',`doBootloader('${slot}')`));
+    mi('bl','Bootloader',`doBootloader('${slot}')`);
 }
 // A watch in the bootloader used to get no Power menu at all — a dead end in
 // the UI exactly where the watch needs steering. The same intents apply, they
 // just travel over fastboot; charge and drain are omitted because both need
 // battery reads the bootloader does not serve.
-function menuPowerFb(ev,slot,powered){
-  openMenu(ev,
-    '<div class="menu-hd">in bootloader — fastboot actions</div>'+
+function grpPowerFb(slot,powered){
+  return '<div class="menu-hd">in bootloader — fastboot actions</div>'+
     mi('rb','Continue boot',`doContinue('${slot}')`)+
     mi('rb','Reboot',`doReboot('${slot}')`)+
     '<div class="menu-sep"></div>'+
@@ -1153,9 +1154,9 @@ function menuPowerFb(ev,slot,powered){
     // directly. Showing it greyed with the manual route is honest; hiding it
     // would imply the watch cannot be powered off, which is false.
     (powered?'<div class="menu-sep"></div>'+mi('po','Power off',null,true,
-      'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):''));
+      'unavailable — select and confirm "Power off" in the fastboot on-screen menu'):'');
 }
-function menuWorkbench(ev,slot,serial,wb,mode,sshIp){
+function grpWorkbench(slot,serial,wb,mode,sshIp){
   const online=mode==='device';
   // The address to reach this watch over SSH/WiFi — the single most useful
   // thing to have while working on it. Shown as a prominent non-clickable
@@ -1176,8 +1177,7 @@ function menuWorkbench(ev,slot,serial,wb,mode,sshIp){
   else
     usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
                  'watch must be on ADB to switch it to SSH mode');
-  openMenu(ev,
-    ipBanner+
+  return ipBanner+
     '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+
@@ -1186,11 +1186,10 @@ function menuWorkbench(ev,slot,serial,wb,mode,sshIp){
     mi('info','Set time from host',`doSetTime('${serial}')`,!online)+
     mi('info','Screenshot',`doScreenshot('${serial}')`,!online)+
     mi('info','Test notification',`doNotify('${serial}')`,!online)+
-    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online));
+    mi('info','Collect diagnostics',`doDiag('${slot}')`,!online);
 }
-function menuFlash(ev,slot){
-  openMenu(ev,
-    mi('','Backup data',`doBackup('${slot}')`)+
+function grpFlash(slot){
+  return mi('','Backup data',`doBackup('${slot}')`)+
     mi('','Restore data',`doRestore('${slot}')`)+
     mi('info','Fastboot report',`doFbReport('${slot}')`)+
     '<div class="menu-sep"></div>'+
@@ -1199,7 +1198,15 @@ function menuFlash(ev,slot){
     mi('',"Flash 2.0",`doFlV('${slot}','2.0')`)+
     '<div class="menu-sep"></div>'+
     mi('','Dump mmcblk0',`doDump('${slot}')`,true,'not yet implemented')+
-    mi('','Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented'));
+    mi('','Restore from dump',`doRestoreDump('${slot}')`,true,'not yet implemented');
+}
+function menuExecute(ev,slot,isFb,charging,draining,powered,noSw,serial,wb,mode,sshIp,wear,needPwr){
+  openMenu(ev,
+    grpHd('Refresh')+grpBox(mi('','Re-identify / power on',`doRefresh('${slot}',${needPwr})`))+
+    grpHd('Power')+grpBox(isFb?grpPowerFb(slot,powered):grpPower(slot,charging,draining,powered,noSw))+
+    grpHd('Flashing')+grpBox(grpFlash(slot))+
+    (!isFb?grpHd('Workbench')+grpBox(grpWorkbench(slot,serial,wb,mode,sshIp)):'')+
+    (!isFb&&serial?grpHd('Wear')+grpBox(wear?mi('wear','Release wear',`doWear('${slot}',0)`):mi('wear','Arm wear (hold band)',`doWear('${slot}',1)`)):''));
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element

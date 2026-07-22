@@ -223,8 +223,9 @@ def test_refresh_button_powers_only_an_off_switchable_port(tmp_path):
     assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
     html = json.loads(r.stdout.strip().splitlines()[-1])
 
-    flags = dict(re.findall(r"doRefresh\('([^']+)',(true|false)\)", html))
-    assert flags, f"no doRefresh wiring found in rendered rows:\n{html[:400]}"
+    # Refresh folded into the Execute menu; needPwr is the last menuExecute arg.
+    flags = dict(re.findall(r"menuExecute\(event,'([^']+)',[^)]*,(true|false)\)", html))
+    assert flags, f"no menuExecute wiring found in rendered rows:\n{html[:400]}"
     # skipjack is powered on -> refresh must stay a plain re-read
     assert flags.get("1-2:1") == "false", (
         f"refresh on an already-powered port asks to power it again: {flags}")
@@ -287,16 +288,47 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_execute_menu_folds_every_group_under_a_header(tmp_path):
+    """The single Execute button opens one menu holding all former action
+    buttons as grouped, indented headers — every option visible at once, no
+    nested submenus. The fastboot variant swaps in the bootloader power group
+    and drops Workbench/Wear (which need a booted watch)."""
+    import json
+    h = tmp_path / "ex.js"
+    ev = ("{stopPropagation(){},currentTarget:{getBoundingClientRect:()=>"
+          "({left:0,right:0,top:0,bottom:0})}}")
+    h.write_text(_DOM_CAPTURE + JS +
+                 f"\nmenuExecute({ev},'1-2:1',false,false,false,true,false,"
+                 "'S9',false,'device','192.168.13.37',0,true);"
+                 "const on=global.__els['menu'].innerHTML;"
+                 f"menuExecute({ev},'1-2:1',true,false,false,true,false,"
+                 "'S9',false,'fastboot','',0,true);"
+                 "const fb=global.__els['menu'].innerHTML;"
+                 "console.log(JSON.stringify({on,fb}));\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    on = out["on"]
+    for hd in ("Refresh", "Power", "Flashing", "Workbench", "Wear"):
+        assert f'class="exgrp-hd">{hd}<' in on, f"missing group header {hd}: {on[:200]}"
+    # A representative item from each group survived the fold.
+    for item in ("Re-identify", "Reboot", "Backup data", "Checkout", "Arm wear"):
+        assert item in on, f"folded menu lost {item!r}"
+    # Fastboot: bootloader power group in, watch-only groups out.
+    fb = out["fb"]
+    assert "Continue boot" in fb and 'class="exgrp-hd">Workbench<' not in fb
+    assert 'class="exgrp-hd">Wear<' not in fb
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_workbench_menu_shows_the_usb_ip_banner(tmp_path):
     """The watch's SSH address is the most useful thing to have while working
     on it, so the workbench menu leads with a prominent non-clickable IP
     banner — deliberately redundant with the row badge."""
     import json
     h = tmp_path / "wb.js"
-    # Stub openMenu to capture the HTML it is handed.
     h.write_text(_DOM_STUBS + JS +
-                 "\nlet CAP='';openMenu=function(ev,html){CAP=html;};"
-                 "menuWorkbench({}, '1-2:1','S9', false,'ssh','192.168.13.37');"
+                 "\nconst CAP=grpWorkbench('1-2:1','S9',false,'ssh','192.168.13.37');"
                  "console.log(JSON.stringify(CAP));\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
@@ -610,15 +642,15 @@ def test_stale_endpoint_and_paintstale_are_wired():
 
 
 def test_action_buttons_pulse_on_click_for_instant_feedback():
-    """A clicked action button (power toggle, cycle, wear) must give instant
-    feedback while the command is in flight — pulseSelf(this) — since the state
-    only updates on the next refresh cycle."""
+    """A clicked in-row action button (the power toggle, the cycle icon) must
+    give instant feedback while the command is in flight — pulseSelf(this) —
+    since the state only updates on the next refresh cycle. (Menu actions close
+    the menu and toast instead, so they do not pulse.)"""
     assert "function pulseSelf(" in JS
-    # the persistent row toggles wire it
+    # the persistent row toggles wire it — mapped and empty rows, power + cycle
     assert JS.count("pulseSelf(this);") >= 3, "not all row toggles pulse on click"
     assert "pulseSelf(this);${pwrFn}" in JS, "power toggle lacks instant feedback"
     assert "pulseSelf(this);doCy(" in JS, "cycle button lacks instant feedback"
-    assert "pulseSelf(this);doWear(" in JS, "wear button lacks instant feedback"
 
 
 def test_failed_actions_flash_red():
