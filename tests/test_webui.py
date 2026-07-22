@@ -338,13 +338,18 @@ def test_stats_items_are_dots_and_the_age_is_a_pill(tmp_path):
         assert "svgw" not in html and 'class="ib' not in html, f"legacy icon span left: {html}"
 
 
-def test_pills_and_dots_share_one_height_token():
-    """Every in-row pill and glyph-dot draws its height from one --pill-h token
-    so they line up; change it once and all follow (widths stay content-driven)."""
+def test_pills_dots_and_toggle_share_one_height_token():
+    """Every in-row pill, glyph-dot and the port toggle draw their height from
+    one --pill-h token (the toggle is the reference size), so they line up;
+    change it once and all follow. Pills stay inline-block so long content wraps
+    to a second inner line instead of forcing the table wider than the viewport."""
     assert "--pill-h:" in _WEB_TEMPLATE, "no shared pill-height token"
-    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{"):
+    for cls in (".cbadge{", ".sdot{", ".smt{", ".spill{", ".tgl{"):
         block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
         assert "var(--pill-h)" in block, f"{cls} does not use the shared height token"
+    for cls in (".cbadge{", ".smt{", ".spill{"):
+        block = _WEB_TEMPLATE.split(cls, 1)[1].split("}")[0]
+        assert "inline-block" in block, f"{cls} is not inline-block — long content won't wrap"
 
 
 def test_execute_trigger_is_a_markerless_pill():

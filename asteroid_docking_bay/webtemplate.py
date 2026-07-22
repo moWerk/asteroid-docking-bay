@@ -110,7 +110,7 @@ _WEB_TEMPLATE = """\
     .sdot{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
       width:var(--pill-h);height:var(--pill-h);border-radius:50%;border:1px solid;font-size:var(--pill-fs);
       line-height:1;vertical-align:middle;flex:none}
-    .sdot .svgi{width:12px;height:12px;vertical-align:0}
+    .sdot .svgi{width:14px;height:14px;vertical-align:0}
     .sdot.on{border-color:#3fb950;color:#3fb950}
     .sdot.err{border-color:#f85149;color:#f85149}
     .sdot.warn{border-color:#d29922;color:#d29922}
@@ -119,9 +119,9 @@ _WEB_TEMPLATE = """\
     .sdot.drain{border-color:#3d4756;color:#8b949e;animation:drainpulse 1.4s ease-in-out infinite}
     .sdot.spark{cursor:pointer}.sdot.spark:hover{background:rgba(88,166,255,.12)}
     @keyframes drainpulse{0%,100%{opacity:.3}50%{opacity:.85}}
-    .spill{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);
-      padding:0 var(--pill-px);border-radius:var(--pill-r);border:1px solid #3d4756;
-      color:#8b949e;font-size:10px;vertical-align:middle}
+    .spill{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);line-height:1.5;
+      padding:2px var(--pill-px);border-radius:var(--pill-r);border:1px solid #3d4756;
+      color:#8b949e;font-size:var(--pill-fs);vertical-align:middle}
     .spark-hd{padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap}
     .spark-svg{display:block;padding:2px 8px 8px;background:#0d1117}
     .wimg{position:fixed;z-index:120;display:none;
@@ -168,20 +168,24 @@ _WEB_TEMPLATE = """\
     .cc.stale-cc .cc-tgl,.cc.stale-cc .cc-act{opacity:.4;pointer-events:none}   /* offline: controls do nothing, so block + dim them */
     .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
     .don{background:#3fb950}.doff{background:#30363d}
-    /* One set of tokens for every in-row pill and glyph-dot, so they all share
-       a height (widths stay content-driven) and a look. Change them here, not
-       per class. */
-    :root{--pill-h:20px;--pill-r:10px;--pill-px:9px;--pill-fs:11px}
+    /* One set of tokens for every in-row pill, glyph-dot and the port toggle,
+       so they all share a height (widths stay content-driven) and a look.
+       --pill-h is the port-toggle height — the toggle is the reference size and
+       reads it back below. Single-line pills meet this height; a pill whose
+       content is too long still wraps to two inner lines and grows. */
+    :root{--pill-h:24px;--pill-r:12px;--pill-px:9px;--pill-fs:12px}
     /* Connection-column badges for the abnormal USB modes, so a watch sitting
        in the bootloader or SSH/developer mode stands out from a normal ADB row. */
-    .cbadge{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;vertical-align:middle;background:transparent;font-family:inherit}
+    /* Pills are inline-block, not flex, so long content (Connection, Battery)
+       wraps to a second inner line instead of forcing the column — and the
+       table — wider than the viewport. min-height (not height) holds the
+       single-line size; a wrapped pill grows past it. */
+    .cbadge{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;vertical-align:middle;background:transparent;font-family:inherit}
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
-    /* Lifecycle pill by the codename — the one power-state we can assert:
-       "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
-    .smt{display:inline-flex;align-items:center;box-sizing:border-box;height:var(--pill-h);padding:0 var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
+    .smt{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
     /* Smart type is blue, not green — green is reserved for the power/charge
        states so it keeps its weight. The known type (ppps) is the brighter
        tone; the untested cycle is a darker shade of the same blue (it is an
@@ -191,7 +195,7 @@ _WEB_TEMPLATE = """\
     .smt.unk{border-color:#1f6feb;color:#388bfd;cursor:pointer}
     .smt.unk:hover:not(:disabled){background:#0d2136}
     .smt.unk:disabled{opacity:.35;cursor:default}
-    .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
+    .cbadge.life{font-size:10px;margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
     .cbadge.life.booting{border-color:#c9d1d9;color:#f0f6fc;animation:bootpulse 1.2s ease-in-out infinite}
@@ -207,7 +211,9 @@ _WEB_TEMPLATE = """\
     button.cbadge{cursor:pointer}
     button.cbadge.ssh:hover{background:#2a2113}
     button.cbadge.adb:hover{background:#122117}
-    .tgl{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid;padding:3px 9px 3px 6px;border-radius:20px;cursor:pointer;font:12px monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
+    /* The port toggle is the reference the pill height comes from — it reads
+       --pill-h back so it and every pill/dot stay the same height together. */
+    .tgl{display:inline-flex;align-items:center;justify-content:center;gap:4px;box-sizing:border-box;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .12s}
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
