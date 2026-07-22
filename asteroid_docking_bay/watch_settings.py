@@ -163,7 +163,13 @@ def quickpanel_ids():
 
 def quickpanel_write_arg(states):
     """Serialize a full {id: bool} map → the dconf gvariant dict literal for the
-    enabled key. Every catalog id is emitted so the written dict is complete."""
-    body = ", ".join(f"'{tid}': {'true' if states.get(tid) else 'false'}"
+    enabled key. Every catalog id is emitted so the written dict is complete.
+
+    The values are variant-wrapped (`<true>`), making the type a{sv}, NOT a{sb}:
+    Nemo's ConfigurationValue stores this key as a QVariantMap, which round-trips
+    as a{sv}. A plain a{sb} write reads back empty in the launcher, which then
+    builds an empty quick panel (verified on skipjack — a{sb} emptied the panel,
+    a{sv} restored it)."""
+    body = ", ".join(f"'{tid}': <{'true' if states.get(tid) else 'false'}>"
                      for tid, _, _ in QUICKPANEL)
     return "{" + body + "}"

@@ -186,11 +186,13 @@ def test_quickpanel_dict_parse_and_default_merge():
     assert rows["musicButton"]["enabled"] is True
 
 
-def test_quickpanel_write_arg_is_a_complete_dict():
+def test_quickpanel_write_arg_is_a_complete_variant_dict():
     from asteroid_docking_bay.watch_settings import QUICKPANEL, quickpanel_write_arg
-    arg = quickpanel_write_arg({"wifiToggle": False})
+    arg = quickpanel_write_arg({"wifiToggle": False, "bluetoothToggle": True})
     assert arg.startswith("{") and arg.endswith("}")
-    assert "'wifiToggle': false" in arg
+    # Variant-wrapped values (a{sv}) — a plain a{sb} reads back empty in the
+    # launcher and empties the quick panel (verified on skipjack).
+    assert "'wifiToggle': <false>" in arg and "'bluetoothToggle': <true>" in arg
     assert all(f"'{tid}'" in arg for tid, _, _ in QUICKPANEL), "the written dict is not complete"
 
 
