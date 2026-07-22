@@ -160,7 +160,7 @@ _WEB_TEMPLATE = """\
     .pcell .tgl{margin-right:8px}
     /* Smart pills vary in width (ppps / NO! / cycle), so centre them in a
        slightly tighter column. */
-    .smtc{text-align:center}
+    .smtc,.batc{text-align:center}
     td.smtc{padding-left:6px;padding-right:6px}
     .wr:hover td{background:#161b22}
     .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
@@ -322,7 +322,7 @@ _WEB_TEMPLATE = """\
   <table>
     <thead><tr>
       <th>Port</th><th class="smtc">Smart</th><th>Connection</th>
-      <th></th><th>Watch</th><th>Stats</th><th>Battery</th><th>Actions</th>
+      <th></th><th>Watch</th><th>Stats</th><th class="batc">Battery</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -644,7 +644,7 @@ function render(data){
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
-          `<td class="dim">&mdash;</td>` +
+          `<td class="dim batc">&mdash;</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
@@ -717,7 +717,7 @@ function render(data){
             ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
             :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
-          `<td id="bat-${slot}">${bat}</td>` +
+          `<td class="batc" id="bat-${slot}">${bat}</td>` +
           `<td id="act-${slot}">` +
           `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">Execute</button>` +
           `</td></tr>` +
