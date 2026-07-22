@@ -447,6 +447,18 @@ def test_boot_pill_shows_in_connection_column_and_outranks_no_link(tmp_path):
     assert ">not enumerating<" in out["plain"]
 
 
+def test_column_order_is_the_ground_truth_order():
+    """Columns run in the fleet's ground-truth order: the port everything
+    originates from, its controls (power, smart), then the connection/battery
+    state that leads over to the watch, then the watch itself, its stats, and
+    actions last. The two blank leading headers are the tree glyph and the
+    thumbnail."""
+    m = re.search(r"<thead>.*?</thead>", _WEB_TEMPLATE, re.S)
+    labels = [t for t in re.findall(r"<th>([^<]*)</th>", m.group(0)) if t.strip()]
+    assert labels == ["Port", "Power", "Smart", "Connection",
+                      "Battery", "Watch", "Stats", "Actions"], labels
+
+
 def test_usb_preference_toggle_is_present_with_a_bullet_tooltip():
     """The situational adb/ssh preference lives as a third top-bar link with a
     tooltip spelling out the consequences in bullets."""

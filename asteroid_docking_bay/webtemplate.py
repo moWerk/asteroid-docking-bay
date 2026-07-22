@@ -230,8 +230,11 @@ _WEB_TEMPLATE = """\
     @keyframes pwrwarn{0%,100%{background:transparent}40%{background:rgba(248,81,73,.12)}}
     .wr.pwr-warn td{animation:pwrwarn 1.8s ease-in-out 2}
     /* Phones: stack each row into a slim card — one labelled line per field —
-       instead of a wide table that scrolls sideways. Column order is fixed, so
-       the field labels come from :nth-child; no markup change needed. */
+       instead of a wide table that scrolls sideways. The desktop column order
+       is the fleet's ground-truth order (port → power → … → watch); a card
+       reads better name-first, so the card is a flex column that pulls the
+       thumbnail and codename to the top with `order`, and the field labels
+       come from :nth-child renumbered to the new column positions. */
     @media (max-width:720px){
       /* One card per screen is expected, so size up for legibility and touch —
          desktop's 11-13px is unreadable on a phone. */
@@ -241,26 +244,26 @@ _WEB_TEMPLATE = """\
       table,tbody,tr,td{display:block;width:auto}
       thead{display:none}
       .hub-hdr td{padding:14px 4px 4px;font-size:13px}
-      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 12px;padding:4px 14px}
+      .wr{border:1px solid #21262d;border-radius:8px;margin:0 0 12px;padding:4px 14px;
+          display:flex;flex-direction:column}
       .wr:hover td{background:transparent}
       .wr td{border:none;padding:9px 0;display:flex;justify-content:space-between;
              align-items:center;gap:14px;text-align:right;font-size:16px}
       .wr td.tc{display:none}                                   /* tree is meaningless when stacked */
-      .wr td:nth-child(2){display:block;float:left;margin:8px 12px 0 0;padding:0;border:none}
-      .wr td:nth-child(2) .wthumb{width:44px;height:44px}       /* thumb beside the title */
-      .wr td:nth-child(3){display:block;text-align:left;font-weight:700;font-size:20px;
-                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}
-      .wr td:nth-child(4){clear:both}                            /* fields start below the thumb */
+      .wr td:nth-child(7){order:-2;display:block;margin:8px 0 0;padding:0;border:none}  /* thumb, card top */
+      .wr td:nth-child(7) .wthumb{width:44px;height:44px}
+      .wr td:nth-child(8){order:-1;display:block;text-align:left;font-weight:700;font-size:20px;
+                          padding:12px 0;border-bottom:1px solid #161b22;overflow:hidden}  /* codename title */
       .wr td.stats:empty{display:none}                           /* no stats read yet → no blank row */
-      .wr td:nth-child(4)::before{content:"Stats"}
-      .wr td:nth-child(5)::before{content:"Port"}
-      .wr td:nth-child(6)::before{content:"Power"}
-      .wr td:nth-child(7)::before{content:"Smart"}
-      .wr td:nth-child(8)::before{content:"Connection"}
-      .wr td:nth-child(9)::before{content:"Battery"}
+      .wr td:nth-child(2)::before{content:"Port"}
+      .wr td:nth-child(3)::before{content:"Power"}
+      .wr td:nth-child(4)::before{content:"Smart"}
+      .wr td:nth-child(5)::before{content:"Connection"}
+      .wr td:nth-child(6)::before{content:"Battery"}
+      .wr td:nth-child(9)::before{content:"Stats"}
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
-      .wr td:nth-child(10){display:block;text-align:left;padding-top:10px}  /* actions span the card */
+      .wr td:nth-child(10){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
       /* Bigger, tappable controls */
       .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .ico{font-size:15px;width:2.6em;height:2.6em;padding:0;margin:3px .3em}
@@ -281,8 +284,8 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th></th><th></th><th>Watch</th><th>Stats</th><th>Port</th><th>Power</th><th>Smart</th>
-      <th>Connection</th><th>Battery</th><th>Actions</th>
+      <th></th><th>Port</th><th>Power</th><th>Smart</th><th>Connection</th><th>Battery</th>
+      <th></th><th>Watch</th><th>Stats</th><th>Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -576,14 +579,14 @@ function render(data){
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
-          `<td class="thumb">${mkthumb(p)}</td>` +
-          `<td>${nameCell}</td>` +
-          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="dim">&mdash;</td>` +
+          `<td class="thumb">${mkthumb(p)}</td>` +
+          `<td>${nameCell}</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
@@ -650,16 +653,16 @@ function render(data){
         rows.push(
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
           `<td class="tc">${tree}</td>` +
-          `<td class="thumb">${mkthumb(p)}</td>` +
-          `<td>`+(p.serial
-            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
-            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
-          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
           `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
+          `<td class="thumb">${mkthumb(p)}</td>` +
+          `<td>`+(p.serial
+            ?`<b class="cn" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
+            :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+          `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td id="act-${slot}">` +
           `<button class="ico${isRef?' pulsing':''}"${d} onclick="doRefresh('${slot}',${needPwr})" title="${needPwr?'power on and identify this port':'refresh / re-identify this port'}">&#x21BB;</button>` +
           `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
