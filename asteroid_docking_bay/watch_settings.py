@@ -134,13 +134,16 @@ QUICKPANEL = [
 
 
 def parse_gvariant_dict(raw):
-    """A dconf-dump dict literal {'a': true, 'b': false} → {a: bool}. Anything
-    that is not a quoted-key/boolean pair is ignored, so a malformed or partial
-    dict degrades to what it could parse rather than raising."""
+    """A dconf-dump dict literal → {key: bool}. Handles both a{sb} (`'a': true`)
+    and the a{sv} form this key is actually stored as (`'a': <true>`, values
+    variant-wrapped) — the reader must accept the same type the writer emits, or
+    every value reads back as absent and the UI shows defaults. Anything that is
+    not a quoted-key/boolean pair is ignored, so a partial dict degrades to what
+    it could parse rather than raising."""
     if not isinstance(raw, str):
         return {}
     return {m.group(1): m.group(2) == "true"
-            for m in re.finditer(r"'([^']+)'\s*:\s*(true|false)", raw)}
+            for m in re.finditer(r"'([^']+)'\s*:\s*<?(true|false)>?", raw)}
 
 
 def quickpanel_state(dump_text):

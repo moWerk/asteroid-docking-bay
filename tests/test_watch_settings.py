@@ -175,12 +175,17 @@ def test_set_datetime_validates_before_touching_the_watch(monkeypatch):
 
 def test_quickpanel_dict_parse_and_default_merge():
     from asteroid_docking_bay.watch_settings import parse_gvariant_dict, quickpanel_state
+    # Both the plain a{sb} form and the a{sv} variant form the key is stored as.
     assert parse_gvariant_dict("{'wifiToggle': true, 'musicButton': false}") == \
+        {"wifiToggle": True, "musicButton": False}
+    assert parse_gvariant_dict("{'wifiToggle': <true>, 'musicButton': <false>}") == \
         {"wifiToggle": True, "musicButton": False}
     rows = {r["id"]: r for r in quickpanel_state("")}          # empty dump = defaults
     assert rows["wifiToggle"]["enabled"] is True and rows["wifiToggle"]["is_set"] is False
     assert rows["musicButton"]["enabled"] is False             # music defaults off
-    dump = "[desktop/asteroid/quickpanel]\nenabled={'wifiToggle': false, 'musicButton': true}\n"
+    # A real dump stores the dict as a{sv} — the reader must accept it, else
+    # every value reads back absent and the UI shows defaults over the truth.
+    dump = "[desktop/asteroid/quickpanel]\nenabled={'wifiToggle': <false>, 'musicButton': <true>}\n"
     rows = {r["id"]: r for r in quickpanel_state(dump)}
     assert rows["wifiToggle"]["enabled"] is False and rows["wifiToggle"]["is_set"] is True
     assert rows["musicButton"]["enabled"] is True
