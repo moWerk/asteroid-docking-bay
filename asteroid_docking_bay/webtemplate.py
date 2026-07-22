@@ -218,6 +218,18 @@ _WEB_TEMPLATE = """\
     .cbadge.bat.warn{border-color:#d29922;color:#d29922}
     .cbadge.bat.low{border-color:#f85149;color:#f85149}
     button.cbadge.bat:hover{background:rgba(255,255,255,.05)}
+    /* Battery gauge: fixed width (~the column title), grey outline, a fill that
+       grows left→right. The fill is coloured only when connected; grey when off. */
+    .batw{position:relative;display:inline-block;box-sizing:border-box;width:68px;height:var(--pill-h);
+      border-radius:var(--pill-r);border:1px solid #3d4756;background:none;overflow:hidden;
+      cursor:pointer;font:var(--pill-fs) monospace;color:#c9d1d9;vertical-align:middle;padding:0}
+    .batw:hover{filter:brightness(1.18)}
+    .batfill{position:absolute;top:0;left:0;bottom:0;width:0;background:rgba(120,130,145,.28);transition:width .4s ease}
+    .batw.high .batfill{background:rgba(63,185,80,.32)}
+    .batw.ok .batfill{background:rgba(210,153,34,.30)}
+    .batw.low .batfill{background:rgba(248,81,73,.34)}
+    .batw.off .batfill{background:rgba(120,130,145,.28)}
+    .batlbl{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;height:100%}
     /* Clickable badges are real <button>s so the cursor is a pointer, not a
        text caret; the non-clickable ones stay <span>s. */
     button.cbadge{cursor:pointer}
@@ -463,19 +475,21 @@ function fmtAge(ts){
 function mkbatCell(p,lo,hi){
   // Prefer the live reading; when the watch is off the bus fall back to the
   // last-seen value shown stale (amber) with its age, not a blank cell.
-  if(p.battery!=null){
-    // "Full" is redundant with 100% and the Stats full-charge dot — drop it.
-    const cs=p.charge_status;
-    const det=(cs&&cs!=='Full')?` <span class="dim">${esc(cs)}</span>`:'';
-    return batPill(p,batBand(p.battery,lo,hi),`${p.battery}%${det}`,'battery — click for details');
-  }
-  if(p.battery_cached!=null){
-    // Age is NOT shown in the pill — it trails the Stats row as plain text.
-    const age=fmtAge(p.last_live_ts);
-    return batPill(p,'warn',`${p.battery_cached}%`,
-                   'watch off the bus — last reading'+(age?' '+age+' ago':''));
-  }
-  return '<span class="dim">&mdash;</span>';
+  // A battery gauge: a fixed-width cell with a fill that grows left→right by
+  // charge level. Light grey by default; the fill is coloured by the real
+  // charge (red/amber/green) ONLY when the watch is connected. Offline shows
+  // the last level in grey — a level, not a colour claim. The charge STATE is
+  // carried by the Stats charge dot, so it is not repeated here.
+  const connected=p.battery!=null;
+  const pct=connected?p.battery:p.battery_cached;
+  if(pct==null)return '<span class="dim">&mdash;</span>';
+  const band=connected?(batBand(p.battery,lo,hi)||'high'):'off';
+  const age=fmtAge(p.last_live_ts);
+  const tip=connected?'battery — click for details'
+    :('watch off the bus — last reading'+(age?' '+age+' ago':''));
+  const clk=p.serial?` onclick="openBI('${esc(p.serial)}','${esc(p.codename||p.serial)}',event)"`:'';
+  const w=Math.max(0,Math.min(100,pct));
+  return `<button class="batw ${band}"${clk} title="${tip}"><span class="batfill" style="width:${w}%"></span><span class="batlbl">${pct}%</span></button>`;
 }
 function mkthumb(p){
   // Product photo thumbnail; removes itself if the watch has no image (404).

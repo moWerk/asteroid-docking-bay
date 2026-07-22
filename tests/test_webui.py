@@ -514,21 +514,25 @@ def test_control_center_no_longer_carries_the_network_section(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_battery_cell_is_a_clickable_pill_opening_battery_info(tmp_path):
-    """The battery cell is a pill: percent plus appended dim detail, clicking
-    it opens Battery Info. A watch with a serial gets a real button."""
+def test_battery_gauge_fills_by_level_and_colours_only_when_connected(tmp_path):
+    """The battery cell is a gauge: a fixed-width bar whose fill grows with the
+    charge level and opens Battery Info on click. Connected → coloured fill (a
+    mid-level reads amber .ok); disconnected → grey (.off) fill at the last
+    level, a level without a colour claim."""
     import json
     h = tmp_path / "bp.js"
     h.write_text(_DOM_STUBS + JS +
-                 "\nconst cell=mkbatCell({battery:83,charge_status:'Charging',"
-                 "serial:'S9',codename:'skipjack'}, 40, 80);"
-                 "console.log(JSON.stringify(cell));\nprocess.exit(0);\n")
+                 "\nconsole.log(JSON.stringify({"
+                 "live:mkbatCell({battery:60,serial:'S9',codename:'sk'},40,80),"
+                 "off:mkbatCell({battery_cached:55,serial:'S9',last_live_ts:1000},40,80)}));"
+                 "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
-    cell = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "cbadge bat" in cell, f"battery cell is not a pill: {cell}"
-    assert "<button" in cell and "openBI('S9'" in cell, cell
-    assert "83%" in cell and "Charging" in cell, "pill missing percent or appended detail"
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'class="batw ok"' in out["live"] and "width:60%" in out["live"], out["live"]
+    assert "openBI('S9'" in out["live"] and "60%" in out["live"]
+    assert 'class="batw off"' in out["off"] and "width:55%" in out["off"], "offline gauge not grey"
+    assert "Charging" not in out["live"], "charge status should not repeat in the gauge"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
