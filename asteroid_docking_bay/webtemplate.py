@@ -160,7 +160,9 @@ _WEB_TEMPLATE = """\
     .pcell .tgl{margin-right:8px}
     /* Smart pills vary in width (ppps / NO! / cycle), so centre them in a
        slightly tighter column. */
-    .smtc,.batc{text-align:center}
+    /* Centered columns (Smart/Connection/Battery/Actions); Port/Stats/Watch
+       stay left-aligned. */
+    .smtc,.batc,.connc,.actc{text-align:center}
     td.smtc{padding-left:6px;padding-right:6px}
     .wr:hover td{background:#161b22}
     .hub-hdr td{background:#0d1420;color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
@@ -346,8 +348,8 @@ _WEB_TEMPLATE = """\
   <div class="tblwrap">
   <table>
     <thead><tr>
-      <th>Port</th><th class="smtc">Smart</th><th>Connection</th>
-      <th></th><th>Watch</th><th>Stats</th><th class="batc">Battery</th><th>Actions</th>
+      <th>Port</th><th class="smtc">Smart</th><th class="connc">Connection</th>
+      <th></th><th>Watch</th><th>Stats</th><th class="batc">Battery</th><th class="actc">Actions</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -686,12 +688,12 @@ function render(data){
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
           `<td class="pcell"><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,d)}</td>` +
-          `<td>${adbCell}</td>` +
+          `<td class="connc">${adbCell}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td class="dim batc">&mdash;</td>` +
-          `<td>`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
+          `<td class="actc">`+onboardBtn+mkhide(slot,p.excluded)+`</td>` +
           `</tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${busy?' show':''}" id="log-${slot}"></div></td></tr>`
         );
@@ -757,14 +759,14 @@ function render(data){
           `<tr class="wr${isRef?' refreshing':''}${p.excluded?' excl':''}${isNew?' justplugged':''}${p.lifecycle==='worn'?' worn':''}" id="wr-${slot}">` +
           `<td class="pcell"><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button>${mkport(p)}</td>` +
           `<td class="smtc">${mksmart(p,slot,dp)}</td>` +
-          `<td${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
+          `<td class="connc"${p.serial?` id="conn-${esc(p.serial)}"`:''}>${adb}</td>` +
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
             ?`<b class="cn${p.adb?'':' offname'}" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center (stale if offline)">${esc(p.codename)}</b>`
             :`<b class="${p.adb?'':'offname'}">${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td class="batc" id="bat-${slot}">${bat}</td>` +
-          `<td id="act-${slot}">` +
+          `<td class="actc" id="act-${slot}">` +
           `<button class="btn ex${isRef?' pulsing':''}"${p.excluded?' disabled':''} onclick="menuExecute(event,'${slot}',${isFb},${charging},${draining},${p.power===true},${noSw},'${p.serial||''}',${wb},'${p.adb||''}','${p.ssh_ip||''}',${p.wear?1:0},${needPwr})" title="refresh · power/charge/drain · flash/backup · workbench · wear">menu</button>` +
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="8"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
