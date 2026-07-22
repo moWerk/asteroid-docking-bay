@@ -378,7 +378,7 @@ def test_pills_and_dots_share_one_height_token():
         assert m, f"no standalone rule for {sel}"
         return m.group(1)
 
-    for sel in (".cbadge", ".sdot", ".smt"):
+    for sel in (".cbadge", ".sdot", ".smt", ".tgl"):
         assert "var(--pill-h)" in rule(sel), f"{sel} does not use the shared height token"
     for sel in (".cbadge", ".smt"):
         assert "inline-block" in rule(sel), f"{sel} is not inline-block — long content won't wrap"
@@ -388,19 +388,19 @@ def test_pills_and_dots_share_one_height_token():
 def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
     """The power toggle renders in the orbit-eclipse markup: a .tgl with the
     confirmed on/off class and the lbl/dot spans (label text comes from CSS).
-    Clicking adds .pending (the in-flight spinner) while keeping on/off, and the
-    handler fires the matching on/off op."""
+    Clicking an OFF toggle adds .pending (the in-flight spinner) and POSTs the
+    on op for the port."""
     import json
     h = tmp_path / "tgl.js"
     h.write_text(_DOM_CAPTURE + JS + global_simple() +
                  f"\nconst S={json.dumps(_SAMPLE)};render(S);"
                  "const html=global.__els['tb'].innerHTML;"
-                 # simulate a click on an OFF toggle
-                 "let done=null;doOn=(s,e)=>{done=['on',s];};"
-                 "const tel={classList:{_s:new Set(),add(c){this._s.add(c);},"
-                 "contains(c){return this._s.has(c);}}};"
-                 "pwrGo(tel,'1-2:2',true);"
-                 "console.log(JSON.stringify({html,pending:tel.classList.contains('pending'),done}));"
+                 # simulate a click on an OFF toggle (no 'on' class -> switch on)
+                 "let url=null;global.fetch=(u,o)=>{url=u;return new Promise(()=>{});};"
+                 "const tel={classList:{_s:new Set(),add(c){this._s.add(c);},remove(){},"
+                 "toggle(){},contains(c){return this._s.has(c);}}};"
+                 "pwrGo(tel,'1-2:2');"
+                 "console.log(JSON.stringify({html,pending:tel.classList.contains('pending'),url}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
@@ -409,7 +409,7 @@ def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
     assert 'class="lbl"' in out["html"] and 'class="dot"' in out["html"], "toggle spans missing"
     assert "tgl-on" not in out["html"] and ">ON<" not in out["html"], "old toggle markup survives"
     assert out["pending"] is True, "click did not add the .pending spinner"
-    assert out["done"] == ["on", "1-2:2"], "click did not fire the on op"
+    assert out["url"] == "/api/on/1-2/2", f"click did not POST the on op: {out['url']}"
 
 
 def test_menu_trigger_is_a_markerless_pill():

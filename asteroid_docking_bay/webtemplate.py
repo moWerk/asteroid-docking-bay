@@ -225,15 +225,15 @@ _WEB_TEMPLATE = """\
        .on/.off class and ADD .pending while a command is in flight; on confirm,
        remove .pending and swap on/off — the eclipse fill + dot glide animate
        themselves. */
-    .tgl{--w:96px;--h:32px;--pad:4px;--green:#3fb950;--grey:#565f6e;--amber:#d29922;
+    .tgl{--h:var(--pill-h);--w:calc(var(--pill-h)*3);--pad:3px;--green:#3fb950;--grey:#565f6e;--amber:#d29922;
       --travel:calc(var(--w) - var(--h));
       position:relative;display:inline-block;overflow:hidden;width:var(--w);height:var(--h);
       box-sizing:border-box;border-radius:999px;border:1px solid #2a3140;background:transparent;
       cursor:pointer;user-select:none;vertical-align:middle;
-      font:11px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:2px;
+      font:10px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:1px;
       transition:border-color .3s,background .3s,box-shadow .3s}
     .tgl::before{content:"";position:absolute;inset:0;border-radius:999px;background:rgba(63,185,80,.12);transform-origin:left center;transform:scaleX(0);transition:transform .5s ease}
-    .tgl .lbl{position:absolute;inset:0;display:flex;align-items:center;padding:0 13px;color:#8b949e;transition:color .3s}
+    .tgl .lbl{position:absolute;inset:0;display:flex;align-items:center;padding:0 9px;color:#8b949e;transition:color .3s}
     .tgl .lbl::after{content:"OFF"}
     .tgl .dot{position:absolute;top:var(--pad);left:var(--pad);width:calc(var(--h) - 2*var(--pad));height:calc(var(--h) - 2*var(--pad));box-sizing:border-box;border-radius:50%;background:var(--grey);border:2px dashed transparent;transform:translateX(var(--travel));transition:transform .5s ease,background .3s,border-color .3s}
     .tgl.on{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.2)}
@@ -402,14 +402,21 @@ function flashFail(el){
   el.classList.add('cmd-fail');
   setTimeout(()=>{try{el.classList.remove('cmd-fail');}catch(e){}},1300);
 }
-// Port-toggle click: add the orbit-eclipse .pending spinner (the toggle keeps
-// its confirmed on/off class), fire the on/off op, and let the next status
-// refresh rebuild the row into the confirmed state. A safety timeout clears the
-// spinner if nothing ever comes back (a no-op that changes no row HTML).
-function pwrGo(el,slot,on){
+// Port-toggle click: switch to the opposite of the current state. Add the
+// orbit-eclipse .pending spinner while the command is in flight, then on confirm
+// drop .pending and swap on/off ON THE SAME ELEMENT so the eclipse fill + dot
+// glide play the hand-off transition — only THEN refresh (the rebuilt row lands
+// in the same state, so there is no visible jump). A refused switch flashes red.
+function pwrGo(el,slot){
   if(el.classList.contains('pending'))return;
+  const on=!el.classList.contains('on');
   el.classList.add('pending');
-  (on?doOn:doOff)(slot,el);
+  fetch((on?'/api/on/':'/api/off/')+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.confirmed===false){flashFail(el);_pwrFlash(slot);return;}
+    el.classList.remove('pending');
+    el.classList.toggle('on',on); el.classList.toggle('off',!on);
+    setTimeout(refresh,600);   // let the .5s hand-off transition settle first
+  }).catch(()=>flashFail(el));
   setTimeout(()=>{try{el.classList.remove('pending');}catch(e){}},8000);
 }
 function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
@@ -673,7 +680,7 @@ function render(data){
           :mkadbrow(p);
         const pwrCls=p.power===true?'tgl on':'tgl off';
         const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
-        const pwrFn=`pwrGo(this,'${slot}',${p.power!==true})`;
+        const pwrFn=`pwrGo(this,'${slot}')`;
         const onboardBtn=p.excluded?'':`<button class="btn ob"${d} onclick="doRemap('${slot}')" title="power on, boot, then identify and map this watch">Onboard</button>`;
         rows.push(
           `<tr class="wr empty${p.excluded?' excl':''}" id="wr-${slot}">` +
@@ -742,7 +749,7 @@ function render(data){
         }else{
           bat=mkbatCell(p,lo,hi);
         }
-        const pwrFn=`pwrGo(this,'${slot}',${p.power!==true})`;
+        const pwrFn=`pwrGo(this,'${slot}')`;
         const pwrCls=p.power===true?'tgl on':'tgl off';
         const pwrLbl='<span class="lbl"></span><span class="dot"></span>';
         const isRef=refreshing.has(slot);
@@ -1376,16 +1383,6 @@ function _pwrFlash(c){
   if(!r)return;
   r.classList.add('pwr-warn');
   setTimeout(()=>{r.classList.remove('pwr-warn');refresh();},3800);
-}
-function doOn(c,el){
-  fetch('/api/on/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false){flashFail(el);_pwrFlash(c);}else setTimeout(refresh,2000);
-  }).catch(()=>flashFail(el));
-}
-function doOff(c,el){
-  fetch('/api/off/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
-    if(d.confirmed===false){flashFail(el);_pwrFlash(c);}else refresh();
-  }).catch(()=>flashFail(el));
 }
 function doPoweroff(c){
   fetch('/api/poweroff/'+_api(c),{method:'POST'}).then(rr=>rr.json()).then(d=>{
