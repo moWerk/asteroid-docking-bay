@@ -198,6 +198,10 @@ _WEB_TEMPLATE = """\
     .btn.wear.on{background:#e08a9e;color:#1a1416;border-color:#e08a9e}
     .wr.worn td{opacity:.5}
     .wr.worn:hover td{opacity:.62}
+    /* Instant feedback: a clicked action element pulses until the next update
+       cycle confirms the new state (which rebuilds the row without this class). */
+    .cmd-pending{animation:cmdpulse .8s ease-in-out infinite}
+    @keyframes cmdpulse{0%,100%{opacity:1}50%{opacity:.38}}
     .btn.ob{border-color:#1f6b39;color:#2c8a4c}.btn.ob:hover{background:#0d1f13}
     .hidebtn{color:#6e7681;text-decoration:none;font-size:15px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle}
     .hidebtn:hover{color:#fff}
@@ -298,6 +302,17 @@ function mkhide(slot,excluded){
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function mkpwr(v){return v===true?'<span class="dot don"></span><span class="on">ON</span>':v===false?'<span class="dot doff"></span><span class="off">OFF</span>':'<span class="dim">---</span>'}
 function mksmt(v){return v===true?'<span class="on">yes</span>':v===false?'<span class="err">NO!</span>':'<span class="warn">?</span>'}
+function pulseSelf(el){
+  // Give a clicked action button instant feedback while the command is in
+  // flight. The status refresh that reflects the new state rebuilds the row
+  // (reconcile only rebuilds CHANGED rows) and the fresh button has no pulse —
+  // so it self-clears on confirmation. The timeout is only a safety net for a
+  // command that changes nothing (a no-op or a failure), where the row is
+  // reused and the class would otherwise linger.
+  if(!el)return;
+  el.classList.add('cmd-pending');
+  setTimeout(()=>{try{el.classList.remove('cmd-pending');}catch(e){}},8000);
+}
 function mklife(p){
   // The one power-state we positively assert, shown beside the codename.
   // "down" = safely halted (graceful power-off, port off, not draining);
@@ -537,7 +552,7 @@ function render(data){
           `<td>${nameCell}</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
+          `<td><button class="${pwrCls}"${d} title="${p.power===true?'power the port off':'power the port on'}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${d} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adbCell}</td>` +
           `<td class="dim">&mdash;</td>` +
@@ -613,7 +628,7 @@ function render(data){
             :`<b>${esc(p.codename)}</b>`)+mklife(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${p.serial}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td>${mkport(p)}</td>` +
-          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
+          `<td><button class="${pwrCls}"${dp} title="${noSw?'port cannot switch power (not smart)':(p.power===true?'power the port off':'power the port on')}" onclick="pulseSelf(this);${pwrFn}">${pwrLbl}</button><button class="ico"${dp} onclick="pulseSelf(this);doCy('${slot}')" title="cycle the port and test smart capability">&#x21BA;</button></td>` +
           `<td>${mksmt(p.smart)}</td>` +
           `<td>${adb}</td>` +
           `<td id="bat-${slot}">${bat}</td>` +
@@ -622,7 +637,7 @@ function render(data){
           `<button class="btn pw"${p.excluded?' disabled':''} onclick="${isFb?`menuPowerFb(event,'${slot}',${p.power===true})`:`menuPower(event,'${slot}',${charging},${draining},${p.power===true},${noSw})`}" title="${isFb?'boot / reboot / recovery / power off':'power / charge / drain / reboot'}">Power &#9662;</button>`+
           `<button class="btn fl"${d} onclick="menuFlash(event,'${slot}')" title="flash a release · data backup/restore · mmcblk0 dump">Flashing &#9662;</button>` +
           (!isFb?`<button class="btn wb"${p.excluded?' disabled':''} onclick="menuWorkbench(event,'${slot}','${p.serial}',${wb},'${p.adb||''}','${p.ssh_ip||''}')" title="attended actions — watch stays on">Workbench &#9662;</button>`:'')+
-          (!isFb&&p.serial?`<button class="btn wear${p.wear?' on':''}"${p.excluded?' disabled':''} onclick="doWear('${slot}',${p.wear?0:1})" title="${p.wear?'wear armed — port held for re-docking; click to release and free the port':'wear: top up and hold this port so the watch is ready to take off the rig'}">Wear</button>`:'')+
+          (!isFb&&p.serial?`<button class="btn wear${p.wear?' on':''}"${p.excluded?' disabled':''} onclick="pulseSelf(this);doWear('${slot}',${p.wear?0:1})" title="${p.wear?'wear armed — port held for re-docking; click to release and free the port':'wear: top up and hold this port so the watch is ready to take off the rig'}">Wear</button>`:'')+
           `</td></tr>` +
           `<tr class="lr" id="lr-${slot}"><td colspan="10"><div class="log${logActive?' show':''}" id="log-${slot}"></div></td></tr>`
         );

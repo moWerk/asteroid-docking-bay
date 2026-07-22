@@ -506,3 +506,15 @@ def test_stale_endpoint_and_paintstale_are_wired():
     assert stale and stale[0][2] == "watch.cc" and stale[0][3] == {"stale": True}, stale
     assert "function paintStale(" in JS
     assert "/stale'" in JS, "paintStale does not hit the /stale endpoint"
+
+
+def test_action_buttons_pulse_on_click_for_instant_feedback():
+    """A clicked action button (power toggle, cycle, wear) must give instant
+    feedback while the command is in flight — pulseSelf(this) — since the state
+    only updates on the next refresh cycle."""
+    assert "function pulseSelf(" in JS
+    # the persistent row toggles wire it
+    assert JS.count("pulseSelf(this);") >= 3, "not all row toggles pulse on click"
+    assert "pulseSelf(this);${pwrFn}" in JS, "power toggle lacks instant feedback"
+    assert "pulseSelf(this);doCy(" in JS, "cycle button lacks instant feedback"
+    assert "pulseSelf(this);doWear(" in JS, "wear button lacks instant feedback"
