@@ -530,3 +530,24 @@ def test_failed_actions_flash_red():
     assert "flashFail(connPill(serial))" in JS, "mode-switch failure not flashed"
     # the connection cell carries an id so the pill can be found
     assert 'id="conn-${esc(p.serial)}"' in JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_opening_a_panel_closes_the_others(tmp_path):
+    """Only one floating window at a time — opening the Control Center while
+    Battery Info is up must close Battery Info."""
+    import json
+    h = tmp_path / "one.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>new Promise(()=>{});"
+                 "openBI('S9','sk',{stopPropagation(){},clientX:0,clientY:0});"
+                 "const biBefore=biSerial;"
+                 "openCC('S9','sk',{stopPropagation(){},clientX:0,clientY:0});"
+                 "console.log(JSON.stringify({biBefore,biAfter:biSerial,ccAfter:ccSerial}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["biBefore"] == "S9", "Battery Info did not open"
+    assert o["biAfter"] is None, "Battery Info stayed open when Control Center opened"
+    assert o["ccAfter"] == "S9", "Control Center did not open"

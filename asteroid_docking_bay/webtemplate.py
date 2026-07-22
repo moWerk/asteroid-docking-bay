@@ -755,7 +755,7 @@ function paintStale(serial,curSerial,cacheHas,renderFn){
   }).catch(()=>{});
 }
 function openCC(serial,name,ev){
-  ev.stopPropagation(); graphReset();
+  ev.stopPropagation(); closePanels(); graphReset();
   ccSerial=serial; ccName=name; ccAX=ev.clientX; ccAY=ev.clientY;
   const cc=document.getElementById('cc');
   cc.classList.remove('stale-cc');
@@ -834,7 +834,7 @@ function ccEnter(){if(ccTimer){clearTimeout(ccTimer);ccTimer=null;}}
 // else. The USB mode toggle lives here too, a deliberate click in an overlay
 // rather than the misclick-prone inline badge.
 function openNC(serial,name,ev,sshIp,mode){
-  ev.stopPropagation(); graphReset();
+  ev.stopPropagation(); closePanels(); graphReset();
   ncSerial=serial; ncName=name; ncAX=ev.clientX; ncAY=ev.clientY;
   ncSshIp=sshIp||''; ncMode=mode||'';
   const nc=document.getElementById('nc');
@@ -904,7 +904,7 @@ function ncEnter(){if(ncTimer){clearTimeout(ncTimer);ncTimer=null;}}
 // read-only window, leaving the pill to carry just the charge and one line of
 // appended detail.
 function openBI(serial,name,ev){
-  ev.stopPropagation(); graphReset();
+  ev.stopPropagation(); closePanels(); graphReset();
   biSerial=serial; biName=name; biAX=ev.clientX; biAY=ev.clientY;
   const bi=document.getElementById('bi');
   bi.classList.remove('stale-cc');
@@ -951,6 +951,9 @@ function renderBI(d){
   biPlace();
 }
 function closeBI(){const bi=document.getElementById('bi');bi.style.display='none';biSerial=null;if(biTimer){clearTimeout(biTimer);biTimer=null;}if(biPoll){clearTimeout(biPoll);biPoll=null;}}
+// Only one floating window at a time: opening any panel closes the others (and
+// the composite image). Each open() calls this first, then opens its own.
+function closePanels(){closeCC();closeNC();closeBI();closeWatchImg();}
 function biLeave(){biTimer=setTimeout(closeBI,600);}
 function biEnter(){if(biTimer){clearTimeout(biTimer);biTimer=null;}}
 // ── Row action floating menus ───────────────────────────────────────────────
@@ -1011,6 +1014,7 @@ function holeFor(codename,img){
 }
 function openWatchImg(codename,serial,ev,isRound,res){
   if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
+  closeCC();closeNC();closeBI();   // one floating window at a time
   // Load the product photo in a device frame; onProdLoad then decides the
   // layout once we can inspect the image for a transparent screen cutout.
   const o=document.getElementById('wimg');
