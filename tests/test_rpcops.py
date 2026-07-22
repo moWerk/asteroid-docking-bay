@@ -49,7 +49,7 @@ def test_registered_ops_are_the_documented_contract():
         "port.set", "port.cycle", "port.poweroff", "port.reboot",
         "port.bootloader", "port.recovery", "port.continue",
         "port.hide", "hub.hide",
-        "charge.start", "charge.stop",
+        "charge.start", "charge.stop", "prefs.set_usb_mode",
         "workbench.start", "workbench.stop", "wear.set",
         "drain.start", "drain.stop", "drain.history",
         "flash.start", "onboard.start",
@@ -539,6 +539,35 @@ def test_poweroff_over_ssh_marks_down_and_does_not_strand(monkeypatch):
     assert calls == [("192.168.13.37", "poweroff")], "did not power off over ssh"
     assert powered == [False], "port not cut after the ssh halt"
     assert marked.get("safe_off_ts"), "ssh poweroff did not stamp the down marker"
+
+
+def test_set_usb_mode_preference_persists_and_validates(monkeypatch):
+    """The top-bar toggle op writes the fleet USB-mode preference and rejects
+    anything that is not exactly 'adb' or 'ssh' (a bad value must not become a
+    third, meaningless mode)."""
+    import asteroid_docking_bay.rpcops as ro
+    store = {}
+    monkeypatch.setattr(ro, "load_config", lambda: store)
+    monkeypatch.setattr(ro, "save_config", lambda c: None)
+
+    assert ro.DISPATCH._data["prefs.set_usb_mode"]({"mode": "ssh"}) == {"ok": True, "mode": "ssh"}
+    assert store["usb_mode_preference"] == "ssh"
+    assert ro.DISPATCH._data["prefs.set_usb_mode"]({"mode": "adb"})["ok"]
+    assert store["usb_mode_preference"] == "adb"
+
+    bad = ro.DISPATCH._data["prefs.set_usb_mode"]({"mode": "developer"})
+    assert bad["ok"] is False and store["usb_mode_preference"] == "adb", (
+        "an invalid mode changed the stored preference")
+
+
+def test_status_get_reports_the_usb_mode_preference(monkeypatch):
+    """status.get carries the preference so the top bar can render the toggle
+    label without a second request."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "load_config", lambda: {"usb_mode_preference": "ssh"})
+    monkeypatch.setattr(ro, "_web_status_data", lambda cfg: [])
+    d = ro.DISPATCH._data["status.get"]({})
+    assert d["usb_mode_preference"] == "ssh"
 
 
 def test_power_on_stamps_the_boot_marker_but_power_off_does_not(monkeypatch):

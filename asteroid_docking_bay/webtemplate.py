@@ -276,7 +276,7 @@ _WEB_TEMPLATE = """\
   <div id="alert" class="alert"></div>
   <div class="hdr">
   <h1><span class="hdim">&#x2728;  &#x22C6;  &#x02DA; </span>&#x2726;<span class="htxt">  asteroid-docking-bay  </span>&#x2726;<span class="hdim"> &#x02DA;  &#x22C6;  &#x2728;</span></h1>
-  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a></p>
+  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a></p>
   </div>
   <div class="tblwrap">
   <table>
@@ -546,6 +546,9 @@ function render(data){
   const hi=(data&&data.thresholds&&data.thresholds.high)||80;
   const floor=(data&&data.drain_floor)||15;
   const wearH=(data&&data.wearable_min_hours)||24;
+  usbPref=(data&&data.usb_mode_preference)==='ssh'?'ssh':'adb';
+  const upl=document.getElementById('usbpreflink');
+  if(upl)upl.textContent=usbPref==='ssh'?'prefer SSH':'prefer ADB';
   if(!hubs.length){tb.innerHTML='<tr><td colspan="10" class="dim">No watches configured. Run: asteroid-docking-bay map</td></tr>';return}
   const rows=[];
   const present=new Set();   // serials enumerated this render, for the plug flash
@@ -1392,6 +1395,11 @@ function toggleShowHidden(){
   const l=document.getElementById('hidlink');
   if(l)l.textContent=showHidden?'hide avoided ports':'show all ports';
   refresh();
+}
+let usbPref='adb';   // fleet USB-mode preference, mirrored from status
+function toggleUsbPref(){
+  const next=usbPref==='ssh'?'adb':'ssh';
+  fetch('/api/usb-preference/'+next,{method:'POST'}).then(()=>refresh());
 }
 function doHidePort(c){
   fetch('/api/hide/'+_api(c),{method:'POST'}).then(()=>refresh());

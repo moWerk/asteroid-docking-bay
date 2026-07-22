@@ -95,6 +95,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `ssh.switch_adb / watch.switch_ssh` | toggle a watch between adb and SSH/developer USB mode |
 | `op.charge.start / stop` (same for drain, workbench) | Operation classes |
 | `wear.set` | arm/release the off-rig wear marker (holds the port, marks worn) |
+| `prefs.set_usb_mode` | set the fleet adb/ssh USB-mode preference (top-bar toggle) |
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
 | `watch.fbreport` | fastboot getvar all -> downloadable text report |

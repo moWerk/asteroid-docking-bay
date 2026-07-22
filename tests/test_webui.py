@@ -447,6 +447,34 @@ def test_boot_pill_shows_in_connection_column_and_outranks_no_link(tmp_path):
     assert ">not enumerating<" in out["plain"]
 
 
+def test_usb_preference_toggle_is_present_with_a_bullet_tooltip():
+    """The situational adb/ssh preference lives as a third top-bar link with a
+    tooltip spelling out the consequences in bullets."""
+    assert 'id="usbpreflink"' in _WEB_TEMPLATE
+    assert "onclick=\"toggleUsbPref()" in _WEB_TEMPLATE
+    assert _WEB_TEMPLATE.count("•") >= 2, "tooltip must list consequences as bullets"
+    assert "function toggleUsbPref(" in JS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_render_labels_the_usb_preference_from_status(tmp_path):
+    """render() mirrors data.usb_mode_preference onto the top-bar link — 'prefer
+    SSH' when set to ssh, 'prefer ADB' otherwise."""
+    import json
+    h = tmp_path / "pref.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 "\nrender({hubs:[],usb_mode_preference:'ssh'});"
+                 "const ssh=global.__els['usbpreflink'].textContent;"
+                 "render({hubs:[],usb_mode_preference:'adb'});"
+                 "const adb=global.__els['usbpreflink'].textContent;"
+                 "console.log(JSON.stringify({ssh,adb}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["ssh"] == "prefer SSH" and out["adb"] == "prefer ADB", out
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_powered_but_unconnected_says_no_link_not_a_cause(tmp_path):
     """A powered port with nothing electrically connected reads "no link" — a

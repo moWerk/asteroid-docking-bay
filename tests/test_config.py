@@ -172,6 +172,15 @@ def test_ssh_ip_assignment_is_sticky():
     assert ssh_ip_for_serial(cfg, "unknown") is None
 
 
+def test_usb_mode_preference_defaults_to_adb_and_ignores_junk():
+    from asteroid_docking_bay.config import usb_mode_preference
+    assert usb_mode_preference({}) == "adb", "the standard mode is the default"
+    assert usb_mode_preference({"usb_mode_preference": "ssh"}) == "ssh"
+    assert usb_mode_preference({"usb_mode_preference": "adb"}) == "adb"
+    assert usb_mode_preference({"usb_mode_preference": "wat"}) == "adb", (
+        "a junk value must fall back to the safe standard, not pass through")
+
+
 def test_ssh_ip_fills_a_freed_gap():
     """If a serial is removed, its address is reused rather than skipped."""
     from asteroid_docking_bay.config import allocate_ssh_ip

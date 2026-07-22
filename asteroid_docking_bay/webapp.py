@@ -65,6 +65,7 @@ _JSON_ROUTES = [
     ("POST", "/api/switch-adb",                    "ssh.switch_adb",  {},             True),
     ("POST", "/api/switch-adb/<serial>",          "ssh.switch_adb",  {},             True),
     ("POST", "/api/switch-ssh/<serial>",          "watch.switch_ssh", {},            True),
+    ("POST", "/api/usb-preference/<mode>",         "prefs.set_usb_mode", {},          True),
     ("POST", "/api/screen/release-all",            "screen.release_all", {},          True),
     ("GET",  "/api/drain/history",                 "drain.history",   {},             False),
 ]

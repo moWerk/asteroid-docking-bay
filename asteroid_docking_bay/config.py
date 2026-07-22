@@ -181,6 +181,15 @@ def ssh_ip_for_serial(cfg: dict, serial: "str | None") -> "str | None":
     return cfg.get("ssh_ips", {}).get(serial) if serial else None
 
 
+def usb_mode_preference(cfg: dict) -> str:
+    """The fleet's preferred USB mode for auto-correcting a watch that comes up
+    on its own in the wrong one: "adb" (standard) or "ssh". This is the
+    situational top-bar toggle, not a hard install setting — defaults to "adb"
+    (stock, and how a fresh flash enumerates), and ignores any junk value."""
+    pref = cfg.get("usb_mode_preference")
+    return pref if pref in ("adb", "ssh") else "adb"
+
+
 def allocate_ssh_ip(cfg: dict, serial: str) -> str:
     """The SSH-mode IP for a serial, assigning the next free one from the base
     up on first use. Sticky: a serial always gets back the same address."""

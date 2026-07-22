@@ -30,7 +30,7 @@ import time
 from .util import _run, log
 from .adb import _adb_state, adb_devices, get_watch_codename
 from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
-                     charge_config, ssh_ip_for_serial,
+                     charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
@@ -86,10 +86,26 @@ def _status_get(args):
         "thresholds": {"low": cc.low_threshold, "high": cc.high_threshold},
         "drain_floor": _DRAIN_FLOOR_PCT,
         "wearable_min_hours": cfg.get("wearable_min_hours", 24),
+        "usb_mode_preference": usb_mode_preference(cfg),
         # The version of the process running the ops — in split mode the
         # backend's, which is what an upgrade check cares about.
         "version": __version__,
     }
+
+
+@DISPATCH.op("prefs.set_usb_mode")
+def _prefs_set_usb_mode(args):
+    """Set the fleet USB-mode preference (adb|ssh) — the situational top-bar
+    toggle. It drives how a watch that self-enumerates in the wrong mode is
+    auto-corrected; see webstatus._maybe_align_usb_mode."""
+    mode = args.get("mode")
+    if mode not in ("adb", "ssh"):
+        return {"ok": False, "error": "mode must be 'adb' or 'ssh'"}
+    with _config_lock:
+        cfg = load_config()
+        cfg["usb_mode_preference"] = mode
+        save_config(cfg)
+    return {"ok": True, "mode": mode}
 
 
 # ── per-watch (Control Center) ──────────────────────────────────────────────
