@@ -1067,7 +1067,7 @@ function bodyNet(d){
     _kv('WiFi',d.wifi==null?null:(d.wifi?'on':'off'))+_kv('WiFi IP',d.ip)+
     _kvg('RX / TX',(mb(d.net_rx)||'0')+' / '+(mb(d.net_tx)||'0'),spark('rx',0,500000,'high')+spark('tx',0,500000,'high'))+
     _kv('Bluetooth',d.bluetooth==null?null:(d.bluetooth?'on':'off'))+_kv('Phone',phone)+
-    _kv('WLAN MAC',d.wlanmac)+_kv('Serial',d.serial));
+    _kv('WLAN MAC',d.wlanmac)+_kv('BT MAC',d.btmac_self)+_kv('Serial',d.serial));
   const tgl=(t,l,on)=>`<button class="cc-tgl${on?' on':''}${ctlPending.has('net:'+t)?' cmd-pending':''}" onclick="ncToggle('${t}',${on?0:1})">${l}: ${on?'ON':'OFF'}</button>`;
   const modeToggle=isSsh
     ? `<button class="cc-tgl" onclick="switchAdb('${esc(d.serial||ctlSerial)}')" title="switch this watch's USB gadget back to ADB">USB &#8594; ADB</button>`
