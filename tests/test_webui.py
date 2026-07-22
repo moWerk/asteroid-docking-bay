@@ -399,21 +399,31 @@ def test_control_center_no_longer_carries_the_battery_section(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_lifecycle_pill_shows_down_only_when_asserted(tmp_path):
-    """The codename-adjacent pill appears only for an asserted state; a watch
-    with no lifecycle claim shows nothing (no false 'off')."""
+def test_watch_power_dot_maps_state_to_colour(tmp_path):
+    """The persistent power dot beside the codename recolours by what we can
+    assert: green when the port is powered, grey for a confirmed graceful-down,
+    orange when the state is ambiguous (off with no down marker). It always
+    shows — an unknown state is honestly orange, never blank. Worn keeps its
+    own pink pill."""
     import json
     h = tmp_path / "life.js"
     h.write_text(_DOM_STUBS + JS +
-                 "\nconsole.log(JSON.stringify({down:mklife({lifecycle:'down'}),"
-                 "worn:mklife({lifecycle:'worn'}),none:mklife({})}));"
+                 "\nconsole.log(JSON.stringify({"
+                 "on:mklife({power:true}),"
+                 "down:mklife({lifecycle:'down'}),"
+                 "amb:mklife({}),"
+                 "worn:mklife({lifecycle:'worn'})}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "down" in out["down"] and "life down" in out["down"]
-    assert "worn" in out["worn"] and "life worn" in out["worn"]
-    assert out["none"] == "", "an unclaimed watch must show no lifecycle pill"
+    assert "lifedot on" in out["on"] and "down" not in out["on"]
+    assert "lifedot down" in out["down"]
+    assert "lifedot amb" in out["amb"], "an unknown state must be honestly ambiguous, not blank"
+    assert out["amb"] != "", "the dot is persistent — never blank"
+    assert "life worn" in out["worn"] and "lifedot" not in out["worn"]
+    # No literal "down" text label survives — it is a recoloured glyph now.
+    assert "&#9211;" in out["down"] and ">down<" not in out["down"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

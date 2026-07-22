@@ -161,6 +161,11 @@ _WEB_TEMPLATE = """\
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
     /* Lifecycle pill by the codename — the one power-state we can assert:
        "down" (safely halted, calm slate) and "worn" (off-rig, pinkish). */
+    .lifedot{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+      border-radius:50%;border:1px solid;font-size:9px;line-height:1;vertical-align:middle;margin-left:6px}
+    .lifedot.on{border-color:#3fb950;color:#3fb950}
+    .lifedot.down{border-color:#3d4756;color:#8b98a5}
+    .lifedot.amb{border-color:#d29922;color:#d29922}
     .cbadge.life{padding:0 6px;font-size:10px;margin-left:6px;letter-spacing:.3px}
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
@@ -334,13 +339,19 @@ function flashFail(el){
 }
 function connPill(serial){return serial?document.getElementById('conn-'+serial):null;}
 function mklife(p){
-  // The one power-state we positively assert, shown beside the codename.
-  // "down" = safely halted (graceful power-off, port off, not draining);
-  // "worn" = off-rig via the wear toggle. Absence is "no claim", never a
-  // promise the watch is off — a raw port cut leaves an ambiguous state blank.
-  if(p.lifecycle==='down')return `<span class="cbadge life down" title="safely powered down — gracefully halted, port off, not draining">&#9211; down</span>`;
+  // A persistent power dot beside the codename: the ⏻ glyph in a circle
+  // (kept round for consistency with the pills), recoloured by what we can
+  // positively assert. green = powered (the port is delivering power); grey =
+  // safely down (a confirmed graceful shutdown, port off, not draining);
+  // orange = ambiguous (off with no graceful-shutdown marker — a raw port cut
+  // that could equally be off or still running on battery). "worn" (off-rig
+  // via the wear toggle) keeps its own pink pill.
   if(p.lifecycle==='worn')return `<span class="cbadge life worn" title="worn — off the rig via the wear toggle; port held for re-docking">worn</span>`;
-  return '';
+  const st=p.power===true?'on':(p.lifecycle==='down'?'down':'amb');
+  const tip=st==='on'?'powered — the port is delivering power'
+    :st==='down'?'safely powered down — gracefully halted, port off, not draining'
+    :'power state ambiguous — port off with no graceful-shutdown marker; could be off, or still running on battery after a raw cut';
+  return `<span class="lifedot ${st}" title="${tip}">&#9211;</span>`;
 }
 function batBand(v,lo,hi){return v==null?'':(v<lo?'low':v<=hi?'ok':'');}
 function batPill(p,cls,inner,title){
