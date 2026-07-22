@@ -243,20 +243,20 @@ _WEB_TEMPLATE = """\
     .tgl{--h:var(--pill-h);--w:calc(var(--pill-h)*3);--pad:3px;--green:#3fb950;--grey:#565f6e;--amber:#d29922;
       --travel:calc(var(--w) - var(--h));
       position:relative;display:inline-block;overflow:hidden;width:var(--w);height:var(--h);
-      box-sizing:border-box;border-radius:999px;border:1px solid #2a3140;background:transparent;
+      box-sizing:border-box;border-radius:var(--pill-r);border:1px solid #30363d;background:transparent;
       cursor:pointer;user-select:none;vertical-align:middle;
-      font:10px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:1px;
-      transition:border-color .3s,background .3s,box-shadow .3s}
+      font:var(--pill-fs)/1 'Cascadia Code','Fira Mono',monospace;letter-spacing:.5px;
+      transition:border-color .3s,background .3s}
     .tgl::before{content:"";position:absolute;inset:0;border-radius:999px;background:rgba(63,185,80,.12);transform-origin:left center;transform:scaleX(0);transition:transform .5s ease}
     .tgl .lbl{position:absolute;inset:0;display:flex;align-items:center;padding:0 9px;color:#8b949e;transition:color .3s}
     .tgl .lbl::after{content:"OFF"}
     .tgl .dot{position:absolute;top:var(--pad);left:var(--pad);width:calc(var(--h) - 2*var(--pad));height:calc(var(--h) - 2*var(--pad));box-sizing:border-box;border-radius:50%;background:var(--grey);border:2px dashed transparent;transform:translateX(var(--travel));transition:transform .5s ease,background .3s,border-color .3s}
-    .tgl.on{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.2)}
+    .tgl.on{border-color:var(--green)}
     .tgl.on::before{transform:scaleX(1)}
     .tgl.on .lbl{justify-content:flex-end;color:var(--green)}
     .tgl.on .lbl::after{content:"ON"}
     .tgl.on .dot{background:var(--green);transform:translateX(0)}
-    .tgl.pending{border-color:rgba(210,153,34,.55);background:rgba(210,153,34,.07);box-shadow:none}
+    .tgl.pending{border-color:rgba(210,153,34,.55);background:rgba(210,153,34,.07)}
     .tgl.pending::before{transition:none}
     .tgl.on.pending::before{transform:scaleX(1)}
     .tgl.off.pending::before{transform:scaleX(0)}
