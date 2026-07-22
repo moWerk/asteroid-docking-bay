@@ -420,6 +420,10 @@ def test_execute_menu_folds_every_group_under_a_header(tmp_path):
     # A representative item from each group survived the fold.
     for item in ("Re-identify", "Reboot", "Backup data", "Checkout", "Arm wear"):
         assert item in on, f"folded menu lost {item!r}"
+    # Wear leads, Refresh trails; wear is the one button, the rest are text links.
+    assert on.index('exgrp-hd">Wear<') < on.index('exgrp-hd">Power<'), "Wear not first"
+    assert on.index('exgrp-hd">Refresh<') > on.index('exgrp-hd">Workbench<'), "Refresh not last"
+    assert 'class="menu-wear' in on, "wear should stay a pink button"
     # Fastboot: bootloader power group in, watch-only groups out.
     fb = out["fb"]
     assert "Continue boot" in fb and 'class="exgrp-hd">Workbench<' not in fb
@@ -427,10 +431,10 @@ def test_execute_menu_folds_every_group_under_a_header(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_workbench_menu_shows_the_usb_ip_banner(tmp_path):
-    """The watch's SSH address is the most useful thing to have while working
-    on it, so the workbench menu leads with a prominent non-clickable IP
-    banner — deliberately redundant with the row badge."""
+def test_workbench_menu_no_longer_carries_the_usb_ip(tmp_path):
+    """The USB IP moved out of the menu — it lives in the Connection column's
+    Network Center now, a better place to find it — so the workbench group must
+    not repeat it (and still carries the USB-mode switch)."""
     import json
     h = tmp_path / "wb.js"
     h.write_text(_DOM_STUBS + JS +
@@ -439,9 +443,8 @@ def test_workbench_menu_shows_the_usb_ip_banner(tmp_path):
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     html = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "menu-ip" in html and "192.168.13.37" in html, html
-    # It must be a plain banner, not a clickable action.
-    assert 'class="menu-ip"' in html and "onclick" not in html.split("menu-hd")[0]
+    assert "menu-ip" not in html and "192.168.13.37" not in html, "USB IP still in the menu"
+    assert "Switch USB to ADB" in html, "workbench group lost its USB-mode switch"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

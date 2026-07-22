@@ -72,21 +72,24 @@ _WEB_TEMPLATE = """\
     .cc-act.done{border-color:#3fb950;color:#3fb950}
     /* Row action floating menus */
     .menu{position:fixed;z-index:110;display:none;min-width:172px;max-height:calc(100vh - 24px);overflow-y:auto;background:#161b22;border:1px solid #30363d;border-radius:7px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:5px}
-    .menu-item{display:block;width:100%;text-align:left;padding:6px 10px;margin:1px 0;border-radius:5px;border:1px solid transparent;background:transparent;color:#c9d1d9;cursor:pointer;font:inherit;white-space:nowrap}
-    .menu-item:hover:not(:disabled){filter:brightness(1.4);border-color:#30363d}
+    /* Menu items are slim text links (not chunky buttons), coloured by action,
+       indented under their category header. */
+    .menu-item{display:block;text-align:left;padding:2px 10px;border:none;background:none;color:#c9d1d9;cursor:pointer;font:inherit;line-height:1.6;white-space:nowrap}
+    .menu-item:hover:not(:disabled){text-decoration:underline;filter:brightness(1.35)}
     .menu-item:disabled{opacity:.38;cursor:default}
-    /* Per-action accent: coloured label on a faint band of the same hue, to
-       keep the colourful feel the flat buttons had. */
-    .menu-item.ch{color:#3fb950;background:rgba(63,185,80,.07)}
-    .menu-item.dr{color:#d29922;background:rgba(210,153,34,.07)}
-    .menu-item.po{color:#f85149;background:rgba(248,81,73,.07)}
-    .menu-item.rb{color:#f0883e;background:rgba(240,136,62,.07)}
-    .menu-item.bl{color:#d2a8ff;background:rgba(210,168,255,.07)}
-    .menu-item.wbx{color:#a371f7;background:rgba(163,113,247,.07)}
-    .menu-item.info{color:#58a6ff;background:rgba(88,166,255,.07)}
+    .menu-item.ch{color:#3fb950}
+    .menu-item.dr{color:#d29922}
+    .menu-item.po{color:#f85149}
+    .menu-item.rb{color:#f0883e}
+    .menu-item.bl{color:#d2a8ff}
+    .menu-item.wbx{color:#a371f7}
+    .menu-item.info{color:#58a6ff}
     .menu-sep{height:1px;background:#30363d;margin:4px 2px}
     .menu-hd{padding:3px 10px 5px;font-size:10px;color:#6e7681}
-    .menu-item.wear{color:#e0a5b5;background:rgba(224,138,158,.07)}
+    /* Wear is the one item that stays a button — pink, the off-rig action. */
+    .menu-wear{display:inline-flex;align-items:center;height:var(--pill-h);margin:3px 10px;padding:0 12px;border-radius:var(--pill-r);border:1px solid #e08a9e;background:none;color:#e0a5b5;cursor:pointer;font:inherit}
+    .menu-wear:hover{background:#2a1a1f}
+    .menu-wear.on{background:#e08a9e;color:#1a1416}
     /* Execute menu: former buttons become group headers, items indented under. */
     .exgrp-hd{padding:7px 10px 3px;font-size:10px;font-weight:700;color:#8b949e;
       text-transform:uppercase;letter-spacing:.6px;border-top:1px solid #21262d;margin-top:3px}
@@ -94,10 +97,6 @@ _WEB_TEMPLATE = """\
     .exgrp{padding-left:9px}
     /* Prominent, non-clickable IP banner at the top of the workbench menu —
        the address you actually need to reach the watch over SSH/WiFi. */
-    .menu-ip{display:block;width:100%;text-align:center;padding:7px 10px;margin:1px 0 3px;
-      border-radius:5px;border:1px solid #d29922;background:rgba(210,153,34,.1);
-      color:#d29922;font:inherit;font-size:13px;letter-spacing:.3px;cursor:default}
-    .menu-ip b{font-weight:700}
     #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:9px 16px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:200}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
     /* Watch product-photo thumbnail + click-to-enlarge overlay */
@@ -1214,13 +1213,8 @@ function grpPowerFb(slot,powered){
 }
 function grpWorkbench(slot,serial,wb,mode,sshIp){
   const online=mode==='device';
-  // The address to reach this watch over SSH/WiFi — the single most useful
-  // thing to have while working on it. Shown as a prominent non-clickable
-  // banner at the top, deliberately redundant with the row badge. It is this
-  // watch's assigned SSH IP when in SSH mode, otherwise the address it will
-  // take on the next switch (the default until one has been assigned).
-  const ip=sshIp||'192.168.2.15';
-  const ipBanner=`<div class="menu-ip" title="reach this watch over SSH at this address">USB IP <b>${esc(ip)}</b></div>`;
+  // (The USB IP used to be shown here as a banner; it now lives in the
+  // Connection column's Network Center, which is a better place to find it.)
   // USB-mode toggle. Workbench work happens over WiFi/SSH, so switching the
   // watch's USB gadget between adb and SSH/developer mode belongs here. The
   // item flips with the current mode: on adb it offers SSH (delivered over
@@ -1233,8 +1227,7 @@ function grpWorkbench(slot,serial,wb,mode,sshIp){
   else
     usbToggle=mi('info','Switch USB to SSH',`switchSsh('${serial}')`,!online,
                  'watch must be on ADB to switch it to SSH mode');
-  return ipBanner+
-    '<div class="menu-hd">watch stays on — power off when done</div>'+
+  return '<div class="menu-hd">watch stays on — power off when done</div>'+
     (wb?mi('wbx','End checkout',`doStopWb('${slot}')`):mi('wbx','Checkout (hold band)',`doWb('${slot}')`))+
     '<div class="menu-sep"></div>'+
     usbToggle+
@@ -1258,11 +1251,16 @@ function grpFlash(slot){
 }
 function menuExecute(ev,slot,isFb,charging,draining,powered,noSw,serial,wb,mode,sshIp,wear,needPwr){
   openMenu(ev,
-    grpHd('Refresh')+grpBox(mi('','Re-identify / power on',`doRefresh('${slot}',${needPwr})`))+
+    (!isFb&&serial?grpHd('Wear')+grpBox(wearItem(slot,wear)):'')+
     grpHd('Power')+grpBox(isFb?grpPowerFb(slot,powered):grpPower(slot,charging,draining,powered,noSw))+
     grpHd('Flashing')+grpBox(grpFlash(slot))+
     (!isFb?grpHd('Workbench')+grpBox(grpWorkbench(slot,serial,wb,mode,sshIp)):'')+
-    (!isFb&&serial?grpHd('Wear')+grpBox(wear?mi('wear','Release wear',`doWear('${slot}',0)`):mi('wear','Arm wear (hold band)',`doWear('${slot}',1)`)):''));
+    grpHd('Refresh')+grpBox(mi('','Re-identify / power on',`doRefresh('${slot}',${needPwr})`)));
+}
+// Wear is the one menu item that stays a button — pink, the deliberate off-rig
+// action, distinct from the plain text links around it.
+function wearItem(slot,wear){
+  return `<button class="menu-wear${wear?' on':''}" onclick="pulseSelf(this);doWear('${slot}',${wear?0:1});closeMenu()" title="${wear?'wear armed — click to release and free the port':'top up and hold this port so the watch is ready to take off the rig'}">${wear?'Release wear':'Arm wear (hold band)'}</button>`;
 }
 function toast(msg){
   // Created on first use — every menu action toasts, and a missing element
