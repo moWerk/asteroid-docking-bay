@@ -17,7 +17,10 @@ _WEB_TEMPLATE = """\
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@400;700&display=swap" rel="stylesheet">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:24px}
+    /* No side margin: the table runs to both screen edges (its own cell padding
+       is the breathing room). Only the header band keeps a little side padding. */
+    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:14px 0 24px}
+    .topbar,.berr,.alert,.hdr{padding-left:10px;padding-right:10px}
     h1{font:700 22px/1.4 'Archivo Narrow',sans-serif;color:#58a6ff;margin-bottom:4px;letter-spacing:1px}
     .hdim{color:#30363d;font-weight:400;font-size:16px;letter-spacing:3px}
     .htxt{letter-spacing:3px}
