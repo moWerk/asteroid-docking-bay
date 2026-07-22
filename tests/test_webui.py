@@ -217,8 +217,10 @@ def test_refresh_button_powers_only_an_off_switchable_port(tmp_path):
     h = tmp_path / "refresh.js"
     h.write_text(_DOM_CAPTURE + JS + global_simple() +
                  f"\nconst S={json.dumps(_SAMPLE)};render(S);"
-                 "console.log(JSON.stringify(Object.values(global.__els)"
-                 ".map(e=>e.innerHTML).join('')));\nprocess.exit(0);\n")
+                 # Only the rendered rows matter here; reading them alone also
+                 # avoids the starfield backdrop bloating (and mangling) the dump.
+                 "console.log(JSON.stringify(global.__els['tb'].innerHTML));"
+                 "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
     html = json.loads(r.stdout.strip().splitlines()[-1])
@@ -415,6 +417,27 @@ def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
     assert "@keyframes tgldot" in _WEB_TEMPLATE, "no animated exec state"
     assert out["pending"] is True, "click did not add the exec state"
     assert out["url"] == "/api/on/1-2/2", f"click did not POST the on op: {out['url']}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_starfield_seeds_a_deterministic_field(tmp_path):
+    """seedStars paints a fixed, seeded star field into the #stars backdrop —
+    the same field every load — with drifting, coloured stars."""
+    import json
+    assert 'id="stars"' in _WEB_TEMPLATE and "#stars{position:fixed" in _WEB_TEMPLATE
+    assert "z-index:-1" in _WEB_TEMPLATE.split("#stars{")[1].split("}")[0], "starfield not behind content"
+    h = tmp_path / "stars.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nseedStars();const a=global.__els['stars'].innerHTML;"
+                 "seedStars();const b=global.__els['stars'].innerHTML;"
+                 "console.log(JSON.stringify({eq:a===b,n:(a.match(/<span/g)||[]).length,drift:a.indexOf('drift')>=0}));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["n"] >= 100, f"too few stars: {out['n']}"
+    assert out["eq"], "star field is not deterministic for a fixed seed"
+    assert out["drift"], "stars are not animated"
 
 
 def test_menu_trigger_is_a_markerless_pill():

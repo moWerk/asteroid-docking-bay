@@ -17,9 +17,10 @@ _WEB_TEMPLATE = """\
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@400;700&display=swap" rel="stylesheet">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    /* No side margin: the table runs to both screen edges (its own cell padding
-       is the breathing room). Only the header band keeps a little side padding. */
-    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:14px 0 24px}
+    /* Side margin scales with the viewport: ~0 up to a 960px (half-FHD/tablet)
+       width so the table uses the whole screen, then grows on larger displays
+       so an FHD view is not stretched edge to edge. */
+    body{background:#0d1117;color:#c9d1d9;font:13px/1.6 'Cascadia Code','Fira Mono',monospace;padding:14px max(0px,calc((100vw - 960px) * 0.17)) 24px}
     .topbar,.berr,.alert,.hdr{padding-left:10px;padding-right:10px}
     h1{font:700 22px/1.4 'Archivo Narrow',sans-serif;color:#58a6ff;margin-bottom:4px;letter-spacing:1px}
     .hdim{color:#30363d;font-weight:400;font-size:16px;letter-spacing:3px}
@@ -27,6 +28,12 @@ _WEB_TEMPLATE = """\
     .meta{color:#6e7681;font-size:11px;margin-bottom:20px}
     /* Fixed top bar: left/right pinned so varying string lengths (the
        update stamp) can never reposition their neighbours. */
+    /* Seeded starfield backdrop (moWerk's Depth Drift): a fixed full-viewport
+       layer behind everything, so the header and the side margins are painted
+       with drifting stars. The table sits on its own solid background. */
+    @keyframes drift{from{transform:translateX(-5px)}to{transform:translateX(5px)}}
+    #stars{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+    #stars span{position:absolute;line-height:1}
     .topbar{display:flex;justify-content:space-between;color:#6e7681;font-size:11px;margin-bottom:2px}
     .berr{color:#f85149;font-size:12px;margin-bottom:6px}
     .berr:empty{display:none}
@@ -38,9 +45,9 @@ _WEB_TEMPLATE = """\
     /* Control Center overlay */
     .cn{cursor:pointer;border-bottom:1px dotted #4d5561}
     .cn:hover{color:#58a6ff;border-bottom-color:#58a6ff}
-    /* A disconnected watch's name dims, so the connected (full-white) ones
-       stand out at a glance. */
-    .offname{opacity:.8}
+    /* A disconnected watch's name dims well down, so the connected (full-white)
+       ones stand out at a glance. */
+    .offname{opacity:.6}
     .cc{position:fixed;z-index:100;display:none;width:auto;min-width:340px;max-width:94vw;background:#161b22;border:1px solid #30363d;border-radius:8px;box-shadow:0 10px 34px rgba(0,0,0,.6);font-size:12px;overflow:hidden}
     .cc-cols{display:flex;flex-wrap:wrap}
     .cc-col{flex:1 1 210px;min-width:200px}
@@ -151,7 +158,7 @@ _WEB_TEMPLATE = """\
     /* Fluid: columns follow the page width with a minimal content margin, so
        the table always fits the viewport (no forced horizontal scroll). Column
        positions may shift slightly with string length — that's fine. */
-    .tblwrap{overflow-x:auto}
+    .tblwrap{overflow-x:auto;background:#0d1117}   /* solid over the starfield so rows stay readable */
     table{width:100%;border-collapse:collapse}
     th{color:#6e7681;text-align:left;padding:5px 12px;border-bottom:1px solid #21262d;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:normal}
     td{padding:7px 8px;border-bottom:1px solid #161b22;vertical-align:middle}
@@ -240,7 +247,7 @@ _WEB_TEMPLATE = """\
        in-flight EXEC state (added on click, cleared when the row rebuilds
        confirmed) dim-phases the whole toggle amber and grows/shrinks the dot —
        a livelier version of the plain cmd-pulse. */
-    .tgl{display:inline-flex;align-items:center;justify-content:center;gap:4px;box-sizing:border-box;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;transition:background .12s,transform .12s}
+    .tgl{display:inline-flex;align-items:center;justify-content:flex-start;gap:4px;box-sizing:border-box;width:54px;min-height:var(--pill-h);background:none;border:1px solid;padding:2px 9px 2px 6px;border-radius:var(--pill-r);cursor:pointer;font:var(--pill-fs) monospace;vertical-align:middle;margin-right:3px;transition:background .12s,transform .12s}
     .tgl-on{border-color:#3fb950;color:#3fb950}.tgl-on:hover{background:#0f2a18}
     .tgl-off{border-color:#30363d;color:#6e7681}.tgl-off:hover{background:#161b22}
     .tgl:active{transform:scale(.92);transition:transform 55ms ease-out}
@@ -324,14 +331,15 @@ _WEB_TEMPLATE = """\
       .wr td::before{color:#8b949e;font-size:13px;text-transform:uppercase;
                      letter-spacing:.5px;flex:none;font-weight:400}
       .wr td:nth-child(8){order:1;display:block;text-align:left;padding-top:10px}  /* actions span the card, last */
-      /* Bigger, tappable controls */
-      .wr .btn,.wr .tgl{font-size:15px;padding:9px 13px;margin:3px .3em}
+      /* Bigger, tappable controls (the toggle keeps its fixed 54px width). */
+      .wr .btn{font-size:15px;padding:9px 13px;margin:3px .3em}
       .wr .cbadge,.wr .scrn{font-size:14px;padding:3px 9px}
       .lr td{padding:0}
     }
   </style>
 </head>
 <body>
+  <div id="stars"></div>
   <div class="topbar"><span id="ts">loading&hellip;</span><span id="ver"></span></div>
   <div id="berr" class="berr"></div>
   <div id="alert" class="alert"></div>
@@ -1572,6 +1580,29 @@ function doRemap(c){
   es.addEventListener('done',()=>{box.textContent+='\\n\\u2500\\u2500 done \\u2500\\u2500\\n';box.scrollTop=box.scrollHeight;es.close();delete srcs[c];setTimeout(refresh,1000)});
   es.onerror=()=>{box.textContent+='\\n\\u2500\\u2500 connection lost \\u2500\\u2500\\n';es.close();delete srcs[c];refresh()};
 }
+// Seeded starfield (mulberry32 PRNG → same field every load), painted once into
+// the fixed backdrop. Ported from moWerk's Depth Drift generator: 150 stars,
+// size/opacity/drift-speed by depth for parallax.
+function seedStars(){
+  const seed=33,density=1,speed=1;
+  let a=seed>>>0;
+  const rng=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};
+  const pal=()=>{const t=rng();return t<0.08?'#e3b341':t<0.26?'#539bf5':t<0.6?'#8b96a5':'#5b6470';};
+  const chars=['·','·','⋆','˚','.','✦'];
+  // Count scales with viewport AREA so the density is constant regardless of
+  // screen size (a fixed count spread over a full page reads far too sparse).
+  const area=(typeof window!=='undefined'&&window.innerWidth)?window.innerWidth*window.innerHeight:1e6;
+  const N=Math.round(area/2125*density);let html='';
+  for(let i=0;i<N;i++){
+    const x=(rng()*100).toFixed(2),y=(rng()*100).toFixed(2),depth=rng();
+    const ch=chars[Math.floor(rng()*chars.length)],c=pal();
+    const fs=(7.8+depth*9.6).toFixed(1),o=Math.min(1,0.3+depth*0.72).toFixed(2);
+    const an='drift '+((28+(1-depth)*45)/speed).toFixed(0)+'s ease-in-out '+(rng()*10).toFixed(1)+'s infinite alternate';
+    html+=`<span style="left:${x}%;top:${y}%;font-size:${fs}px;color:${c};opacity:${o};animation:${an}">${ch}</span>`;
+  }
+  const el=document.getElementById('stars');if(el)el.innerHTML=html;
+}
+seedStars();
 refresh();setInterval(refresh,15000);
 </script>
 </body>
