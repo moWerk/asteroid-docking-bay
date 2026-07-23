@@ -39,6 +39,8 @@ _JSON_ROUTES = [
     ("GET",  "/api/watch/<serial>/timeline",       "watch.timeline",  {},             False),
     ("GET",  "/api/watch/<serial>/settings",       "watch.settings_read", {},         False),
     ("GET",  "/api/watch/<serial>/hands",          "watch.hands",     {},             False),
+    ("GET",  "/api/weather",                       "weather.get",     {},             False),
+    ("POST", "/api/watch/<serial>/weather-sync",   "watch.weather_sync", {},          False),
     ("POST", "/api/watch/<serial>/settime",        "watch.settime",   {},             False),
     ("POST", "/api/watch/<serial>/notify",         "watch.notify",    {},             False),
     ("POST", "/api/watch/<serial>/buzz",           "watch.buzz",      {},             False),
@@ -187,6 +189,13 @@ def serve(args, cfg: dict):
         resp.content_type = "application/json"
         d = _call("watch.quickpanel_set",
                   {"serial": serial, "id": tid, "on": state == "on"})
+        return json.dumps(d)
+
+    # <city> is a URL-encoded place name (bottle decodes it); geocoded server-side.
+    @app.post("/api/weather/location/<city>")
+    def api_weather_location(city):
+        resp.content_type = "application/json"
+        d = _call("weather.set_location", {"city": city})
         return json.dumps(d)
 
     @app.get("/api/watch/<serial>/screenshot.jpg")

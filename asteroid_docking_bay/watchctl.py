@@ -375,6 +375,23 @@ class Watch:
         return {"position": f"{int(m.group(1))}:{m.group(2)}",
                 "h": int(m.group(1)), "m": int(m.group(2))}
 
+    def weather_sync(self, writeset) -> bool:
+        """Write a weather dconf set (from weather.dconf_writeset) to the watch,
+        one key at a time in the ceres session — the same proven path the
+        settings toggles use. Strings become single-quoted gvariant literals,
+        ints are written bare. So the on-watch weather app + Today screen show it."""
+        ok = True
+        for key, typ, val in writeset:
+            gv = ("'" + str(val).replace("'", "") + "'") if typ == "string" else str(int(val))
+            rc, _, err = self.user_cmd(
+                f"HOME=/home/ceres dconf write {shlex.quote(key)} {shlex.quote(gv)}",
+                timeout=10)
+            if rc != 0:
+                log.warning("weather_sync %s on %s failed: %s",
+                            key, self.serial, err.strip() or f"rc={rc}")
+                ok = False
+        return ok
+
     def settings_write(self, key: str, value) -> bool:
         """Write one togglable setting over dconf in the ceres session (same env
         the read uses). Refuses any key not in the writable catalog — display-

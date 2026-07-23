@@ -99,6 +99,9 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
 | `watch.hands` | physical hand position (HH:MM) for a hands watch (narwhal sysfs), or null |
+| `weather.get` | current forecast for the stored location (host-side Open-Meteo fetch, no watch) |
+| `weather.set_location` | geocode a city name and store the fleet-wide weather location |
+| `watch.weather_sync` | fetch the forecast and write it to a watch's weather dconf |
 | `watch.settings_read` | mirrored watch settings (dconf appearance/display/nightstand), read-only |
 | `watch.settings_write` | write one togglable mirrored setting over dconf (catalog-gated boolean keys only) |
 | `watch.set_datetime` | set the watch clock to an explicit validated YYYY-MM-DD HH:MM:SS |
