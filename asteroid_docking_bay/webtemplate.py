@@ -247,7 +247,9 @@ _WEB_TEMPLATE = """\
     .cbadge.fb{border-color:#f0883e;color:#f0883e}
     .cbadge.adb{border-color:#3fb950;color:#3fb950}
     .cbadge.ssh{border-color:#d29922;color:#d29922}
+    .cbadge.wifi{border-color:#39c5cf;color:#39c5cf}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
+    .orbit-hint{color:#a78bfa;font-size:.85em;opacity:.85}
     .smt{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
     /* Smart type is blue, not green — green is reserved for the power/charge
        states so it keeps its weight. The known type (ppps) is the brighter
@@ -703,9 +705,10 @@ function reconcileRows(tb, htmls){
   tb.replaceChildren(...out);
 }
 function orbitBadge(p){
-  // The connection column for an orbit row: a live WiFi badge or an honest
-  // offline note with the last-live age. No power/adb state — orbit has no wire.
-  if(p.reachable)return `<span class="wifiok" title="reachable over WiFi at ${esc(p.ip||'')}">WiFi</span>`;
+  // The connection column for an orbit row: a WiFi pill with the IP (the wire it
+  // rides), physical-first grammar shared with adb/ssh. Offline → an honest note
+  // with the last-live age. A BT pill (+serial) will join this when BT lands.
+  if(p.reachable)return `<span class="cbadge wifi" title="reachable over WiFi at ${esc(p.ip||'')}">WiFi <span class="dim">${esc(p.ip||'')}</span></span>`;
   const age=fmtAge(p.last_live_ts);
   return `<span class="dim" title="off WiFi — last live ${age||'unknown'} ago">offline${age?' &middot; '+age:''}</span>`;
 }
@@ -791,7 +794,9 @@ function render(data){
         const fbLabel=p.fastboot_product?`fastboot: ${esc(p.fastboot_product)}`:(p.adb==='fastboot'?'fastboot':'');
         const nameCell=p.unmapped
           ?`<span class="dim">${esc(p.codename)} <span style="font-size:.8em;opacity:.6">(click Onboard)</span></span>`
-          :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>');
+          :(p.orbited_codename
+            ?`<span class="dim" title="this port's watch left the cradle and is now in Orbit (on WiFi) — the port is free">${esc(p.orbited_codename)} <span class="orbit-hint">&#8599; orbit</span></span>`
+            :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:'<span class="dim">&mdash;</span>'));
         const adbCell=p.adb==='fastboot'?`<span class="warn">${fbLabel}</span>`
           :mkadbrow(p);
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';

@@ -190,6 +190,26 @@ def test_reach_cache_round_trip():
     assert orbit.is_reachable_cached("never-probed") is False   # unknown → False
 
 
+# ── handoff (rig ↔ orbit) ────────────────────────────────────────────────────
+
+def test_handoff_only_when_undocked_and_reachable_in_orbit():
+    orbit_map = {"S1": {"serial": "S1", "ip": "x"}}
+    up = lambda s: True
+    down = lambda s: False
+    # Left the cradle, still reachable in orbit → hands off.
+    assert ws._port_handed_off("S1", None, orbit_map, up) is True
+    # Still on a wire here → never hands off, whatever orbit says.
+    assert ws._port_handed_off("S1", "device", orbit_map, up) is False
+    assert ws._port_handed_off("S1", "ssh", orbit_map, up) is False
+    assert ws._port_handed_off("S1", "fastboot", orbit_map, up) is False
+    # Undocked but NOT reachable in orbit → stays offline on its port, no handoff.
+    assert ws._port_handed_off("S1", None, orbit_map, down) is False
+    # Undocked, reachable, but never launched into orbit → no handoff.
+    assert ws._port_handed_off("S1", None, {}, up) is False
+    # No serial resolved → no handoff.
+    assert ws._port_handed_off(None, None, orbit_map, up) is False
+
+
 # ── status hub-view ──────────────────────────────────────────────────────────
 
 def test_orbit_hub_view_builds_row_for_undocked_reachable(monkeypatch):

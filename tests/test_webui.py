@@ -274,7 +274,7 @@ def test_orbit_section_renders_rows_and_controls(tmp_path):
     html = json.loads(r.stdout.strip().splitlines()[-1])
     assert 'id="orbip"' in html and "launchOrbit()" in html      # launch-by-IP box
     assert "Orbit" in html                                       # section header
-    assert "wifiok" in html                                      # reachable → WiFi badge
+    assert "cbadge wifi" in html and "10.0.0.9" in html          # reachable → WiFi pill + IP
     assert "offrow" in html                                      # pike is offline/dimmed
     assert "deorbit('CAT'" in html and "deorbit('PIKE'" in html  # de-orbit per serial
     assert "openCC('CAT'" in html                                # codename opens CC
@@ -282,6 +282,32 @@ def test_orbit_section_renders_rows_and_controls(tmp_path):
     # No power toggle / smart / menuExecute on an orbit row (no wire to act on).
     orbit_part = html[html.index("wr-orbit-CAT"):]
     assert "pwrGo(" not in orbit_part and "menuExecute(" not in orbit_part
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_handed_off_port_renders_available_with_orbit_hint(tmp_path):
+    """A port whose watch handed off to orbit renders as an AVAILABLE empty port
+    (power toggle + Onboard) with a dim '<codename> ↗ orbit' hint — not the watch,
+    which now lives in the Orbit section."""
+    import json
+    doc = {"version": "t", "thresholds": {"low": 40, "high": 80},
+           "drain_floor": 15, "wearable_min_hours": 24,
+           "hubs": [{"location": "1-2", "description": "Hub", "hidden": False,
+                     "ports": [
+               {"port": 1, "codename": None, "slot_loc": "1-2", "power": True,
+                "smart": True, "adb": None, "battery": None, "empty": True,
+                "orbited_codename": "skipjack", "socket": 1}]}]}
+    h = tmp_path / "ho.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 f"\nconst S={json.dumps(doc)};render(S);"
+                 "console.log(JSON.stringify(global.__els['tb'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "skipjack" in html and "orbit-hint" in html   # whose port, now in orbit
+    assert "pwrGo(this,'1-2:1')" in html                 # port is available
+    assert "doRemap('1-2:1')" in html                    # Onboard offered
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

@@ -390,10 +390,13 @@ def _web_status_data(cfg: dict) -> list[dict]:
     hub_locs = set(physical.keys())
     drain_summaries = _latest_drain_summaries()
     result: list[dict] = []
-    # Serials that have a home on a physical hub. An orbiting watch that also
-    # lives on the rig shows on its USB row (dock wins); only watches with no
-    # physical port surface in the Orbit section, so nothing is listed twice.
-    docked_serials: set[str] = set()
+    # Serials CURRENTLY connected on a physical port (adb/ssh/fastboot). A watch
+    # that leaves the cradle but is still reachable in orbit hands off: it drops
+    # out of its hub row (the port frees to available) and surfaces in the Orbit
+    # section; redocking reverses it. So the Orbit section excludes exactly the
+    # watches physically present now — not the ones merely mapped to a port.
+    connected_serials: set[str] = set()
+    orbit_here = orbit_members(cfg)
 
     for cfg_hub in cfg.get("hubs", []):
         loc         = cfg_hub["location"]
@@ -432,12 +435,26 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 serial = (next((x for x in serials_for_codename if x in devices), None)
                           or next((x for x in serials_for_codename if x in fb_devices), None)
                           or (serials_for_codename[0] if serials_for_codename else None))
-            if serial:
-                docked_serials.add(serial)
             adb_state = _resolve_conn_state(
                 _adb_state(devices, serial) if serial else None,
                 bool(serial and serial in fb_devices),
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
+            if serial and adb_state in ("device", "ssh", "fastboot"):
+                connected_serials.add(serial)
+            elif _port_handed_off(serial, adb_state, orbit_here,
+                                  orbit.is_reachable_cached):
+                # Handoff: this port's watch left the cradle but is reachable in
+                # orbit — free the port to available and let the Orbit section
+                # show it. A dim hint keeps the port's identity ("skipjack ↗").
+                hub_ports.append({
+                    "port": port_num, "codename": None, "slot_loc": loc,
+                    "power": power, "smart": smart, "adb": None,
+                    "battery": None, "empty": True,
+                    "orbited_codename": codename,
+                    "socket": sockets.get(port_str),
+                    "excluded": excludes.get(port_str),
+                })
+                continue
             if adb_state == "device":
                 battery, screen_forced, charge_status = battery_and_screen(serial)
             elif adb_state == "ssh":
@@ -636,7 +653,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
         socks = [p["socket"] for p in h["ports"] if p.get("socket") is not None]
         return (h["location"].split(".")[0], min(socks) if socks else 9999)
     result.sort(key=_hub_key)
-    orbit_view = _orbit_hub_view(cfg, docked_serials)
+    orbit_view = _orbit_hub_view(cfg, connected_serials)
     if orbit_view:
         result.append(orbit_view)          # always last, below the physical hubs
     _persist_exact_codenames(_detected_exact)
@@ -646,16 +663,25 @@ def _web_status_data(cfg: dict) -> list[dict]:
     return result
 
 
-def _orbit_hub_view(cfg: dict, docked_serials: set) -> "dict | None":
-    """The Orbit port as a virtual hub-view: one row per orbiting watch that has
-    no physical port right now. Reachability comes from the warmer-fed cache and
-    battery/geometry from last_seen, so this stays pure cache reads — no probe,
-    no block. None when nothing is in orbit (the section then does not render)."""
+def _port_handed_off(serial, adb_state, orbit_map, reachable) -> bool:
+    """True when a mapped port's watch has left the cradle but is reachable in
+    orbit: not connected on any wire here, yet an orbit member the warmer can
+    still reach. Such a port frees to available and the watch shows in Orbit."""
+    return bool(serial and adb_state not in ("device", "ssh", "fastboot")
+                and serial in orbit_map and reachable(serial))
+
+
+def _orbit_hub_view(cfg: dict, connected_serials: set) -> "dict | None":
+    """The Orbit port as a virtual hub-view: one row per orbiting watch that is
+    not physically on a rig port right now (a docked watch stays on its USB row;
+    an undocked one that is still reachable hands off to here). Reachability comes
+    from the warmer-fed cache and battery/geometry from last_seen, so this stays
+    pure cache reads — no probe, no block. None when nothing is in orbit."""
     members = orbit_members(cfg)
     rows: list[dict] = []
     for serial, member in members.items():
-        if serial in docked_serials:
-            continue                        # on the rig now → its USB row wins
+        if serial in connected_serials:
+            continue                        # on a rig port now → its USB row wins
         reachable = orbit.is_reachable_cached(serial)
         cached = last_seen.get(serial) or {}
         machine = member.get("codename") or find_codename_for_serial(cfg, serial)
