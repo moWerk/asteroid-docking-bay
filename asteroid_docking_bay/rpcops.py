@@ -46,6 +46,7 @@ from .watchimg import watch_image_bytes
 from .variants import image_of
 from .weather import dconf_writeset, fetch_forecast, geocode
 from . import orbit
+from .registry import registry
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
@@ -191,6 +192,16 @@ def _watch_cc(args):
         # path); fold it in so the CC shows the real resolution + can mask the
         # screen correctly.
         geo = (last_seen.get(serial) or {}).get("geometry")
+        # Fold this sighting into the Fleet Registry: identity/versions get
+        # change-logged, battery/ip kept as latest. Fills the registry from the
+        # read we already did, no extra device traffic.
+        registry.note(serial, source=tkind,
+                      codename=(geo or {}).get("machine"),
+                      resolution=(geo or {}).get("resolution"),
+                      kernel=data.get("kernel"), qt=data.get("qt"),
+                      release=data.get("release"), soc=data.get("soc"),
+                      wlanmac=data.get("wlanmac"), btmac=data.get("btmac_self"),
+                      battery=data.get("bat_cap"), ip=data.get("ip"))
         # The link that answered IS the watch's USB gadget mode (ssh/developer
         # vs adb), and its assigned SSH IP lives in config — surface both so the
         # Network tab shows the truth however it was opened, not the click's
@@ -338,6 +349,10 @@ def _orbit_launch(args):
         cfg = load_config()
         orbit_add(cfg, member)
         save_config(cfg)
+    registry.note(member["serial"], source="orbit",
+                  codename=member.get("codename"),
+                  resolution=member.get("resolution"),
+                  wlanmac=member.get("wlanmac"), ip=member.get("ip"))
     return {"ok": True, "member": member}
 
 

@@ -16,6 +16,7 @@ from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for
                      find_port_for_codename, find_serial_for_loc_port,
                      is_port_smart, is_slot_smart, load_config, orbit_members)
 from . import fastboot, orbit, usb
+from .registry import registry
 from .usb import uhubctl_get_power, uhubctl_set_power
 from .transport import SshTransport
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
@@ -219,6 +220,7 @@ def _background_warmer() -> None:
                         if bat is not None:
                             last_seen.record(serial, battery=bat,
                                              screen_forced=screen)
+                            registry.note(serial, source="orbit", battery=bat)
                     except Exception as e:
                         log.debug("orbit battery %s: %s", serial, e)
                 time.sleep(0.1)

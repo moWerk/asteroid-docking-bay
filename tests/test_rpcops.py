@@ -173,6 +173,29 @@ def test_watch_cc_offline_uncached_is_empty(monkeypatch, tmp_path):
     assert rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"}) == {}
 
 
+def test_watch_cc_feeds_the_registry(monkeypatch, tmp_path):
+    # A live CC read must fold the watch into the Fleet Registry: identity +
+    # versions from the blob, codename/resolution from cached geometry, with
+    # btmac_self mapped to the registry's btmac. (registry is tmp-isolated by
+    # the autouse conftest fixture.)
+    from asteroid_docking_bay.registry import registry
+    ls = LastSeen(tmp_path / "ls.json")
+    monkeypatch.setattr(rpcops, "last_seen", ls)
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    ls.record("S1", geometry={"machine": "skipjack", "resolution": "360x360"})
+    cc = {"kernel": "3.18.24", "qt": "6.11.2", "soc": "APQ8009W",
+          "wlanmac": "aa:bb", "btmac_self": "cc:dd", "bat_cap": 100}
+    monkeypatch.setattr(rpcops, "Watch",
+                        lambda s, transport=None: _FakeWatch(s, cc))
+    rpcops.DISPATCH._data["watch.cc"]({"serial": "S1"})
+    rec = registry.get("S1")
+    assert rec["fields"]["kernel"] == "3.18.24" and rec["fields"]["qt"] == "6.11.2"
+    assert rec["fields"]["codename"] == "skipjack"
+    assert rec["fields"]["resolution"] == "360x360"
+    assert rec["fields"]["btmac"] == "cc:dd"        # btmac_self → registry btmac
+    assert rec["last_source"] == "adb"
+
+
 def test_fbreport_writes_downloadable_text(monkeypatch, tmp_path):
     monkeypatch.setattr(rpcops, "DIAG_ROOT", tmp_path)
     monkeypatch.setattr(rpcops, "load_config", lambda: {})
