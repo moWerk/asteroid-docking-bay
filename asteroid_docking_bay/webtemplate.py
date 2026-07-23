@@ -181,6 +181,7 @@ _WEB_TEMPLATE = """\
     .hmodes{gap:4px;align-items:center}
     .hmode{background:#0d1420;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:2px 9px;font-size:12px;cursor:pointer;font-family:inherit}
     .hmode.on{border-color:#a78bfa;color:#d6c7ff;background:rgba(167,139,250,.12)}
+    .hchoreo,.hcal{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:6px}
     .wimg-ctl{display:flex;flex-direction:column;gap:6px;align-items:center;padding:2px 6px 8px}
     .wimg-ctl-r{display:flex;gap:10px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
@@ -1534,6 +1535,7 @@ let _handsSerial=null, _handsCodename=null, _handsDevEl=null, _handsDrag=null;
 let handsMode='time';
 let handsCal={min_deg:102,hr_deg:108};   // physical degrees at motor value 0, per hand
 let handsVal={min:0,hr:0};               // current motor values (0..179)
+let handsMatch={min:0,hr:0};             // Calibrate: web angles the user drags onto the real hands
 // motor value (0..179, 2 deg/step) <-> clock angle (deg, 12 o'clock = 0)
 function valToAngle(v,off){return ((off+v*2)%360+360)%360;}
 function angleToVal(a,off){return ((Math.round(((((a-off)%360)+360)%360)/2))%180+180)%180;}
@@ -1565,19 +1567,25 @@ function loadHands(serial,codename){
     _renderHandsPanel(hd.position);
   }).catch(()=>{});
 }
+function _handsDispAngle(which){
+  // Calibrate shows where the user is matching (handsMatch); Time/Free show the
+  // current motor value mapped through the offset.
+  if(handsMode==='calibrate')return handsMatch[which];
+  return valToAngle(handsVal[which], which==='hr'?handsCal.hr_deg:handsCal.min_deg);
+}
 function _renderHands(){
   const el=_handsDevEl, cn=_handsCodename; if(!el||!cn)return;
-  const drag=handsMode==='free';
+  const drag=handsMode==='free'||handsMode==='calibrate';
   el.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:2';
-  const hand=(part,val,off,which)=>`<img class="hand-svg" alt="" draggable="false" onerror="this.remove()" `+
+  const hand=(part,which)=>`<img class="hand-svg" alt="" draggable="false" onerror="this.remove()" `+
     `src="/api/watch-hand/${encodeURIComponent(cn)}/${part}" onpointerdown="handsDown(event,'${which}')" `+
     `style="position:absolute;left:50%;top:50%;width:${HANDS_SIZE}%;height:${HANDS_SIZE}%;`+
-    `transform:translate(-50%,-50%) rotate(${valToAngle(val,off).toFixed(1)}deg);transform-origin:center center;`+
+    `transform:translate(-50%,-50%) rotate(${_handsDispAngle(which).toFixed(1)}deg);transform-origin:center center;`+
     `pointer-events:${drag?'auto':'none'};cursor:${drag?'grab':'default'};touch-action:none">`;
-  el.innerHTML=hand('hour',handsVal.hr,handsCal.hr_deg,'hr')+hand('minute',handsVal.min,handsCal.min_deg,'min');
+  el.innerHTML=hand('hour','hr')+hand('minute','min');
 }
 function handsDown(ev,which){
-  if(handsMode!=='free')return;
+  if(handsMode!=='free'&&handsMode!=='calibrate')return;
   ev.preventDefault(); ev.stopPropagation();
   _handsDrag=which;
   document.addEventListener('pointermove',handsMoveDrag);
@@ -1591,14 +1599,19 @@ function _handsAngleAt(ev){
 function handsMoveDrag(ev){
   if(!_handsDrag)return;
   const a=_handsAngleAt(ev); if(a===null)return;
-  const off=_handsDrag==='hr'?handsCal.hr_deg:handsCal.min_deg;
-  handsVal[_handsDrag]=angleToVal(a,off);   // snap to the motor's 2 deg steps
+  if(handsMode==='calibrate'){
+    handsMatch[_handsDrag]=(Math.round(a/2)*2)%360;   // web-only: match the real hand (snap 2 deg)
+  }else{
+    const off=_handsDrag==='hr'?handsCal.hr_deg:handsCal.min_deg;
+    handsVal[_handsDrag]=angleToVal(a,off);           // Free: drive the motor (snap 2 deg)
+  }
   _renderHands();
 }
 function handsUpDrag(){
   document.removeEventListener('pointermove',handsMoveDrag);
   document.removeEventListener('pointerup',handsUpDrag);
-  if(_handsDrag){_handsDrag=null; handsCommit();}
+  const wasFree=handsMode==='free';
+  if(_handsDrag){_handsDrag=null; if(wasFree)handsCommit();}   // Calibrate drag never moves the motor
 }
 function handsCommit(){
   if(!_handsSerial)return;
@@ -1607,22 +1620,73 @@ function handsCommit(){
     .catch(()=>toast('hands move failed'));
 }
 function handsSetMode(m){
-  handsMode=m; if(m==='time'&&!_handsDrag)handsVal=handsTimeVals();
+  handsMode=m;
+  if(m==='time'&&!_handsDrag)handsVal=handsTimeVals();
+  else if(m==='calibrate')handsCalRef();
   _renderHands(); _renderHandsPanel();
 }
 function handsToTime(){handsVal=handsTimeVals(); _renderHands(); handsCommit(); toast('hands set to current time');}
+// Calibrate: command a known spread reference (minute 0, hour 90) so the drag can
+// teach the per-hand offset. The web hands start at the ASSUMED position; the user
+// drags/nudges them onto the real hands, then Match learns the offset.
+function handsCalRef(){
+  handsVal={min:0,hr:90};
+  handsMatch={min:valToAngle(0,handsCal.min_deg), hr:valToAngle(90,handsCal.hr_deg)};
+  handsCommit();
+}
+function handsCalNudge(which,delta){
+  handsMatch[which]=((handsMatch[which]+delta)%360+360)%360;   // web-only fine adjust
+  _renderHands();
+}
+function handsCalSave(){
+  // We commanded minute=0, hour=90; the user matched the web to the physical
+  // hands, so physical_angle = offset + value*2  ->  offset = matched - value*2.
+  const minOff=((handsMatch.min-0)%360+360)%360;
+  const hrOff=((handsMatch.hr-180)%360+360)%360;
+  fetch('/api/watch/'+encodeURIComponent(_handsSerial)+'/hands-cal/'+minOff.toFixed(1)+'/'+hrOff.toFixed(1),{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      if(d&&d.ok){handsCal=d.cal; toast('hands calibrated'); handsSetMode('time');}
+      else toast('calibrate save failed');
+    }).catch(()=>toast('calibrate save failed'));
+}
+// Choreography — presets in the calibrated space; each drives motor_move_all.
+function handsGoto(minA,hrA){
+  handsVal={min:angleToVal(minA,handsCal.min_deg), hr:angleToVal(hrA,handsCal.hr_deg)};
+  _renderHands(); handsCommit();
+}
+function handsOverlap(){handsGoto(0,0); toast('hands overlapped at 12');}
+function handsOppose(){handsGoto(0,180); toast('hands opposed (12-6 line)');}
+function handsPark(){handsGoto(180,180); toast('hands parked at 6');}
+function handsSpin(){
+  let step=0; const start={min:handsVal.min,hr:handsVal.hr};
+  const iv=setInterval(()=>{
+    step++;
+    handsVal={min:(start.min+step*30)%180, hr:(start.hr+step*30)%180};
+    _renderHands(); handsCommit();
+    if(step>=6)clearInterval(iv);   // 6 x 30 = 180 steps = one full turn, back to start
+  },500);
+}
 function _renderHandsPanel(position){
   const box=document.getElementById('wimghands'); if(!box)return;
   const tab=(m,l,t)=>`<button class="hmode${handsMode===m?' on':''}" title="${t}" onclick="handsSetMode('${m}')">${l}</button>`;
   const cur=position!=null?`<span class="dim mono" title="driver step counter (raw; re-synced on any move)">${esc(position)}</span>`:'';
+  const act=(fn,l,t)=>`<button class="cc-act mini" onclick="${fn}" title="${t}">${l}</button>`;
   let body='';
   if(handsMode==='time')
-    body=`<span class="dim">the web mirrors the clock</span>`+
-      `<button class="cc-act mini" onclick="handsToTime()" title="drive the physical hands to the current time">Set watch to time</button>`;
+    body=`<span class="dim">the web mirrors the clock</span>`+act('handsToTime()','Set watch to time','drive the physical hands to the current time');
   else if(handsMode==='free')
-    body=`<span class="dim">grab a hand and rotate &mdash; snaps to the motor&rsquo;s 2&deg; steps, moves the watch on release</span>`;
+    body=`<span class="dim">grab a hand and rotate</span>`+
+      `<span class="hchoreo">`+act('handsOverlap()','Overlap','both hands to 12')+
+      act('handsOppose()','Oppose','a straight 12-6 line')+
+      act('handsPark()','Park','both hands to 6, clearing the top of the dial')+
+      act('handsSpin()','Spin','both hands sweep a full turn')+`</span>`;
   else
-    body=`<span class="dim">calibrate &amp; choreography &mdash; landing next</span>`;
+    body=`<span class="dim">drag each web hand onto your watch&rsquo;s real hand, then Match</span>`+
+      `<span class="hcal">min<button class="spin-b" onclick="handsCalNudge('min',-2)">&minus;</button>`+
+      `<button class="spin-b" onclick="handsCalNudge('min',2)">+</button> `+
+      `hr<button class="spin-b" onclick="handsCalNudge('hr',-2)">&minus;</button>`+
+      `<button class="spin-b" onclick="handsCalNudge('hr',2)">+</button>`+
+      act('handsCalSave()','Match','learn the motor offset from your match')+`</span>`;
   box.innerHTML=`<div class="wimg-ctl-r hmodes">${tab('time','Time','read-only: the web shows the clock')}`+
     `${tab('free','Free','grab and rotate a hand to move the real hand')}`+
     `${tab('calibrate','Calibrate','teach the web where the real hands are')}${cur}</div>`+

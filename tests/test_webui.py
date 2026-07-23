@@ -1352,6 +1352,45 @@ def test_live_view_hands_mode_panel(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_hands_calibrate_match_learns_the_offset(tmp_path):
+    """Calibrate commands the reference minute=0/hour=90, so a matched web angle
+    teaches offset = matched - value·2: match {min:100, hr:280} → offsets
+    100 / (280-180)=100, POSTed to the hands-cal route."""
+    import json
+    h = tmp_path / "cal.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nlet _u=[];global.fetch=(u,o)=>{_u.push(u);return Promise.resolve("
+                 "{json:()=>Promise.resolve({ok:true,cal:{min_deg:100,hr_deg:100}})});};"
+                 "_handsSerial='S9';handsMatch={min:100,hr:280};"
+                 "handsCalSave();"
+                 "setTimeout(()=>{console.log(JSON.stringify(_u));process.exit(0);},60);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    urls = json.loads(r.stdout.strip().splitlines()[-1])
+    assert any("/hands-cal/100.0/100.0" in u for u in urls), urls
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_hands_choreography_commands_the_motors(tmp_path):
+    """Choreography presets drive motor_move_all through the calibrated space.
+    With offset 100°: Overlap (both→12/0°) = value 130; Oppose (min→12/0°=130,
+    hour→6/180°=40)."""
+    import json
+    h = tmp_path / "chor.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nlet _u=[];global.fetch=(u,o)=>{_u.push(u);return Promise.resolve("
+                 "{json:()=>Promise.resolve({ok:true})});};"
+                 "_handsSerial='S9';handsCal={min_deg:100,hr_deg:100};"
+                 "handsOverlap();handsOppose();"
+                 "setTimeout(()=>{console.log(JSON.stringify(_u));process.exit(0);},60);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    urls = json.loads(r.stdout.strip().splitlines()[-1])
+    assert any("/hands-move/130/130" in u for u in urls), urls    # Overlap at 12
+    assert any("/hands-move/130/40" in u for u in urls), urls     # Oppose 12-6 line
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_panel_not_rebuilt_while_typing_in_a_field(tmp_path):
     """A 3s poll re-render must not rebuild the panel out from under a focused
     text field (the weather city input) — it dropped focus and the typed text
