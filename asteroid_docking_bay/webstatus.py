@@ -669,7 +669,9 @@ def _orbit_hub_view(cfg: dict, docked_serials: set) -> "dict | None":
             # Control Center treat it exactly like a docked SSH watch.
             "adb": "ssh" if reachable else None,
             "reachable": reachable,
-            "battery": None,
+            # Reachable: the warmer's WiFi reading is live (coloured gauge).
+            # Off WiFi: no live value — the row shows the last-known one stale.
+            "battery": cached.get("battery") if reachable else None,
             "battery_cached": cached.get("battery"),
             "last_live_ts": cached.get("last_live_ts"),
             "geometry": cached.get("geometry"),

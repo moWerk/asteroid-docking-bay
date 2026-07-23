@@ -238,6 +238,52 @@ def test_refresh_button_powers_only_an_off_switchable_port(tmp_path):
     assert flags.get("1-2:4") == "true", f"off port 4 not wired to power: {flags}"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_orbit_section_renders_rows_and_controls(tmp_path):
+    """The virtual Orbit hub renders its own section: a Launch-by-IP box, a WiFi
+    badge for a reachable member, an offline (dimmed) row for an unreachable one,
+    the codename opening the Control Center, and de-orbit wiring keyed on serial —
+    all without the power/port/smart controls a physical row has."""
+    import json
+    doc = {
+        "version": "test", "thresholds": {"low": 40, "high": 80},
+        "drain_floor": 15, "wearable_min_hours": 24,
+        "hubs": [
+            {"location": "1-2", "description": "Hub", "hidden": False, "ports": [
+                {"port": 1, "codename": "skipjack", "serial": "S1", "slot_loc": "1-2",
+                 "power": True, "smart": True, "connected": True, "adb": "device",
+                 "battery": 83, "socket": 1}]},
+            {"location": "orbit", "description": "over the air", "virtual": True,
+             "hidden": False, "ports": [
+                {"codename": "catfish", "serial": "CAT", "orbit": True, "empty": False,
+                 "ip": "10.0.0.9", "adb": "ssh", "reachable": True, "battery": 75,
+                 "battery_cached": 75, "last_live_ts": 1783900000,
+                 "geometry": {"round": True, "resolution": "400x400"}},
+                {"codename": "pike", "serial": "PIKE", "orbit": True, "empty": False,
+                 "ip": "10.0.0.8", "adb": None, "reachable": False, "battery": None,
+                 "battery_cached": 40, "last_live_ts": 1783900000}]},
+        ],
+    }
+    h = tmp_path / "orbit.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 f"\nconst S={json.dumps(doc)};render(S);"
+                 "console.log(JSON.stringify(global.__els['tb'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'id="orbip"' in html and "launchOrbit()" in html      # launch-by-IP box
+    assert "Orbit" in html                                       # section header
+    assert "wifiok" in html                                      # reachable → WiFi badge
+    assert "offrow" in html                                      # pike is offline/dimmed
+    assert "deorbit('CAT'" in html and "deorbit('PIKE'" in html  # de-orbit per serial
+    assert "openCC('CAT'" in html                                # codename opens CC
+    assert 'id="wr-orbit-CAT"' in html and 'id="wr-orbit-PIKE"' in html
+    # No power toggle / smart / menuExecute on an orbit row (no wire to act on).
+    orbit_part = html[html.index("wr-orbit-CAT"):]
+    assert "pwrGo(" not in orbit_part and "menuExecute(" not in orbit_part
+
+
 def test_refreshing_row_pulse_survives_hover():
     """The refreshing-row pulse is the only feedback that a re-identify is in
     flight. An !important background on the :hover rule outranks the animation

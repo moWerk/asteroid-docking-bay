@@ -208,6 +208,14 @@ _WEB_TEMPLATE = """\
     .hub-hdr td{background:rgba(13,20,32,.5);color:#6e7681;padding:9px 12px 4px;border-top:1px solid #21262d;border-bottom:1px solid #21262d;font-size:11px;letter-spacing:1px}
     .hub-hdr:first-child td{border-top:none;padding-top:0}
     .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
+    .orbit-hdr .hl{color:#a78bfa}
+    .orbit-add{float:right;font-weight:400;letter-spacing:0}
+    .orbit-add input{width:118px;background:#0d1420;border:1px solid #30363d;color:#c9d1d9;border-radius:5px;padding:2px 7px;font-size:12px;margin-right:5px}
+    .orbit-add input:focus{border-color:#a78bfa;outline:none}
+    .orbitglyph{opacity:.75;font-size:14px}
+    .wifiok{color:#3fb950;font-weight:600;font-size:11px;letter-spacing:.5px}
+    .orbit-ip{font-size:11px;margin-left:6px}
+    .orbit-row.offrow{opacity:.72}
     tr.empty td{color:#6e7681}
     tr.empty:hover td{background:#0a0d13}
     .on{color:#3fb950}.off{color:#6e7681}.warn{color:#d29922}.err{color:#f85149}.dim{color:#6e7681}
@@ -691,6 +699,62 @@ function reconcileRows(tb, htmls){
   for(const k in _rowSig)if(!seen.has(k))delete _rowSig[k];
   tb.replaceChildren(...out);
 }
+function orbitBadge(p){
+  // The connection column for an orbit row: a live WiFi badge or an honest
+  // offline note with the last-live age. No power/adb state — orbit has no wire.
+  if(p.reachable)return `<span class="wifiok" title="reachable over WiFi at ${esc(p.ip||'')}">WiFi</span>`;
+  const age=fmtAge(p.last_live_ts);
+  return `<span class="dim" title="off WiFi — last live ${age||'unknown'} ago">offline${age?' &middot; '+age:''}</span>`;
+}
+function renderOrbit(hub,rows,lo,hi){
+  // The Orbit section: a virtual hub of watches reached over the air. Same row
+  // grammar as a physical hub minus power/port/smart, so it reads as one fleet.
+  // The header carries a Launch-by-IP box; its row HTML is constant, so
+  // reconcileRows reuses the node and never wipes what is being typed.
+  rows.push(
+    `<tr class="hub-hdr orbit-hdr"><td colspan="8">`+
+    `<span class="hl">&#x1F6F0; Orbit</span><span class="dim">${esc(hub.description)}</span>`+
+    `<span class="orbit-add"><input id="orbip" type="text" placeholder="watch IP on WiFi" `+
+      `spellcheck="false" autocomplete="off" onkeydown="if(event.key==='Enter')launchOrbit()">`+
+    `<button class="btn" onclick="launchOrbit()" title="SSH-probe this address and launch the watch into orbit">Launch</button></span>`+
+    `</td></tr>`
+  );
+  if(!hub.ports.length){
+    rows.push(`<tr class="wr" id="wr-orbit-none"><td colspan="8" class="dim">Nothing in orbit yet — launch a watch by its WiFi IP above.</td></tr>`);
+    return;
+  }
+  hub.ports.forEach(p=>{
+    rows.push(
+      `<tr class="wr orbit-row${p.reachable?'':' offrow'}" id="wr-orbit-${esc(p.serial)}">`+
+      `<td class="pcell"><span class="orbitglyph" title="in orbit — reached over the air, not on a USB port">&#x1F6F0;</span></td>`+
+      `<td class="smtc"></td>`+
+      `<td class="connc">${orbitBadge(p)}</td>`+
+      `<td class="thumb">${mkthumb(p)}</td>`+
+      `<td><b class="cn${p.reachable?'':' offname'}" onclick="openCC('${p.serial}','${p.codename}',event)" title="open Control Center over WiFi (stale if offline)">${esc(p.codename)}</b> <span class="dim orbit-ip">${esc(p.ip||'')}</span></td>`+
+      `<td class="stats"></td>`+
+      `<td class="batc" id="bat-orbit-${esc(p.serial)}">${mkbatCell(p,lo,hi)}</td>`+
+      `<td class="actc"><button class="btn" onclick="deorbit('${p.serial}','${p.codename}')" title="remove from Orbit — the watch itself is untouched">de-orbit</button></td>`+
+      `</tr>`
+    );
+  });
+}
+function launchOrbit(){
+  const el=document.getElementById('orbip');if(!el)return;
+  const ip=(el.value||'').trim();if(!ip){el.focus();return;}
+  el.disabled=true;
+  fetch('/api/orbit/launch/'+encodeURIComponent(ip),{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      el.disabled=false;
+      if(d&&d.ok){toast('launched '+(d.member.codename||d.member.serial)+' into orbit');el.value='';refresh();}
+      else{toast((d&&d.error)||'launch failed — is the watch on WiFi in SSH mode?');el.focus();}
+    }).catch(()=>{el.disabled=false;toast('launch failed');el.focus();});
+}
+function deorbit(serial,name){
+  if(!confirm('De-orbit '+name+'? The watch itself is untouched - this only forgets how to reach it over the air.'))return;
+  fetch('/api/orbit/deorbit/'+encodeURIComponent(serial),{method:'POST'})
+    .then(r=>r.json()).then(d=>{if(d&&d.ok){toast('de-orbited '+name);refresh();}else toast('de-orbit failed');})
+    .catch(()=>toast('de-orbit failed'));
+}
 function render(data){
   const tb=document.getElementById('tb');
   const hubs=(data&&data.hubs)||[];
@@ -712,6 +776,7 @@ function render(data){
   const present=new Set();   // serials enumerated this render, for the plug flash
   hubs.forEach(hub=>{
     if(hub.hidden&&!showHidden)return;
+    if(hub.location==='orbit'){renderOrbit(hub,rows,lo,hi);return;}
     const hubHideBtn=`<a href="#" class="hidebtn" onclick="doHideHub('${esc(hub.location)}');return false" title="${hub.hidden?'un-hide this hub':'hide/show this hub'}">${hub.hidden?'&#x2295;':'&#x2296;'}</a>`;
     rows.push(`<tr class="hub-hdr${hub.hidden?' hiddenrow':''}"><td colspan="8"><span class="hl">${esc(hub.location)}</span><span class="dim">${esc(hub.description)}</span> ${hubHideBtn}</td></tr>`);
     const visPorts=hub.ports.filter(p=>showHidden||!p.excluded);
