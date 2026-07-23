@@ -435,9 +435,16 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 serial = (next((x for x in serials_for_codename if x in devices), None)
                           or next((x for x in serials_for_codename if x in fb_devices), None)
                           or (serials_for_codename[0] if serials_for_codename else None))
+            # Fastboot detection must survive a bootloader serial that differs
+            # from the adb serial (many watches report a different, or no, serial
+            # in fastboot -- beluga: adb 22979c8c vs fastboot 100c0a32). The port
+            # is bound to the adb serial, so also accept a fastboot device sitting
+            # at THIS port's sysfs path -- the port uniquely identifies the watch.
+            in_fastboot = bool((serial and serial in fb_devices)
+                               or f"{loc}.{port_num}" in fb_by_path)
             adb_state = _resolve_conn_state(
                 _adb_state(devices, serial) if serial else None,
-                bool(serial and serial in fb_devices),
+                in_fastboot,
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             if serial and adb_state in ("device", "ssh", "fastboot"):
                 connected_serials.add(serial)
