@@ -419,6 +419,14 @@ class Watch:
                 ok = False
         return ok
 
+    def weather_read(self):
+        """The raw weather dconf dump currently stored on the watch (ceres
+        session); None if unreadable. The caller parses it with
+        weather.parse_watch_weather — so the UI can show on-watch vs incoming."""
+        rc, out, _ = self.user_cmd(
+            "HOME=/home/ceres dconf dump /org/asteroidos/weather/", timeout=12)
+        return out if rc == 0 else None
+
     def settings_write(self, key: str, value) -> bool:
         """Write one togglable setting over dconf in the ceres session (same env
         the read uses). Refuses any key not in the writable catalog — display-

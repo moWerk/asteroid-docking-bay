@@ -41,6 +41,7 @@ _JSON_ROUTES = [
     ("GET",  "/api/watch/<serial>/hands",          "watch.hands",     {},             False),
     ("GET",  "/api/weather",                       "weather.get",     {},             False),
     ("POST", "/api/watch/<serial>/weather-sync",   "watch.weather_sync", {},          False),
+    ("GET",  "/api/watch/<serial>/weather-on-watch", "watch.weather_read", {},         False),
     ("POST", "/api/watch/<serial>/settime",        "watch.settime",   {},             False),
     ("POST", "/api/watch/<serial>/notify",         "watch.notify",    {},             False),
     ("POST", "/api/watch/<serial>/buzz",           "watch.buzz",      {},             False),

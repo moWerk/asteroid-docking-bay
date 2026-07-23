@@ -108,6 +108,45 @@ def fetch_forecast(lat, lon, _get=_http_get):
         return []
 
 
+def parse_watch_weather(text):
+    """Parse `dconf dump /org/asteroidos/weather/` into what is stored on the
+    watch: {city, timestamp, days:[{id, min_k, max_k}]}. Temps stay Kelvin (as
+    stored); ints may carry a `uint32`/`int32` prefix. Empty dump → empty days."""
+    section, city, ts, days = "", None, None, {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip("/")     # "" for the root, "day0" etc.
+            continue
+        if "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip().strip("'")
+        def _int(s):
+            try:
+                return int(s.split()[-1])       # "uint32 800" -> 800
+            except (ValueError, IndexError):
+                return None
+        if section == "":
+            if k == "city-name":
+                city = v
+            elif k == "timestamp-day0":
+                ts = _int(v)
+        elif section.startswith("day"):
+            idx = _int(section[3:])
+            if idx is None:
+                continue
+            d = days.setdefault(idx, {})
+            if k == "id":
+                d["id"] = _int(v)
+            elif k == "min-temp":
+                d["min_k"] = _int(v)
+            elif k == "max-temp":
+                d["max_k"] = _int(v)
+    return {"city": city, "timestamp": ts,
+            "days": [days[i] for i in sorted(days)]}
+
+
 def dconf_writeset(city, days, ts=None):
     """The (key, type, value) triples to write to a watch's weather dconf.
     type is 'string' or 'int'; ts defaults to now (epoch s) = the date of day0."""

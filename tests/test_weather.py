@@ -148,3 +148,21 @@ def test_watch_weather_sync_op_needs_a_location(monkeypatch):
     monkeypatch.setattr(rpcops, "load_config", lambda: {})
     d = rpcops.DISPATCH._data["watch.weather_sync"]({"serial": "S1"})
     assert d["ok"] is False and "no location" in d["error"]
+
+
+def test_parse_watch_weather_reads_stored_dconf():
+    from asteroid_docking_bay.weather import parse_watch_weather
+    dump = ("[/]\ncity-name='Berlin, DE'\ntimestamp-day0=1784000000\n\n"
+            "[day0]\nid=800\nmin-temp=283\nmax-temp=293\n\n"
+            "[day1]\nid=uint32 500\nmin-temp=280\nmax-temp=288\n")
+    w = parse_watch_weather(dump)
+    assert w["city"] == "Berlin, DE" and w["timestamp"] == 1784000000
+    assert len(w["days"]) == 2
+    assert w["days"][0] == {"id": 800, "min_k": 283, "max_k": 293}
+    assert w["days"][1]["id"] == 500          # uint32 prefix stripped
+
+
+def test_parse_watch_weather_empty_and_junk():
+    from asteroid_docking_bay.weather import parse_watch_weather
+    assert parse_watch_weather("") == {"city": None, "timestamp": None, "days": []}
+    assert parse_watch_weather(None) == {"city": None, "timestamp": None, "days": []}

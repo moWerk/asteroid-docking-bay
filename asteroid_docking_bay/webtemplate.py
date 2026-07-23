@@ -95,6 +95,7 @@ _WEB_TEMPLATE = """\
     .wx-temp{font-size:15px;color:#c9d1d9;font-variant-numeric:tabular-nums}
     .wx-city{font-size:11px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .wx-none{padding:2px 12px 6px;color:#8b949e;font-size:12px}
+    .wx-onwatch{padding:1px 12px 4px;font-size:12px;color:#c9d1d9}
     .wx-set{display:flex;gap:6px;padding:2px 12px 10px}
     .wx-in{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:5px 8px;font:inherit;font-size:12px}
     .cc-acts{padding:0 12px 12px}
@@ -1070,6 +1071,7 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   if(ctlTab==='bat')biHistFetch(serial);
   if(ctlTab==='set')settingsFetch(serial);
   if(ctlTab==='sys'&&wxData===null)wxFetch();
+  if(ctlTab==='sys'&&ctlSerial&&wxOnWatch[ctlSerial]===undefined)wxFetchOnWatch(ctlSerial);
   if(ctlCache[serial])renderControl(ctlCache[serial]);   // instant, from the last open
   else{cc.innerHTML=ctlChrome(null,`<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`);ctlPlace();
        paintStale(serial,()=>ctlSerial,()=>!!ctlCache[serial],renderControl);}
@@ -1086,6 +1088,7 @@ function ctlTabTo(tab){
   if(tab==='bat')biHistFetch(ctlSerial);   // keeps every metric filling regardless
   if(tab==='set')settingsFetch(ctlSerial);
   if(tab==='sys'&&wxData===null)wxFetch();
+  if(tab==='sys'&&ctlSerial&&wxOnWatch[ctlSerial]===undefined)wxFetchOnWatch(ctlSerial);
   renderControl(ctlCache[ctlSerial]||null);
 }
 function ctlFetch(){
@@ -1190,12 +1193,19 @@ function wxIcon(id){id=+id;
   if(id===801)return 'partlysunny';
   return 'cloudy';
 }
-let wxData=null;
+let wxData=null, wxOnWatch={};   // wxData = incoming forecast (global); wxOnWatch = per-serial stored
 function wxFetch(){
   fetch('/api/weather').then(r=>r.json()).then(d=>{
     wxData=d;
     if(ctlSerial&&ctlTab==='sys')renderControl(ctlCache[ctlSerial]||{});
   }).catch(()=>{});
+}
+function wxFetchOnWatch(serial){
+  wxOnWatch[serial]=null;   // "reading…" until it lands
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/weather-on-watch').then(r=>r.json()).then(d=>{
+    wxOnWatch[serial]=(d&&d.ok)?d.weather:{};
+    if(ctlSerial===serial&&ctlTab==='sys')renderControl(ctlCache[serial]||{});
+  }).catch(()=>{wxOnWatch[serial]={};});
 }
 function wxSetLocation(){
   const inp=document.getElementById('wxcity'); if(!inp||!inp.value.trim())return;
@@ -1210,7 +1220,19 @@ function wxSync(serial){
   toast('syncing weather\\u2026');
   fetch('/api/watch/'+encodeURIComponent(serial)+'/weather-sync',{method:'POST'}).then(r=>r.json()).then(d=>{
     toast(d.ok?('weather synced'+(d.city?': '+d.city:'')):('weather sync failed'+(d.error?' \\u2014 '+d.error:'')));
+    if(d.ok)wxFetchOnWatch(serial);   // refresh the on-watch line to what we just wrote
   }).catch(()=>toast('weather sync failed'));
+}
+function _wxOnWatchLine(){
+  const w=ctlSerial?wxOnWatch[ctlSerial]:undefined;
+  if(w===undefined)return '';
+  if(w===null)return `<div class="wx-onwatch dim">on watch: reading&hellip;</div>`;
+  const has=w.city||(w.days&&w.days.length);
+  if(!has)return `<div class="wx-onwatch dim">on watch: nothing stored yet</div>`;
+  const d0=(w.days&&w.days[0])||{};
+  const t=(d0.min_k!=null&&d0.max_k!=null)?` ${d0.min_k-273}\\u00b0 / ${d0.max_k-273}\\u00b0`:'';
+  const age=w.timestamp?` <span class="dim">&middot; ${fmtAge(w.timestamp)} old</span>`:'';
+  return `<div class="wx-onwatch">on watch: <b>${esc(w.city||'?')}</b>${t}${age}</div>`;
 }
 function bodyWeather(){
   if(!wxData)return '';   // not fetched yet — the System tab triggers wxFetch
@@ -1218,13 +1240,14 @@ function bodyWeather(){
   const setter=`<div class="wx-set"><input id="wxcity" class="wx-in" placeholder="set city\\u2026" onkeydown="if(event.key==='Enter')wxSetLocation()"><button class="cc-act mini" onclick="wxSetLocation()">Set</button></div>`;
   if(!loc||!days.length){
     return `<div class="cc-sec"><div class="cc-sech">Weather</div>`+
-      `<div class="wx-none">${loc?esc(loc.city)+' \\u2014 no forecast':'no location set'}</div>${setter}</div>`;
+      `<div class="wx-none">${loc?esc(loc.city)+' \\u2014 no forecast':'no location set'}</div>${_wxOnWatchLine()}${setter}</div>`;
   }
   const d0=days[0], icon=`<svg class="wxi" viewBox="0 0 512 512">${WXICONS[wxIcon(d0.id)]||''}</svg>`;
   return `<div class="cc-sec"><div class="cc-sech">Weather</div>`+
     `<div class="wx-row">${icon}<div class="wx-t"><div class="wx-temp">${d0.min_c}\\u00b0 / ${d0.max_c}\\u00b0</div>`+
-      `<div class="wx-city">${esc(loc.city)}</div></div>`+
-      `<button class="cc-act mini" onclick="wxSync('${ctlSerial}')" title="write this forecast to the watch">Sync to watch</button></div>${setter}</div>`;
+      `<div class="wx-city">${esc(loc.city)} <span class="dim">will sync</span></div></div>`+
+      `<button class="cc-act mini" onclick="wxSync('${ctlSerial}')" title="write this forecast to the watch">Sync to watch</button></div>`+
+    `${_wxOnWatchLine()}${setter}</div>`;
 }
 
 // ── Network tab ─────────────────────────────────────────────────────────────

@@ -44,7 +44,7 @@ from .fastboot import (_switch_ssh_to_adb, _usb_moded_switch_failed,
 from .transport import SshTransport
 from .watchimg import watch_image_bytes
 from .variants import image_of
-from .weather import dconf_writeset, fetch_forecast, geocode
+from .weather import dconf_writeset, fetch_forecast, geocode, parse_watch_weather
 from . import orbit
 from . import bt
 from .registry import registry
@@ -381,6 +381,14 @@ def _weather_get(args):
         return {"ok": True, "location": None, "days": []}
     return {"ok": True, "location": loc,
             "days": fetch_forecast(loc.get("lat"), loc.get("lon"))}
+
+
+@DISPATCH.op("watch.weather_read")
+def _watch_weather_read(args):
+    """What weather is currently STORED on the watch (parsed from its dconf), so
+    the UI can show on-watch vs the incoming forecast before a sync."""
+    dump = _watch(args["serial"]).weather_read()
+    return {"ok": dump is not None, "weather": parse_watch_weather(dump or "")}
 
 
 @DISPATCH.op("watch.weather_sync")
