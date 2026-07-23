@@ -535,6 +535,39 @@ def test_starfield_seeds_a_deterministic_field(tmp_path):
     assert out["drift"], "stars are not animated"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_registry_panel_renders_roster_and_log(tmp_path):
+    """The Fleet Registry panel lists hulls with identity + source + last-seen,
+    and an expanded record shows its change Log as old → new."""
+    import json
+    payload = {"watches": [
+        {"serial": "870AX0A150253", "first_seen": 1, "last_seen": 2e9,
+         "last_source": "adb",
+         "fields": {"codename": "skipjack", "kernel": "3.18.24", "qt": "6.11.2"},
+         "log": [{"ts": 1.9e9, "source": "ssh",
+                  "changes": {"qt": ["5.15.16", "6.11.2"]}}]},
+        {"serial": "720EX8C130737", "first_seen": 1, "last_seen": 1.5e9,
+         "last_source": "orbit",
+         "fields": {"codename": "catfish", "kernel": "3.18.120"}, "log": []}]}
+    h = tmp_path / "reg.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 "\nglobal.document.getElementById('reg');"      # cache the node
+                 f"renderRegistry({json.dumps(payload)});"
+                 "_regOpen['870AX0A150253']=true;renderRegistry();"
+                 "console.log(JSON.stringify(global.__els['reg'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "2 hulls on record" in html
+    assert "skipjack" in html and "catfish" in html
+    assert "870AX0A150253" in html                       # serial shown
+    assert "cbadge wifi" in html and "cbadge adb" in html  # orbit vs adb source
+    assert "toggleRegLog('870AX0A150253')" in html       # expandable (has a log)
+    assert "5.15.16" in html and "6.11.2" in html        # expanded Qt migration
+    assert "qt:" in html
+
+
 def test_menu_trigger_is_a_markerless_pill():
     """The row menu trigger spawns a panel like the badges/battery pills do, so
     it reads as one of them: labelled "menu", a pill, and no dropdown ▾ marker

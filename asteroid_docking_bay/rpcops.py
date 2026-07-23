@@ -335,6 +335,13 @@ def _watch_weather_sync(args):
     return {"ok": ok, "city": loc.get("city"), "days": days}
 
 
+@DISPATCH.op("registry.get")
+def _registry_get(args):
+    """The Fleet Registry — every watch the rig has ever seen, newest sighting
+    first, each with identity, first/last-seen, last source, and its change Log."""
+    return {"ok": True, "watches": registry.all()}
+
+
 # ── Orbit port (watches reachable over the air) ─────────────────────────────
 
 @DISPATCH.op("orbit.launch")

@@ -250,6 +250,22 @@ _WEB_TEMPLATE = """\
     .cbadge.wifi{border-color:#39c5cf;color:#39c5cf}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
     .orbit-hint{color:#a78bfa;font-size:.85em;opacity:.85}
+    .regmask{position:fixed;inset:0;background:rgba(2,6,14,.6);z-index:40}
+    .regpanel{position:fixed;top:5vh;left:50%;transform:translateX(-50%);width:min(880px,94vw);max-height:88vh;z-index:41;background:rgba(13,20,32,.97);border:1px solid #30363d;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);display:flex;flex-direction:column}
+    .reg-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #21262d}
+    .reg-hd b{color:#58a6ff}
+    .reg-x{margin-left:auto;color:#8b949e;text-decoration:none;font-size:20px;line-height:1}
+    .reg-body{overflow:auto}
+    .reg-t{width:100%;border-collapse:collapse;font-size:12px}
+    .reg-t th{text-align:left;color:#6e7681;font-weight:400;padding:6px 12px;position:sticky;top:0;background:rgba(13,20,32,.99);border-bottom:1px solid #21262d}
+    .reg-t td{padding:6px 12px;border-bottom:1px solid #161b22;vertical-align:top}
+    .reg-row.has-log{cursor:pointer}
+    .reg-row.has-log:hover td{background:rgba(56,139,253,.08)}
+    .reg-chev{display:inline-block;width:12px;color:#6e7681}
+    .mono{font-family:ui-monospace,monospace;font-size:11px}
+    .reg-log{padding:4px 10px 8px 24px}
+    .reg-le{padding:5px 0;border-top:1px dashed #21262d;display:grid;grid-template-columns:82px 44px 1fr;gap:8px;align-items:start;font-size:12px}
+    .reg-when{color:#a78bfa}
     .smt{display:inline-block;box-sizing:border-box;min-height:var(--pill-h);padding:2px var(--pill-px);border-radius:var(--pill-r);font-size:var(--pill-fs);line-height:1.5;border:1px solid;background:transparent;font-family:inherit;vertical-align:middle}
     /* Smart type is blue, not green — green is reserved for the power/charge
        states so it keeps its weight. The known type (ppps) is the brighter
@@ -390,7 +406,7 @@ _WEB_TEMPLATE = """\
   <div id="alert" class="alert"></div>
   <div class="hdr">
   <h1><span class="hdim">&#x2728;  &#x22C6;  &#x02DA; </span>&#x2726;<span class="htxt">  asteroid-docking-bay  </span>&#x2726;<span class="hdim"> &#x02DA;  &#x22C6;  &#x2728;</span></h1>
-  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a></p>
+  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a> &nbsp;&middot;&nbsp; <a href="#" id="reglink" onclick="openRegistry();return false" style="color:#6e7681;text-decoration:none" title="the Fleet Registry — every watch the rig has ever seen (docked or in orbit), its identity, first/last sighting, and a Log of what changed (kernel, Qt, MACs, resolution) over time">fleet registry</a></p>
   </div>
   <div class="tblwrap">
   <table>
@@ -405,6 +421,8 @@ _WEB_TEMPLATE = """\
   <div id="cc" class="cc"></div>
   <div id="menu" class="menu"></div>
   <div id="wimg" class="wimg"></div>
+  <div id="regmask" class="regmask" style="display:none" onclick="closeRegistry()"></div>
+  <div id="reg" class="regpanel" style="display:none"></div>
 <script>
 const srcs={};
 const chargeEnd={};
@@ -1625,7 +1643,58 @@ function loadShot(serial,res){
     });
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;handsPick=null;}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();closeRegistry();}});
+// ── Fleet Registry: every watch ever seen, with a Log of what changed ────────
+function openRegistry(){
+  const p=document.getElementById('reg'),m=document.getElementById('regmask');
+  if(!p)return;
+  p.style.display='block';m.style.display='block';
+  p.innerHTML='<div class="reg-hd"><b>Fleet Registry</b><span class="dim">loading&hellip;</span><a href="#" class="reg-x" onclick="closeRegistry();return false">&times;</a></div>';
+  fetch('/api/registry').then(r=>r.json()).then(renderRegistry).catch(()=>{
+    p.querySelector('.dim').textContent='could not load';});
+}
+function closeRegistry(){
+  const p=document.getElementById('reg'),m=document.getElementById('regmask');
+  if(p)p.style.display='none';if(m)m.style.display='none';
+}
+let _regData=null,_regOpen={};   // cached payload; serial -> expanded?
+function renderRegistry(d){
+  const p=document.getElementById('reg');if(!p)return;
+  if(d)_regData=d;
+  const ws=(_regData&&_regData.watches)||[];
+  const F=(r,k)=>(r.fields&&r.fields[k]!=null)?r.fields[k]:null;
+  let rows='';
+  ws.forEach(r=>{
+    const cn=F(r,'codename')||'<span class="dim">unknown</span>';
+    const src=r.last_source||'?';
+    const seen=r.last_seen?fmtAge(r.last_seen)+' ago':'';
+    const kv=[F(r,'kernel')?'kernel '+esc(F(r,'kernel')):'',F(r,'qt')?'Qt '+esc(F(r,'qt')):''].filter(Boolean).join(' &middot; ');
+    const nlog=(r.log||[]).length;
+    const open=!!_regOpen[r.serial];
+    const chevron=nlog?`<span class="reg-chev">${open?'&#9660;':'&#9654;'}</span>`:'';
+    rows+=`<tr class="reg-row${nlog?' has-log':''}"${nlog?` onclick="toggleRegLog('${esc(r.serial)}')"`:''}>`+
+      `<td>${chevron}<b class="cn">${typeof cn==='string'&&cn[0]!=='<'?esc(cn):cn}</b></td>`+
+      `<td class="dim mono">${esc(r.serial)}</td>`+
+      `<td><span class="cbadge ${src==='orbit'?'wifi':(src==='ssh'?'ssh':'adb')}">${esc(src)}</span> <span class="dim">${seen}</span></td>`+
+      `<td class="dim">${kv||'&mdash;'}</td>`+
+      `<td class="dim">${nlog?nlog+' change'+(nlog>1?'s':''):'&mdash;'}</td></tr>`;
+    if(open&&nlog){
+      const entries=(r.log||[]).slice().reverse().map(e=>{
+        const ch=Object.entries(e.changes||{}).map(([k,v])=>`${esc(k)}: <span class="dim">${esc(String(v[0]))}</span> &rarr; ${esc(String(v[1]))}`).join('<br>');
+        return `<div class="reg-le"><span class="reg-when" title="${new Date(e.ts*1000).toLocaleString()}">${fmtAge(e.ts)} ago</span><span class="dim">${esc(e.source||'')}</span><div>${ch}</div></div>`;
+      }).join('');
+      rows+=`<tr class="reg-logrow"><td colspan="5"><div class="reg-log">${entries}</div></td></tr>`;
+    }
+  });
+  p.innerHTML=
+    `<div class="reg-hd"><b>Fleet Registry</b><span class="dim">${ws.length} hull${ws.length===1?'':'s'} on record</span>`+
+    `<a href="#" class="reg-x" onclick="closeRegistry();return false">&times;</a></div>`+
+    `<div class="reg-body">`+(ws.length
+      ?`<table class="reg-t"><thead><tr><th>codename</th><th>serial</th><th>last seen</th><th>latest</th><th>log</th></tr></thead><tbody>${rows}</tbody></table>`
+      :'<p class="dim" style="padding:16px">No watches on record yet — connect or launch one and it appears here.</p>')+
+    `</div>`;
+}
+function toggleRegLog(serial){_regOpen[serial]=!_regOpen[serial];renderRegistry();}
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 // The row's actions fold into one Execute menu: each former button becomes a
 // group header, its items listed indented beneath, all visible at once (no

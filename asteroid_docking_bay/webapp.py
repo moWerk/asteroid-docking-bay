@@ -217,6 +217,11 @@ def serve(args, cfg: dict):
         d = _call("weather.set_location", {"city": city})
         return json.dumps(d)
 
+    @app.get("/api/registry")
+    def api_registry():
+        resp.content_type = "application/json"
+        return json.dumps(_call("registry.get"))
+
     @app.post("/api/orbit/launch/<ip>")
     def api_orbit_launch(ip):
         resp.content_type = "application/json"
