@@ -18,7 +18,7 @@ class _AVWatch:
     def set_mute(self, o): self.calls.append(("m", o)); return True
     def play_notification(self): self.calls.append(("blip",)); return True
     def av_read(self): return {"brightness": 30, "has_speaker": False,
-                               "volume": None, "muted": None}
+                               "has_mic": False, "volume": None, "muted": None}
 
 
 # ── ops: clamp + validation ──────────────────────────────────────────────────
@@ -73,21 +73,38 @@ class _T:
     def shell(self, cmd, timeout=None): return (0, self._out, "")
 
 
-def test_av_read_parses_a_speaker_watch(monkeypatch):
-    w = Watch("S", transport=_T("Brightness: 30 (1-100)\n---CAP---\nHAS_SPEAKER = true\n"))
+def test_av_read_parses_speaker_and_mic(monkeypatch):
+    w = Watch("S", transport=_T(
+        "Brightness: 30 (1-100)\n---CAP---\nHAS_SPEAKER = true\nHAS_MIC = true\n"))
     monkeypatch.setattr(w, "user_cmd", lambda cmd, timeout=None: (
         0, "Volume: front-left: 65536 / 40% / 0.00 dB\n---\nMute: yes\n", ""))
     av = w.av_read()
-    assert av["brightness"] == 30 and av["has_speaker"] is True
+    assert av["brightness"] == 30 and av["has_speaker"] is True and av["has_mic"] is True
     assert av["volume"] == 40 and av["muted"] is True
 
 
-def test_av_read_skips_volume_without_a_speaker(monkeypatch):
-    w = Watch("S", transport=_T("Brightness: 55 (1-100)\n---CAP---\n"))   # no HAS_SPEAKER
+def test_av_read_mic_without_speaker(monkeypatch):
+    # A mic-but-no-speaker watch: has_mic True, has_speaker False, no pactl call.
+    w = Watch("S", transport=_T("Brightness: 55 (1-100)\n---CAP---\nHAS_MIC = true\n"))
     called = {"n": 0}
     monkeypatch.setattr(w, "user_cmd",
                         lambda cmd, timeout=None: (called.__setitem__("n", 1), (0, "", ""))[1])
     av = w.av_read()
-    assert av["brightness"] == 55 and av["has_speaker"] is False
-    assert av["volume"] is None and av["muted"] is None
-    assert called["n"] == 0                                   # no pactl call on a mute watch
+    assert av["has_speaker"] is False and av["has_mic"] is True
+    assert av["volume"] is None and av["muted"] is None and called["n"] == 0
+
+
+def test_record_audio_op(monkeypatch, tmp_path):
+    f = tmp_path / "rec.wav"
+    f.write_bytes(b"\x00" * 120)
+    monkeypatch.setattr(rpcops, "_watch",
+                        lambda s: type("W", (), {"record_audio": lambda self, n: f})())
+    d = rpcops.DISPATCH._data["watch.record_audio"]({"serial": "S", "seconds": "5"})
+    assert d["ok"] is True and d["seconds"] == 5 and d["bytes"] == 120
+
+
+def test_record_audio_op_failure(monkeypatch):
+    monkeypatch.setattr(rpcops, "_watch",
+                        lambda s: type("W", (), {"record_audio": lambda self, n: None})())
+    d = rpcops.DISPATCH._data["watch.record_audio"]({"serial": "S"})
+    assert d["ok"] is False and "mic" in d["error"]

@@ -346,6 +346,20 @@ def _watch_set_mute(args):
     return {"ok": _watch(args["serial"]).set_mute(bool(args.get("on")))}
 
 
+@DISPATCH.op("watch.record_audio")
+def _watch_record_audio(args):
+    """Record mic audio on the watch (UI-gated on HAS_MIC) and pull it; the WAV
+    is served at /api/watch/<serial>/recording.wav for playback/download."""
+    try:
+        secs = max(1, min(30, int(args.get("seconds", 5))))
+    except (TypeError, ValueError):
+        secs = 5
+    path = _watch(args["serial"]).record_audio(secs)
+    if not path:
+        return {"ok": False, "error": "recording failed — no mic or gst pipeline"}
+    return {"ok": True, "seconds": secs, "bytes": path.stat().st_size}
+
+
 @DISPATCH.op("watch.set_hands")
 def _watch_set_hands(args):
     """Move a hands watch's physical hands to an explicit YYYY-MM-DD HH:MM:SS

@@ -443,18 +443,25 @@ class Watch:
         return rc == 0
 
     def av_read(self) -> dict:
-        """Display brightness + sound volume/mute + whether the watch has a
-        speaker. Brightness is MCE (mcetool, root); volume/mute are PulseAudio
-        (pactl, in the ceres session); HAS_SPEAKER is the machine.conf capability
-        DeviceSpecs reads. Volume/mute are only meaningful — and only read — when
-        the watch actually has a speaker. Any field is None when unreadable."""
+        """Display brightness + sound volume/mute + which of speaker/mic the watch
+        has. Brightness is MCE (mcetool, root); volume/mute are PulseAudio (pactl,
+        ceres); HAS_SPEAKER/HAS_MIC are the machine.conf capabilities DeviceSpecs
+        reads. Volume/mute are only meaningful — and only read — with a speaker
+        (some watches have a mic but no speaker). Any field is None when unreadable."""
         rc, out, _ = self.t.shell(
             "\"mcetool 2>/dev/null | grep -i '^Brightness'; echo ---CAP---; "
-            "grep -i HAS_SPEAKER /etc/asteroid/machine.conf 2>/dev/null\"", timeout=10)
+            "grep -iE 'HAS_SPEAKER|HAS_MIC' /etc/asteroid/machine.conf 2>/dev/null\"",
+            timeout=10)
         head, _, cap = out.partition("---CAP---")
+        caps = {}
+        for ln in cap.splitlines():
+            if "=" in ln:
+                k, _, v = ln.partition("=")
+                caps[k.strip().upper()] = "true" in v.lower()
         bm = re.search(r"(\d+)", head)
         av = {"brightness": int(bm.group(1)) if bm else None,
-              "has_speaker": "true" in cap.lower(),
+              "has_speaker": caps.get("HAS_SPEAKER", False),
+              "has_mic": caps.get("HAS_MIC", False),
               "volume": None, "muted": None}
         if av["has_speaker"]:
             _, vout, _ = self.user_cmd(
@@ -491,6 +498,27 @@ class Watch:
             log.warning("set_mute %s on %s failed: %s",
                         on, self.serial, err.strip() or f"rc={rc}")
         return rc == 0
+
+    def last_recording_path(self) -> Path:
+        """Stable local path the last pulled mic recording sits at (per serial)."""
+        return Path(tempfile.gettempdir()) / f"dockingbay_rec_{self.serial}.wav"
+
+    def record_audio(self, seconds: int = 5) -> "Path | None":
+        """Record `seconds` of mic audio on the watch via GStreamer (ceres/
+        PulseAudio pulsesrc → wav), then pull it locally like a screenshot.
+        Returns the Path or None. Gated on HAS_MIC upstream; the pipeline is
+        proven on-device. `timeout -s INT` + gst `-e` finalises the WAV cleanly."""
+        seconds = max(1, min(30, int(seconds)))
+        remote = "/tmp/dockingbay_rec.wav"
+        self.user_cmd(
+            f"rm -f {remote}; timeout -s INT {seconds} gst-launch-1.0 -e pulsesrc ! "
+            f"audioconvert ! audioresample ! wavenc ! filesink location={remote}",
+            timeout=seconds + 15)
+        local = self.last_recording_path()
+        rc, _, _ = self.t.pull(remote, shlex.quote(str(local)), timeout=20)
+        self.t.shell(f"rm -f {remote}", timeout=8)
+        return local if (rc == 0 and local.exists()
+                         and local.stat().st_size > 44) else None   # >WAV header = has data
 
     def notify(self) -> bool:
         """Send a test notification."""

@@ -1427,7 +1427,27 @@ function bodyAV(){
     items+=`<div class="cc-k">Mute</div><div class="cc-v">`+
       `<button class="cc-tgl set-tgl${m?' on':''}${ctlPending.has('av:mute')?' cmd-pending':''}" onclick="avMute(${m?0:1})">${m?'ON':'OFF'}</button></div>`;
   }
+  if(av.has_mic){
+    items+=`<div class="cc-k">Microphone</div><div class="cc-v av-mic" id="av-mic">`+
+      `<button class="cc-act mini" onclick="avRecord()" title="record 5s of mic audio, then play it back / download">Record 5s</button></div>`;
+  }
   return `<div class="cc-sec"><div class="cc-sech">Display &amp; Sound</div><div class="cc-grid">${items}</div></div>`;
+}
+function avRecord(){
+  const box=document.getElementById('av-mic'), s=ctlSerial; if(!box)return;
+  box.innerHTML='<span class="dim">recording 5s&hellip;</span>';
+  fetch('/api/watch/'+encodeURIComponent(s)+'/record/5',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(document.getElementById('av-mic')!==box)return;
+    if(d&&d.ok){
+      const u='/api/watch/'+encodeURIComponent(s)+'/recording.wav?t='+Date.now();
+      box.innerHTML='<audio controls src="'+u+'" style="height:30px;max-width:190px;vertical-align:middle"></audio>'+
+        '<a class="cc-act mini" href="'+u+'" download="'+esc(s)+'.wav">download</a>'+
+        '<button class="cc-act mini" onclick="avRecord()">re-record</button>';
+    }else{
+      box.innerHTML='<span class="err">record failed</span> <button class="cc-act mini" onclick="avRecord()">retry</button>';
+      toast('record failed'+(d&&d.error?': '+d.error:''));
+    }
+  }).catch(()=>{box.innerHTML='<span class="err">record failed</span> <button class="cc-act mini" onclick="avRecord()">retry</button>';});
 }
 function _avPost(path,fn){
   const s=ctlSerial;

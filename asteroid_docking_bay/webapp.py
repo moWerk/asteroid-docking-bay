@@ -227,6 +227,24 @@ def serve(args, cfg: dict):
         resp.content_type = "application/json"
         return json.dumps(_call("watch.set_mute", {"serial": serial, "on": state == "on"}))
 
+    @app.post("/api/watch/<serial>/record/<seconds>")
+    def api_watch_record(serial, seconds):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.record_audio", {"serial": serial, "seconds": seconds}))
+
+    @app.get("/api/watch/<serial>/recording.wav")
+    def api_watch_recording(serial):
+        import tempfile
+        from pathlib import Path
+        p = Path(tempfile.gettempdir()) / f"dockingbay_rec_{serial}.wav"
+        if not p.exists():
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return "no recording"
+        resp.content_type = "audio/wav"
+        resp.set_header("Cache-Control", "no-cache")
+        return p.read_bytes()
+
     @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
     def api_watch_quickpanel(serial, tid, state):
         resp.content_type = "application/json"
