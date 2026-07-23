@@ -496,6 +496,18 @@ class Watch:
             log.warning("notify %s failed: %s", self.serial, err.strip())
         return rc == 0
 
+    def play_notification(self) -> bool:
+        """Fire the standard notification feedback so the user HEARS the volume
+        just set: a transient preview notification triggers ngfd's `notification`
+        event (/usr/share/sounds/notification.wav on the notification stream), the
+        system's own sound at the level we just set. mo's bonus on the volume
+        slider; ngfd is the sanctioned path (no paplay on the watch)."""
+        rc, _, _ = self.user_cmd(
+            'notificationtool -o add --application=docking-bay --urgency=2 '
+            '--hint="x-nemo-preview-body volume test tone" '
+            '"docking-bay" "volume"', timeout=10)
+        return rc == 0
+
     def last_screenshot_path(self) -> Path:
         """Stable local path the last pulled screenshot sits at. It persists
         between captures, so it doubles as the stale fallback when a fresh

@@ -326,13 +326,18 @@ def _watch_set_brightness(args):
 
 @DISPATCH.op("watch.set_volume")
 def _watch_set_volume(args):
-    """Set master volume (clamped 0..100) via PulseAudio."""
+    """Set master volume (clamped 0..100) via PulseAudio, then play the system
+    notification sound at the new level so the user hears it (mo's bonus)."""
     try:
         pct = int(args.get("pct"))
     except (TypeError, ValueError):
         return {"ok": False, "error": "pct must be an integer"}
     pct = max(0, min(100, pct))
-    return {"ok": _watch(args["serial"]).set_volume(pct), "pct": pct}
+    w = _watch(args["serial"])
+    ok = w.set_volume(pct)
+    if ok and pct > 0 and args.get("blip", True):
+        w.play_notification()          # the test blip, at the level just set
+    return {"ok": ok, "pct": pct}
 
 
 @DISPATCH.op("watch.set_mute")

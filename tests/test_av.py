@@ -16,6 +16,7 @@ class _AVWatch:
     def set_brightness(self, p): self.calls.append(("b", p)); return True
     def set_volume(self, p): self.calls.append(("v", p)); return True
     def set_mute(self, o): self.calls.append(("m", o)); return True
+    def play_notification(self): self.calls.append(("blip",)); return True
     def av_read(self): return {"brightness": 30, "has_speaker": False,
                                "volume": None, "muted": None}
 
@@ -41,6 +42,19 @@ def test_set_volume_clamps(monkeypatch):
         {"serial": "S", "pct": "150"})["pct"] == 100
     assert rpcops.DISPATCH._data["watch.set_volume"](
         {"serial": "S", "pct": "-5"})["pct"] == 0             # volume may be 0 (silent)
+
+
+def test_set_volume_blips_at_the_new_level_but_not_at_zero(monkeypatch):
+    w = _AVWatch()
+    monkeypatch.setattr(rpcops, "_watch", lambda s: w)
+    rpcops.DISPATCH._data["watch.set_volume"]({"serial": "S", "pct": "40"})
+    assert w.calls == [("v", 40), ("blip",)]                 # blip fires after the set
+    w.calls.clear()
+    rpcops.DISPATCH._data["watch.set_volume"]({"serial": "S", "pct": "0"})
+    assert w.calls == [("v", 0)]                             # silent at 0 — no blip
+    w.calls.clear()
+    rpcops.DISPATCH._data["watch.set_volume"]({"serial": "S", "pct": "60", "blip": False})
+    assert w.calls == [("v", 60)]                            # blip can be suppressed
 
 
 def test_set_mute_and_av_read_passthrough(monkeypatch):
