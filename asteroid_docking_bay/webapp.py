@@ -264,6 +264,16 @@ def serve(args, cfg: dict):
         resp.content_type = "application/json"
         return json.dumps(_call("registry.get"))
 
+    @app.post("/api/bt/scan/<seconds>")
+    def api_bt_scan(seconds):
+        resp.content_type = "application/json"
+        return json.dumps(_call("bt.scan", {"seconds": seconds}))
+
+    @app.post("/api/bt/pair/<mac>")
+    def api_bt_pair(mac):
+        resp.content_type = "application/json"
+        return json.dumps(_call("bt.pair", {"mac": mac}))
+
     @app.post("/api/orbit/launch/<ip>")
     def api_orbit_launch(ip):
         resp.content_type = "application/json"

@@ -46,6 +46,7 @@ from .watchimg import watch_image_bytes
 from .variants import image_of
 from .weather import dconf_writeset, fetch_forecast, geocode
 from . import orbit
+from . import bt
 from .registry import registry
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
@@ -389,6 +390,46 @@ def _watch_weather_sync(args):
         return {"ok": False, "error": "weather fetch failed"}
     ok = _watch(args["serial"]).weather_sync(dconf_writeset(loc.get("city"), days))
     return {"ok": ok, "city": loc.get("city"), "days": days}
+
+
+@DISPATCH.op("bt.scan")
+def _bt_scan(args):
+    """Scan for Bluetooth devices and correlate to the fleet — by BT-MAC (the
+    registry's stored btmac) or advertised name (watches broadcast their
+    codename). Fleet watches sort first. Blocking: a manual action."""
+    secs = max(1, min(30, int(args.get("seconds", 8))))
+    found = bt.scan(secs)
+    by_mac, codenames = {}, set()
+    for rec in registry.all():
+        f = rec.get("fields", {})
+        if f.get("btmac"):
+            by_mac[f["btmac"].upper()] = rec
+        if f.get("codename"):
+            codenames.add(f["codename"].lower())
+    for hub in load_config().get("hubs", []):
+        for cn in hub.get("ports", {}).values():
+            codenames.add(cn.lower())
+    for d in found:
+        rec = by_mac.get(d["mac"].upper())
+        if rec:
+            d["codename"] = rec.get("fields", {}).get("codename")
+            d["serial"] = rec.get("serial")
+            d["in_fleet"] = True
+        elif d["name"].lower() in codenames:
+            d["codename"], d["serial"], d["in_fleet"] = d["name"], None, True
+        else:
+            d["codename"], d["serial"], d["in_fleet"] = None, None, False
+    found.sort(key=lambda d: (not d["in_fleet"], (d["name"] or "").lower()))
+    return {"ok": True, "devices": found}
+
+
+@DISPATCH.op("bt.pair")
+def _bt_pair(args):
+    """Pair (bond) a discovered device by MAC — the user confirms on the watch."""
+    mac = args.get("mac", "")
+    if not mac:
+        return {"ok": False, "error": "no mac"}
+    return bt.pair(mac)
 
 
 @DISPATCH.op("registry.get")

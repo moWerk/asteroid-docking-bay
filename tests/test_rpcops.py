@@ -48,6 +48,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.av_read", "watch.set_brightness", "watch.set_volume", "watch.set_mute",
         "weather.get", "weather.set_location", "watch.weather_sync",
         "orbit.launch", "orbit.deorbit", "registry.get",
+        "bt.scan", "bt.pair",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb", "watch.switch_ssh",

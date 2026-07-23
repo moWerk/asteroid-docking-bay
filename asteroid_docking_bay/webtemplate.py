@@ -410,7 +410,7 @@ _WEB_TEMPLATE = """\
   <div id="alert" class="alert"></div>
   <div class="hdr">
   <h1><span class="hdim">&#x2728;  &#x22C6;  &#x02DA; </span>&#x2726;<span class="htxt">  asteroid-docking-bay  </span>&#x2726;<span class="hdim"> &#x02DA;  &#x22C6;  &#x2728;</span></h1>
-  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a> &nbsp;&middot;&nbsp; <a href="#" id="reglink" onclick="openRegistry();return false" style="color:#6e7681;text-decoration:none" title="the Fleet Registry — every watch the rig has ever seen (docked or in orbit), its identity, first/last sighting, and a Log of what changed (kernel, Qt, MACs, resolution) over time">fleet registry</a></p>
+  <p class="meta"><a href="#" id="histlink" onclick="toggleHistory();return false" style="color:#388bfd;text-decoration:none">show drain history</a> &nbsp;&middot;&nbsp; <a href="#" id="hidlink" onclick="toggleShowHidden();return false" style="color:#6e7681;text-decoration:none">show all ports</a> &nbsp;&middot;&nbsp; <a href="#" id="usbpreflink" onclick="toggleUsbPref();return false" style="color:#6e7681;text-decoration:none" title="Fleet USB-mode preference — how a watch that comes up on its own in the wrong mode is auto-corrected:&#10;&#10;• prefer ADB (standard): a stray SSH watch is switched back to adb — faster, and how a stock flash enumerates&#10;• prefer SSH: a stray watch is given its own SSH IP so several can run SSH at once — needed for WiFi/workbench work, but updates are slower&#10;&#10;A watch you switched by hand is left alone. Click to switch.">prefer ADB</a> &nbsp;&middot;&nbsp; <a href="#" id="reglink" onclick="openRegistry();return false" style="color:#6e7681;text-decoration:none" title="the Fleet Registry — every watch the rig has ever seen (docked or in orbit), its identity, first/last sighting, and a Log of what changed (kernel, Qt, MACs, resolution) over time">fleet registry</a> &nbsp;&middot;&nbsp; <a href="#" id="btlink" onclick="openBtScan();return false" style="color:#6e7681;text-decoration:none" title="scan for AsteroidOS watches over Bluetooth (they advertise their codename) and pair them — the first rung of Bluetooth in the Orbit port">scan bt</a></p>
   </div>
   <div class="tblwrap">
   <table>
@@ -427,6 +427,8 @@ _WEB_TEMPLATE = """\
   <div id="wimg" class="wimg"></div>
   <div id="regmask" class="regmask" style="display:none" onclick="closeRegistry()"></div>
   <div id="reg" class="regpanel" style="display:none"></div>
+  <div id="btmask" class="regmask" style="display:none" onclick="closeBt()"></div>
+  <div id="bt" class="regpanel" style="display:none"></div>
 <script>
 const srcs={};
 const chargeEnd={};
@@ -1772,7 +1774,7 @@ function loadShot(serial,res){
     });
 }
 function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;_handsDrag=null;_wimgDrag=null;_handsDevEl=null;handsMode='time';}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();closeRegistry();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();closeRegistry();closeBt();}});
 // ── Fleet Registry: every watch ever seen, with a Log of what changed ────────
 function openRegistry(){
   const p=document.getElementById('reg'),m=document.getElementById('regmask');
@@ -1824,6 +1826,45 @@ function renderRegistry(d){
     `</div>`;
 }
 function toggleRegLog(serial){_regOpen[serial]=!_regOpen[serial];renderRegistry();}
+// ── Bluetooth scan + pair (Orbit port, rung 1-2) ─────────────────────────────
+let _btData=null;
+function openBtScan(){
+  const p=document.getElementById('bt'),m=document.getElementById('btmask');
+  if(!p)return; p.style.display='block'; m.style.display='block';
+  if(_btData)renderBt(); else btScan();
+}
+function closeBt(){const p=document.getElementById('bt'),m=document.getElementById('btmask');if(p)p.style.display='none';if(m)m.style.display='none';}
+function btScan(){
+  const p=document.getElementById('bt'); if(!p)return;
+  p.innerHTML='<div class="reg-hd"><b>&#x1F50D; Bluetooth scan</b><span class="dim">scanning 8s&hellip;</span><a href="#" class="reg-x" onclick="closeBt();return false">&times;</a></div>';
+  fetch('/api/bt/scan/8',{method:'POST'}).then(r=>r.json()).then(d=>{_btData=d;renderBt();})
+    .catch(()=>{const s=p.querySelector('.dim');if(s)s.textContent='scan failed';});
+}
+function renderBt(){
+  const p=document.getElementById('bt'); if(!p)return;
+  const ds=(_btData&&_btData.devices)||[];
+  const rows=ds.map(d=>{
+    const nm=d.in_fleet?`<b class="cn">${esc(d.codename||d.name)}</b>`:`<span class="dim">${esc(d.name||d.mac)}</span>`;
+    const badge=d.in_fleet?' <span class="cbadge wifi">fleet</span>':'';
+    const act=d.paired?'<span class="cbadge adb">paired</span>'
+      :`<button class="btn" onclick="btPair('${esc(d.mac)}','${esc(d.codename||d.name||d.mac)}')">Pair</button>`;
+    return `<tr class="reg-row"><td>${nm}${badge}</td><td class="dim mono">${esc(d.mac)}</td><td class="dim">${d.rssi!=null?d.rssi+' dBm':''}</td><td>${act}</td></tr>`;
+  }).join('');
+  const fleet=ds.filter(d=>d.in_fleet).length;
+  p.innerHTML=`<div class="reg-hd"><b>&#x1F50D; Bluetooth scan</b><span class="dim">${ds.length} found &middot; ${fleet} in fleet</span>`+
+    `<a href="#" onclick="btScan();return false" style="margin-left:auto;color:#8b949e;text-decoration:none;font-size:12px" title="scan again">&#x21bb; rescan</a>`+
+    `<a href="#" class="reg-x" onclick="closeBt();return false">&times;</a></div>`+
+    `<div class="reg-body"><table class="reg-t"><thead><tr><th>device</th><th>mac</th><th>rssi</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function btPair(mac,name){
+  toast('pairing '+name+' — confirm on the watch');
+  const p=document.getElementById('bt'),hd=p&&p.querySelector('.reg-hd .dim');
+  if(hd)hd.textContent='pairing '+name+' — confirm on the watch…';
+  fetch('/api/bt/pair/'+encodeURIComponent(mac),{method:'POST'}).then(r=>r.json()).then(d=>{
+    toast(d&&d.ok?('paired '+name):('pair failed'+(d&&d.error?': '+d.error:'')));
+    _btData=null; btScan();
+  }).catch(()=>toast('pair failed'));
+}
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 // The row's actions fold into one Execute menu: each former button becomes a
 // group header, its items listed indented beneath, all visible at once (no
