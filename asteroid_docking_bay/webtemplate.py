@@ -1022,6 +1022,12 @@ function ctlChrome(d,body){
 }
 function renderControl(d){
   const cc=document.getElementById('cc');
+  // Never rebuild the panel out from under a text field being typed in (the
+  // weather city input): a 3s poll mid-type dropped focus and the text (mo).
+  // The graphs still fill (ctlFetch pushed them already); only the DOM refresh
+  // is deferred until the field is blurred.
+  const a=document.activeElement;
+  if(a&&a.tagName==='INPUT'&&cc.contains(a))return;
   cc.classList.toggle('stale-cc',!!(d&&d.stale));
   const body=ctlTab==='set'?bodySet(d):ctlTab==='net'?bodyNet(d):ctlTab==='bat'?bodyBat(d):bodySys(d);
   cc.innerHTML=ctlChrome(d,body);
@@ -1094,7 +1100,8 @@ function wxFetch(){
 }
 function wxSetLocation(){
   const inp=document.getElementById('wxcity'); if(!inp||!inp.value.trim())return;
-  const city=inp.value.trim(); toast('locating '+city+'\\u2026');
+  const city=inp.value.trim(); inp.blur();   // let the panel re-render with the result
+  toast('locating '+city+'\\u2026');
   fetch('/api/weather/location/'+encodeURIComponent(city),{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.ok){toast('location: '+d.location.city);wxData=null;wxFetch();}
     else toast(d.error||'city not found');

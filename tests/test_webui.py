@@ -1228,3 +1228,28 @@ def test_live_view_hand_control(tmp_path):
     assert "Sync to now" in html and "handsSyncNow('S9')" in html
     assert "Set hands" in html and "handsSet('S9')" in html
     assert "132:41" in html and 'class="spin"' in html
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_panel_not_rebuilt_while_typing_in_a_field(tmp_path):
+    """A 3s poll re-render must not rebuild the panel out from under a focused
+    text field (the weather city input) — it dropped focus and the typed text
+    (mo). renderControl skips while a CC input has focus."""
+    import json
+    h = tmp_path / "typing.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nctlSerial='S9';ctlTab='sys';"
+                 "const ccEl=global.document.getElementById('cc');"
+                 "ccEl.innerHTML='TYPING-IN-PROGRESS';ccEl.contains=()=>true;"
+                 "global.document.activeElement={tagName:'INPUT'};"   # a focused input in cc
+                 "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS'});"
+                 "const held=global.__els['cc'].innerHTML;"
+                 "global.document.activeElement=null;"                 # blurred → poll may render
+                 "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS'});"
+                 "console.log(JSON.stringify({held,after:global.__els['cc'].innerHTML}));"
+                 "process.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert o["held"] == "TYPING-IN-PROGRESS", "panel was rebuilt while an input was focused"
+    assert "System" in o["after"], "panel never re-rendered after the field blurred"
