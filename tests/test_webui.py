@@ -310,29 +310,6 @@ def test_handed_off_port_renders_available_with_orbit_hint(tmp_path):
     assert "doRemap('1-2:1')" in html                    # Onboard offered
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_hands_calibration_control_renders(tmp_path):
-    """The narwhal hands control renders the drift-calibration row: signed nudge
-    buttons wired to handsNudge, the current offset, a Save wired to
-    handsSaveOffset, alongside the existing Sync-to-now and pose Set-hands."""
-    import json
-    h = tmp_path / "hands.js"
-    h.write_text(_DOM_CAPTURE + JS + global_simple() +
-                 "\nglobal.document.getElementById('wimghands');"   # cache the node
-                 "handsPick={h:10,m:9};_handsSerial='NAR';handsOffset=-3;"
-                 "_renderHandsCtl('132:41');"
-                 "console.log(JSON.stringify(global.__els['wimghands'].innerHTML));"
-                 "\nprocess.exit(0);\n")
-    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
-    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
-    html = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "handsNudge('NAR',-1)" in html and "handsNudge('NAR',5)" in html
-    assert "handsNudge('NAR',60)" in html                # hour-scale nudge
-    assert "handsSaveOffset('NAR')" in html              # save the calibration
-    assert "-3m" in html                                 # current offset shown
-    assert "handsSyncNow('NAR')" in html and "handsSet('NAR')" in html
-
-
 def test_refreshing_row_pulse_survives_hover():
     """The refreshing-row pulse is the only feedback that a re-identify is in
     flight. An !important background on the :hover rule outranks the animation
@@ -1293,31 +1270,33 @@ def test_network_toggle_also_pulses_while_in_flight(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_live_view_overlays_the_real_hand_art(tmp_path):
-    """The live-view composite lays a hands watch's real hour/minute SVG art over
-    the hands-removed base, each rotated by its angle (ticks*6°: 39:33 →
-    234.0°/198.0°) and served from the per-codename hand route."""
+def test_live_view_hands_render_over_base_and_are_draggable(tmp_path):
+    """A hands watch lays the real hour/minute SVG art over the hands-removed base,
+    each rotated by valToAngle(value, offset) = (offset + 2·value) mod 360, and in
+    Free mode each hand carries the drag handle. minute 45@100°→190°, hour
+    135@110°→20° (380 mod 360)."""
     import json
     h = tmp_path / "hands.js"
     h.write_text(_DOM_CAPTURE + JS +
                  "\nglobal.document.getElementById('devframe');"      # cache nodes
                  "global.document.getElementById('prodimg');"
                  "global.document.getElementById('devhands');"
+                 "handsMode='free';handsVal={min:45,hr:135};"
                  "global.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
-                 "{ok:true,hands:{h:39,m:33,position:'39:33'}})});"
+                 "{ok:true,hands:{position:'45:135'},cal:{min_deg:100,hr_deg:110}})});"
                  "loadHands('S9','narwhal');"
                  "setTimeout(()=>{const el=global.__els['devhands']||{},"
                  "p=global.__els['prodimg']||{};"
-                 "console.log(JSON.stringify({html:el.innerHTML||'',title:el.title||'',"
-                 "base:p.src||''}));process.exit(0);},90);\n")
+                 "console.log(JSON.stringify({html:el.innerHTML||'',base:p.src||''}));"
+                 "process.exit(0);},90);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     o = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "rotate(234.0deg)" in o["html"] and "rotate(198.0deg)" in o["html"], o["html"][:300]
+    assert "rotate(190.0deg)" in o["html"] and "rotate(20.0deg)" in o["html"], o["html"][:300]
     assert "/api/watch-hand/narwhal/hour" in o["html"]
     assert "/api/watch-hand/narwhal/minute" in o["html"]
+    assert "handsDown(event,'min')" in o["html"] and "handsDown(event,'hr')" in o["html"]
     assert o["base"].endswith("/api/watch-hand/narwhal/base")   # handless base swapped in
-    assert "39:33" in o["title"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -1347,23 +1326,29 @@ def test_control_center_weather_section(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_live_view_hand_control(tmp_path):
-    """The live view of a hands watch (narwhal) gets a control: current physical
-    position, a Sync-to-now button, an hr/min dial and a Set-hands button."""
+def test_live_view_hands_mode_panel(tmp_path):
+    """The live view of a hands watch (narwhal) gets the 3-mode control bar —
+    Time / Free / Calibrate — with Time (the default) offering Set-watch-to-time
+    and the raw driver counter shown."""
     import json
     h = tmp_path / "handctl.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nglobal.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
-                 "{ok:true,hands:{h:132,m:41,position:'132:41'}})});"
-                 "loadHands('S9');"
+                 "\nglobal.document.getElementById('devframe');"
+                 "global.document.getElementById('prodimg');"
+                 "global.document.getElementById('devhands');"
+                 "global.document.getElementById('wimghands');"
+                 "global.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
+                 "{ok:true,hands:{position:'132:41'},cal:{min_deg:102,hr_deg:108}})});"
+                 "loadHands('S9','narwhal');"
                  "setTimeout(()=>{const el=global.__els['wimghands']||{};"
                  "console.log(JSON.stringify({html:el.innerHTML||''}));process.exit(0);},90);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     html = json.loads(r.stdout.strip().splitlines()[-1])["html"]
-    assert "Sync to now" in html and "handsSyncNow('S9')" in html
-    assert "Set hands" in html and "handsSet('S9')" in html
-    assert "132:41" in html and 'class="spin"' in html
+    assert "handsSetMode('time')" in html and "handsSetMode('free')" in html
+    assert "handsSetMode('calibrate')" in html
+    assert "handsToTime()" in html          # Time is the default mode
+    assert "132:41" in html                 # raw driver counter surfaced
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

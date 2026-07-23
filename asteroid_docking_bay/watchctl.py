@@ -387,6 +387,21 @@ class Watch:
                         when, self.serial, err.strip() or f"rc={rc}")
         return rc == 0
 
+    def move_hands(self, minute: int, hour: int) -> bool:
+        """Drive the physical hands to ABSOLUTE motor positions (narwhal): write
+        'minute:hour' to /sys/devices/sop716/motor_move_all, each 0..179 (180 =
+        one full turn, 2 deg/step). Absolute and re-syncs sop716/position — the
+        primitive under Free-mode drag and the choreography. Decoded on hardware
+        2026-07-23; the movement driver + convention are dodoradio's. Caller
+        validates the range."""
+        rc, _, err = self.t.shell(
+            f'"echo {int(minute)}:{int(hour)} > /sys/devices/sop716/motor_move_all"',
+            timeout=8)
+        if rc != 0:
+            log.warning("move_hands %s:%s on %s failed: %s",
+                        minute, hour, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
+
     def weather_sync(self, writeset) -> bool:
         """Write a weather dconf set (from weather.dconf_writeset) to the watch,
         one key at a time in the ceres session — the same proven path the

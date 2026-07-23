@@ -191,17 +191,20 @@ def serve(args, cfg: dict):
         d = _call("watch.set_hands", {"serial": serial, "when": when})
         return json.dumps(d)
 
-    # Persist a hands watch's calibration offset (signed minutes).
-    @app.post("/api/watch/<serial>/hands-offset/<offset>")
-    def api_watch_hands_offset(serial, offset):
+    # Drive a hands watch's motors to absolute positions (minute, hour; 0..179).
+    @app.post("/api/watch/<serial>/hands-move/<m>/<h>")
+    def api_watch_hands_move(serial, m, h):
         resp.content_type = "application/json"
-        try:
-            minutes = int(offset)
-        except ValueError:
-            resp.status = 400
-            return json.dumps({"ok": False, "error": "offset must be an integer"})
-        return json.dumps(_call("watch.set_hands_offset",
-                                {"serial": serial, "offset_min": minutes}))
+        return json.dumps(_call("watch.hands_move",
+                                {"serial": serial, "m": m, "h": h}))
+
+    # Persist a hands watch's per-hand motor-zero calibration (degrees).
+    @app.post("/api/watch/<serial>/hands-cal/<min_deg>/<hr_deg>")
+    def api_watch_hands_cal(serial, min_deg, hr_deg):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.set_hands_cal",
+                                {"serial": serial, "min_deg": min_deg,
+                                 "hr_deg": hr_deg}))
 
     @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
     def api_watch_quickpanel(serial, tid, state):

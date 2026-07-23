@@ -44,7 +44,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.cc", "watch.timeline", "watch.settings_read", "watch.settings_write",
         "watch.quickpanel_set",
         "watch.toggle", "watch.settime", "watch.set_datetime", "watch.notify",
-        "watch.hands", "watch.set_hands", "watch.set_hands_offset",
+        "watch.hands", "watch.set_hands", "watch.hands_move", "watch.set_hands_cal",
         "weather.get", "weather.set_location", "watch.weather_sync",
         "orbit.launch", "orbit.deorbit", "registry.get",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",

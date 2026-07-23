@@ -34,7 +34,7 @@ from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config,
                      orbit_add, orbit_forget, orbit_members,
-                     hands_offset_for, set_hands_offset)
+                     hands_cal_for, set_hands_cal)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
@@ -264,24 +264,43 @@ def _watch_settime(args):
 def _watch_hands(args):
     """Physical hand position (HH:MM) for a hands watch (narwhal), or null on a
     watch without the movement — read on demand for the live-view composite. Also
-    returns the stored calibration offset so the control can pre-load it."""
+    returns the stored motor-zero calibration so the control can map a drag angle
+    to a motor value."""
     serial = args["serial"]
     return {"ok": True, "hands": _watch(serial).hands(),
-            "offset_min": hands_offset_for(load_config(), serial)}
+            "cal": hands_cal_for(load_config(), serial)}
 
 
-@DISPATCH.op("watch.set_hands_offset")
-def _watch_set_hands_offset(args):
-    """Persist a hands watch's calibration offset (signed minutes), dialled in by
-    the user nudging the physical hands to match real time. Applied on every
-    later sync — the drift the sysfs cannot sense, corrected once by eyeball."""
+@DISPATCH.op("watch.hands_move")
+def _watch_hands_move(args):
+    """Drive a hands watch's motors to absolute positions (minute, hour), each
+    0..179 (180 per turn). motor_move_all is absolute and re-syncs the counter —
+    Free-mode drag and the choreography ride this."""
+    try:
+        m = int(args.get("m"))
+        h = int(args.get("h"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "m and h must be integers"}
+    if not (0 <= m < 180 and 0 <= h < 180):
+        return {"ok": False, "error": "m and h must be 0..179"}
+    return {"ok": _watch(args["serial"]).move_hands(m, h)}
+
+
+@DISPATCH.op("watch.set_hands_cal")
+def _watch_set_hands_cal(args):
+    """Persist a hands watch's per-hand motor-zero offset (degrees), learned by
+    Calibrate mode's overlap/oppose match."""
     serial = args["serial"]
-    offset = int(args.get("offset_min", 0))
+    try:
+        min_deg = float(args.get("min_deg"))
+        hr_deg = float(args.get("hr_deg"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "min_deg and hr_deg must be numbers"}
     with _config_lock:
         cfg = load_config()
-        set_hands_offset(cfg, serial, offset)
+        set_hands_cal(cfg, serial, min_deg, hr_deg)
         save_config(cfg)
-    return {"ok": True, "offset_min": offset}
+    return {"ok": True, "cal": {"min_deg": min_deg, "hr_deg": hr_deg}}
 
 
 @DISPATCH.op("watch.set_hands")

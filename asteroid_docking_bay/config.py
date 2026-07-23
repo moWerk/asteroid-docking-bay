@@ -249,21 +249,33 @@ def orbit_forget(cfg: dict, serial: "str | None") -> bool:
 
 
 # ── hands calibration ────────────────────────────────────────────────────────
-# A physical-hands watch (narwhal) drifts in timepiece mode — a microcontroller
-# steps the hands with no OS and no position feedback, so lost steps accumulate
-# and the sop716 sysfs cannot sense the true hand position. The drift is not
-# auto-correctable; the user eyeballs it. We store the correction they dial in as
-# a signed minute offset per serial and pre-apply it on every sync (write
-# now + offset), so the hands land on real time until drift shifts again.
+# A physical-hands watch (narwhal) is driven by motor_move_all "minute:hour", each
+# 0..179 = an ABSOLUTE angle at 180 steps/turn (2 deg/step; decoded on hardware
+# 2026-07-23, see dodoradio's sop716 driver). It re-syncs sop716/position, so once
+# we know the fixed motor-zero offset (the physical angle a hand shows at motor
+# value 0 — measured ~102 deg for the minute hand, ~108 deg for the hour hand), a
+# drag angle maps exactly to a motor value and time/choreography are exact. The
+# offset is a fixed mounting property, calibrated once (re-done only after a
+# dead-battery timepiece drift), stored per serial in DEGREES per hand.
 
-def hands_offset_for(cfg: dict, serial: "str | None") -> int:
-    """The stored hands-calibration offset (signed minutes) for a serial, or 0."""
-    return cfg.get("hands_offset", {}).get(serial, 0) if serial else 0
+HANDS_ZERO_MIN_DEG = 102.0   # bench default: minute hand at motor value 0
+HANDS_ZERO_HR_DEG = 108.0    # bench default: hour hand at motor value 0
 
 
-def set_hands_offset(cfg: dict, serial: str, minutes: int) -> None:
-    """Persist a serial's hands-calibration offset (signed minutes)."""
-    cfg.setdefault("hands_offset", {})[serial] = int(minutes)
+def hands_cal_for(cfg: dict, serial: "str | None") -> dict:
+    """The motor-zero offset (physical degrees at motor value 0) per hand, or the
+    bench defaults. {min_deg, hr_deg}; the frontend uses it to map a drag angle to
+    a motor value."""
+    stored = cfg.get("hands_cal", {}).get(serial, {}) if serial else {}
+    return {"min_deg": stored.get("min_deg", HANDS_ZERO_MIN_DEG),
+            "hr_deg": stored.get("hr_deg", HANDS_ZERO_HR_DEG)}
+
+
+def set_hands_cal(cfg: dict, serial: str, min_deg: float, hr_deg: float) -> None:
+    """Persist a serial's per-hand motor-zero offset (degrees), learned by the
+    Calibrate mode's overlap/oppose match."""
+    cfg.setdefault("hands_cal", {})[serial] = {"min_deg": float(min_deg),
+                                               "hr_deg": float(hr_deg)}
 
 
 class AmbiguousTargetError(ValueError):
