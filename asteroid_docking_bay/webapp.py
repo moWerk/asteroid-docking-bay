@@ -184,6 +184,13 @@ def serve(args, cfg: dict):
         d = _call("watch.set_datetime", {"serial": serial, "when": when})
         return json.dumps(d)
 
+    # Move a hands watch's physical hands to <when> (URL-encoded YYYY-MM-DD HH:MM:SS).
+    @app.post("/api/watch/<serial>/set-hands/<when>")
+    def api_watch_set_hands(serial, when):
+        resp.content_type = "application/json"
+        d = _call("watch.set_hands", {"serial": serial, "when": when})
+        return json.dumps(d)
+
     @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
     def api_watch_quickpanel(serial, tid, state):
         resp.content_type = "application/json"

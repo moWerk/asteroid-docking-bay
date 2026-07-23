@@ -369,11 +369,23 @@ class Watch:
                                    timeout=8)
         if rc != 0:
             return None
-        m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", out)
+        m = re.match(r"^\s*(\d+):(\d+)\s*$", out)
         if not m:
             return None
-        return {"position": f"{int(m.group(1))}:{m.group(2)}",
+        return {"position": f"{int(m.group(1))}:{int(m.group(2))}",
                 "h": int(m.group(1)), "m": int(m.group(2))}
+
+    def set_hands(self, when: str) -> bool:
+        """Move a hands watch's physical hands to a datetime by writing it to
+        /sys/devices/sop716/time — the movement driver follows that file (narwhal;
+        dodoradio's hands-timesync writes the same 'YYYY-MM-DD HH:MM:SS'). Used to
+        correct drift (write now) or pose the hands for a shot. Caller validates."""
+        rc, _, err = self.t.shell(f"\"echo '{when}' > /sys/devices/sop716/time\"",
+                                  timeout=8)
+        if rc != 0:
+            log.warning("set_hands %s on %s failed: %s",
+                        when, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
 
     def weather_sync(self, writeset) -> bool:
         """Write a weather dconf set (from weather.dconf_writeset) to the watch,

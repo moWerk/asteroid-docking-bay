@@ -178,6 +178,8 @@ _WEB_TEMPLATE = """\
     .dev-shot{position:absolute;z-index:1;object-fit:contain}   /* preserve aspect (no squish) and never over-scale past the cutout */
     .dev-fill{position:absolute;z-index:0;background:#000}
     .dev-hands{position:absolute;z-index:1;pointer-events:none}   /* over the shot, under the bezel */
+    .wimg-ctl{display:flex;flex-direction:column;gap:6px;align-items:center;padding:2px 6px 8px}
+    .wimg-ctl-r{display:flex;gap:10px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
     .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
@@ -1365,7 +1367,8 @@ function openWatchImg(codename,serial,ev,isRound,res){
         `<img class="dev-prod" id="prodimg" alt="" onerror="closeWatchImg()" `+
           `onload="onProdLoad('${esc(codename)}','${esc(serial||'')}',${isRound?1:0},'${res?esc(res):''}')" `+
           `src="/api/watch-image/${encodeURIComponent(codename)}"></div></div>`+
-    `</div>`;
+    `</div>`+
+    `<div class="wimg-ctl" id="wimghands"></div>`;
   o.style.display='block';
   wimgPlace();
 }
@@ -1416,27 +1419,70 @@ function onProdLoad(codename,serial,isRound,res){
   }
   wimgPlace();
 }
+// narwhal (hands watch): draw where the physical hands point AND offer a control
+// to move them. `position` is two values tracking roughly hour:minute (value%60*6
+// ≈ degrees — a first-cut mapping to confirm with dodo). The movement is set by
+// writing a datetime to /sys/devices/sop716/time (dodoradio's hands-timesync
+// convention), so Sync-to-now corrects drift and the dial poses a time. All a
+// silent no-op on a watch with no movement.
+let handsPick=null, _handsSerial=null;
 function loadHands(serial){
-  // Draw where a hands watch's physical hands actually point (narwhal sysfs),
-  // as two rectangles angled from the dial centre — first value = hour hand
-  // (short/thick), second = minute hand (long/thin). The sysfs `position` is
-  // two independent 0-59 tick positions (verified on narwhal: 39:33 stable,
-  // values exceed 23 so it is NOT wall-clock time — it is where each hand
-  // physically sits, drifted from the ideal), so tick*6 = degrees clockwise
-  // from 12. First cut: the hands are drawn from the real angle, the screen
-  // behind is the real screenshot. Silent no-op on a watch with no movement.
+  _handsSerial=serial;
   fetch('/api/watch/'+encodeURIComponent(serial)+'/hands').then(r=>r.json()).then(d=>{
-    const hd=d&&d.hands, el=document.getElementById('devhands');
-    if(!hd||!el)return;
-    const hourA=((hd.h%60)*6).toFixed(1), minA=((hd.m%60)*6).toFixed(1);
-    el.title='physical hands at '+hd.position;
-    el.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">`+
-      `<g transform="translate(50,50)">`+
-        `<rect x="-2.6" y="-27" width="5.2" height="30" rx="2.6" fill="#f0f6fc" transform="rotate(${hourA})"/>`+
-        `<rect x="-1.8" y="-40" width="3.6" height="44" rx="1.8" fill="#f0f6fc" transform="rotate(${minA})"/>`+
-        `<circle r="3.4" fill="#c9d1d9"/>`+
-      `</g></svg>`;
+    const hd=d&&d.hands; if(!hd)return;
+    const el=document.getElementById('devhands');
+    if(el){
+      const hourA=((hd.h%60)*6).toFixed(1), minA=((hd.m%60)*6).toFixed(1);
+      el.title='physical hands at '+hd.position;
+      el.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">`+
+        `<g transform="translate(50,50)">`+
+          `<rect x="-2.6" y="-27" width="5.2" height="30" rx="2.6" fill="#f0f6fc" transform="rotate(${hourA})"/>`+
+          `<rect x="-1.8" y="-40" width="3.6" height="44" rx="1.8" fill="#f0f6fc" transform="rotate(${minA})"/>`+
+          `<circle r="3.4" fill="#c9d1d9"/>`+
+        `</g></svg>`;
+    }
+    if(handsPick===null){const t=new Date();handsPick={h:t.getHours(),m:t.getMinutes()};}
+    _renderHandsCtl(hd.position);
   }).catch(()=>{});
+}
+function _handsSpin(f,val,lbl){
+  return `<div class="spin" onwheel="handsPickWheel(event,'${f}')" title="scroll or the arrows to change the ${lbl}">`+
+    `<button class="spin-b" tabindex="-1" onclick="handsPickAdj('${f}',1)">&#9650;</button>`+
+    `<div class="spin-v">${val}</div>`+
+    `<button class="spin-b" tabindex="-1" onclick="handsPickAdj('${f}',-1)">&#9660;</button>`+
+    `<div class="spin-l">${lbl}</div></div>`;
+}
+function handsPickAdj(f,delta){
+  if(!handsPick)return;
+  if(f==='h')handsPick.h=(handsPick.h+delta+24)%24; else handsPick.m=(handsPick.m+delta+60)%60;
+  _renderHandsCtl();
+}
+function handsPickWheel(e,f){e.preventDefault();handsPickAdj(f,e.deltaY<0?1:-1);}
+function _renderHandsCtl(position){
+  const box=document.getElementById('wimghands'); if(!box||!handsPick)return;
+  const z=n=>String(n).padStart(2,'0');
+  const cur=position!=null?`<span class="dim">physical: ${esc(position)}</span>`:'';
+  box.innerHTML=
+    `<div class="wimg-ctl-r">${cur}`+
+      `<button class="cc-act mini" onclick="handsSyncNow('${esc(_handsSerial)}')" title="move the hands to the current time (corrects drift)">Sync to now</button></div>`+
+    `<div class="wimg-ctl-r"><div class="spins">${_handsSpin('h',z(handsPick.h),'hr')}${_handsSpin('m',z(handsPick.m),'min')}</div>`+
+      `<button class="cc-act mini" onclick="handsSet('${esc(_handsSerial)}')" title="move the hands to the dialled time">Set hands</button></div>`;
+}
+function _handsSet(serial,when,okmsg){
+  toast('moving hands\\u2026');
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/set-hands/'+encodeURIComponent(when),{method:'POST'})
+    .then(r=>r.json()).then(d=>{toast(d.ok?okmsg:('set hands failed'+(d.error?' \\u2014 '+d.error:'')));
+      if(d.ok)setTimeout(()=>loadHands(serial),3500);})   // re-read the position as the hands settle
+    .catch(()=>toast('set hands failed'));
+}
+function handsSyncNow(serial){
+  const z=n=>String(n).padStart(2,'0'), t=new Date();
+  _handsSet(serial,`${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())} ${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`,'hands synced to now');
+}
+function handsSet(serial){
+  if(!handsPick)return;
+  const z=n=>String(n).padStart(2,'0'), t=new Date();
+  _handsSet(serial,`${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())} ${z(handsPick.h)}:${z(handsPick.m)}:00`,'hands set to '+z(handsPick.h)+':'+z(handsPick.m));
 }
 function wimgPlace(){
   // Anchor to the click and flip above if it would run off the bottom, like
@@ -1469,7 +1515,7 @@ function loadShot(serial,res){
       const c=document.getElementById('shotcap');if(c){c.className='wimg-cap';c.textContent='screen off';}
     });
 }
-function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;handsPick=null;}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();}});
 function mi(cls,label,fn,dis,title){return `<button class="menu-item ${cls}"${dis?` disabled title="${title||'not available yet'}"`:` onclick="${fn};closeMenu()"`}>${label}</button>`;}
 // The row's actions fold into one Execute menu: each former button becomes a

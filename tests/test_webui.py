@@ -1208,3 +1208,23 @@ def test_control_center_weather_section(tmp_path):
     assert "14" in o["withWx"] and "19" in o["withWx"], "temps missing"
     assert 'id="wxcity"' in o["withWx"] and 'class="wxi"' in o["withWx"]
     assert "no location set" in o["noLoc"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_live_view_hand_control(tmp_path):
+    """The live view of a hands watch (narwhal) gets a control: current physical
+    position, a Sync-to-now button, an hr/min dial and a Set-hands button."""
+    import json
+    h = tmp_path / "handctl.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
+                 "{ok:true,hands:{h:132,m:41,position:'132:41'}})});"
+                 "loadHands('S9');"
+                 "setTimeout(()=>{const el=global.__els['wimghands']||{};"
+                 "console.log(JSON.stringify({html:el.innerHTML||''}));process.exit(0);},90);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    html = json.loads(r.stdout.strip().splitlines()[-1])["html"]
+    assert "Sync to now" in html and "handsSyncNow('S9')" in html
+    assert "Set hands" in html and "handsSet('S9')" in html
+    assert "132:41" in html and 'class="spin"' in html

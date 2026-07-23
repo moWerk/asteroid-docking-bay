@@ -44,7 +44,8 @@ def test_registered_ops_are_the_documented_contract():
         "watch.cc", "watch.timeline", "watch.settings_read", "watch.settings_write",
         "watch.quickpanel_set",
         "watch.toggle", "watch.settime", "watch.set_datetime", "watch.notify",
-        "watch.hands", "weather.get", "weather.set_location", "watch.weather_sync",
+        "watch.hands", "watch.set_hands",
+        "weather.get", "weather.set_location", "watch.weather_sync",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb", "watch.switch_ssh",
@@ -731,3 +732,15 @@ def test_watch_hands_op_dispatches(monkeypatch):
     monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
     d = rpcops.DISPATCH._data["watch.hands"]({"serial": "S1"})
     assert d["ok"] is True and d["hands"]["h"] == 18 and d["hands"]["m"] == 31
+
+
+def test_set_hands_op_validates_before_moving(monkeypatch):
+    called = []
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    monkeypatch.setattr(rpcops, "Watch",
+                        type("W", (), {"__init__": lambda self, *a, **k: None,
+                                       "set_hands": lambda self, w: (called.append(w), True)[1]}))
+    bad = rpcops.DISPATCH._data["watch.set_hands"]({"serial": "S1", "when": "half past two"})
+    assert bad == {"ok": False, "error": "bad datetime"} and called == []
+    ok = rpcops.DISPATCH._data["watch.set_hands"]({"serial": "S1", "when": "2026-07-23 02:42:00"})
+    assert ok == {"ok": True} and called == ["2026-07-23 02:42:00"]

@@ -246,6 +246,16 @@ def _watch_hands(args):
     return {"ok": True, "hands": _watch(args["serial"]).hands()}
 
 
+@DISPATCH.op("watch.set_hands")
+def _watch_set_hands(args):
+    """Move a hands watch's physical hands to an explicit YYYY-MM-DD HH:MM:SS
+    (narwhal). The format is validated before it reaches the shell."""
+    when = args.get("when", "")
+    if not _DATETIME_RE.match(when):
+        return {"ok": False, "error": "bad datetime"}
+    return {"ok": _watch(args["serial"]).set_hands(when)}
+
+
 # ── weather (fetch host-side, sync to a watch) ───────────────────────────────
 
 @DISPATCH.op("weather.set_location")

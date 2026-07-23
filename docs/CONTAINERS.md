@@ -99,6 +99,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `drain.history` | drain results |
 | `watch.timeline` | per-watch battery timeline (event log) |
 | `watch.hands` | physical hand position (HH:MM) for a hands watch (narwhal sysfs), or null |
+| `watch.set_hands` | move a hands watch's physical hands to a validated YYYY-MM-DD HH:MM:SS (narwhal) |
 | `weather.get` | current forecast for the stored location (host-side Open-Meteo fetch, no watch) |
 | `weather.set_location` | geocode a city name and store the fleet-wide weather location |
 | `watch.weather_sync` | fetch the forecast and write it to a watch's weather dconf |
