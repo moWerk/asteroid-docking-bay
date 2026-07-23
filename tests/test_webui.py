@@ -1182,3 +1182,29 @@ def test_live_view_draws_the_physical_hands(tmp_path):
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert "rotate(234.0)" in o["html"] and "rotate(198.0)" in o["html"], o["html"][:200]
     assert "39:33" in o["title"], "the hand position is not surfaced"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_control_center_weather_section(tmp_path):
+    """The System tab shows a Weather section: the mapped icon, today's high/low
+    and city, a Sync-to-watch button and a location setter; no location → setter
+    only. Icon id 211 (thunderstorm) → the 'thunderstorm' art."""
+    import json
+    h = tmp_path / "wx.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nctlSerial='S9';ctlTab='sys';"
+                 "wxData={ok:true,location:{city:'Berlin, DE'},days:[{id:211,min_c:14,max_c:19}]};"
+                 "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS'});"
+                 "const withWx=global.__els['cc'].innerHTML;"
+                 "wxData={ok:true,location:null,days:[]};"
+                 "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS'});"
+                 "console.log(JSON.stringify({withWx,noLoc:global.__els['cc'].innerHTML}));"
+                 "process.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "Weather" in o["withWx"] and "Berlin, DE" in o["withWx"]
+    assert "wxSync('S9')" in o["withWx"], "no Sync-to-watch button"
+    assert "14" in o["withWx"] and "19" in o["withWx"], "temps missing"
+    assert 'id="wxcity"' in o["withWx"] and 'class="wxi"' in o["withWx"]
+    assert "no location set" in o["noLoc"]

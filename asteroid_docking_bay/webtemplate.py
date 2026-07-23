@@ -89,6 +89,14 @@ _WEB_TEMPLATE = """\
     .qpb.on{opacity:1}
     .qpb:hover{background:#3a4149}
     .qpi{width:60%;height:60%;fill:#fff}
+    .wx-row{display:flex;align-items:center;gap:11px;padding:2px 12px 7px}
+    .wxi{width:34px;height:34px;flex:0 0 auto;fill:#c9d1d9}
+    .wx-t{flex:1;min-width:0}
+    .wx-temp{font-size:15px;color:#c9d1d9;font-variant-numeric:tabular-nums}
+    .wx-city{font-size:11px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .wx-none{padding:2px 12px 6px;color:#8b949e;font-size:12px}
+    .wx-set{display:flex;gap:6px;padding:2px 12px 10px}
+    .wx-in{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:5px 8px;font:inherit;font-size:12px}
     .cc-acts{padding:0 12px 12px}
     .cc-act{width:100%;padding:8px;border-radius:6px;border:1px solid #388bfd;background:transparent;color:#388bfd;cursor:pointer;font:inherit}
     .cc-act:hover{background:#0d1f3a}
@@ -960,6 +968,7 @@ function openControl(serial,name,ev,tab,sshIp,mode){
   cc.style.display='block';
   if(ctlTab==='bat')biHistFetch(serial);
   if(ctlTab==='set')settingsFetch(serial);
+  if(ctlTab==='sys'&&wxData===null)wxFetch();
   if(ctlCache[serial])renderControl(ctlCache[serial]);   // instant, from the last open
   else{cc.innerHTML=ctlChrome(null,`<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`);ctlPlace();
        paintStale(serial,()=>ctlSerial,()=>!!ctlCache[serial],renderControl);}
@@ -975,6 +984,7 @@ function ctlTabTo(tab){
   ctlTab=tab;                              // no refetch, no graphReset: the poll
   if(tab==='bat')biHistFetch(ctlSerial);   // keeps every metric filling regardless
   if(tab==='set')settingsFetch(ctlSerial);
+  if(tab==='sys'&&wxData===null)wxFetch();
   renderControl(ctlCache[ctlSerial]||null);
 }
 function ctlFetch(){
@@ -1039,7 +1049,8 @@ function bodySys(d){
     `<div class="cc-tgls">`+
       `<button class="cc-tgl" onclick="ccBuzz()" title="vibrate to locate in the dock">Buzz</button>`+
       `<button class="cc-tgl${d.screen_forced?' scrnon':''}${ctlPending.has('sys:screen')?' cmd-pending':''}" onclick="ccScreen(${d.screen_forced?0:1})" title="${d.screen_forced?'demo mode is ON — the screen is forced on and draining. Click to release.':'force the screen on (mce demo mode — stays on and drains until released!)'}">Screen: ${d.screen_forced?'ON':'OFF'}</button>`+
-      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`;
+      `<button class="cc-tgl" onclick="doScreenshot('${d.serial}')" title="screenshot in a new tab">Shot</button></div>`+
+    bodyWeather();
 }
 function ccBuzz(){fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/buzz',{method:'POST'}).then(()=>toast('buzzed'));}
 function ccScreen(on){ctlPending.add('sys:screen');renderControl(ctlCache[ctlSerial]||{});setTimeout(()=>{ctlPending.delete('sys:screen');},2600);fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/screen/'+(on?'on':'off'),{method:'POST'}).then(()=>{toast(on?'screen forced on \u2014 release it when done!':'screen released');ctlFetch();refresh();});}
@@ -1049,6 +1060,63 @@ function ccSyncTime(){
   const b=document.getElementById('cc-time');if(b)b.textContent='syncing…';
   fetch('/api/watch/'+encodeURIComponent(ctlSerial)+'/settime',{method:'POST'})
     .then(()=>setTimeout(()=>{const bb=document.getElementById('cc-time');if(bb){bb.textContent='✓ synced';bb.classList.add('done');}ctlFetch();},700));
+}
+// ── Weather (fleet-wide location, host-fetched, synced to a watch) ───────────
+// One location for the fleet; the host fetches Open-Meteo and can write it to a
+// watch's weather dconf. Icons are the watch's own ios-* weather art mapped from
+// the OWM condition code. wxData is global (weather is not per-watch), fetched
+// once on demand and cached.
+const WXICONS={
+ sunny:'<path d="M248 400h16v64h-16zm0-352h16v64h-16zM48 248h64v16H48zm352 0h64v16h-64zM148.452 352.163l11.313 11.314-45.254 45.254-11.314-11.313zM397.49 103.262l11.313 11.313-45.255 45.255-11.313-11.314zM159.905 148.52l-11.314 11.313-45.254-45.254 11.313-11.314zM408.67 397.421l-11.313 11.314-45.255-45.255 11.314-11.313zM256 160c-52.9 0-96 43.1-96 96s43.1 96 96 96 96-43.1 96-96-43.1-96-96-96z"/>',
+ partlysunny:'<path d="M160 64h16v54h-16zM16 208h55v16H16zm43.5-90.6 11-11.1 31.4 31.5-11 11.1zm179.9 30.5-11-11.1 31.3-31.5 11.1 11.1zM72.5 320.7l-11-11.1 31.4-31.5 11 11.1zM165 138.3c-40.5 0-73.3 32.8-73.3 73.3 0 36.8 27.1 67.3 62.5 72.5 0 0-1.2-42.9 18.9-72.9s51.8-42 51.8-42c-13.4-18.7-35.2-30.9-59.9-30.9z"/><path d="M403.3 259.2h-2.4c-3.1 0-6.1 0-9 .4-11.3-50.3-56.1-88.2-109.7-88.2-14.6 0-28.6 2.8-41.4 7.9-5.1 2-10 4.4-14.7 7.1-32 18.5-54.1 52.4-56.2 91.6-.1 2.1-.2 4.1-.2 6.2 0 3.4.2 6.8.5 10.1 0 .4.1.8.1 1.1-37.9 3.4-67.6 37.1-67.6 76 0 41.1 33.3 76.7 74.3 76.7h226.4c51.2 0 92.7-43.4 92.7-94.8-.1-51.4-41.6-94.1-92.8-94.1z"/>',
+ cloudy:'<path d="M236 96c-70 0-127.8 59.7-127.8 130.8 0 4.3.3 8.6.8 12.8-43.2 3.9-77 44-77 88.4 0 47 37.9 88 84.6 88h257.8c58.3 0 105.6-49.4 105.6-108s-47.3-108.8-105.6-108.8c-2.3 0-4.8-.2-7.2-.2-2.1 0-4.2 0-6.1.1C349.3 145.6 306 96 236 96z"/>',
+ rainy:'<path d="m374.4 143.2-13.3-.1C349.3 89.6 306 48 236 48S108.2 99.7 108.2 170.8l.3 4.8C66.2 181.2 32 220.1 32 264.5c0 47 37.9 88.5 84.6 88.5h10.6l-37.4 50.7c-2.6 3.6-1.8 8.3 1.8 10.9 1.3 1 2.9 1.4 4.4 1.4 2.3 0 5.1-.6 6.8-2.9L147 353h61.4l-72.3 99c-2.6 3.6-2.2 8 1.4 10.6 1.3 1 3.3 1.4 4.8 1.4 3.7 0 6.1-1.3 7.8-3.6l78-107.4h61.1l-37.3 50.7c-2.6 3.6-1.8 8.3 1.8 10.9 1.3 1 2.9 1.4 4.4 1.4 2.3 0 5.1-.6 6.8-2.9L309 353h61.4l-72.3 99c-2.6 3.6-2.1 7.8 1.5 10.3 1.3 1 3.2 1.7 4.7 1.7 2.3 0 5.1-.8 6.8-3.1l80.1-110.3c50.4-8.4 88.9-53.7 88.9-106.6-.1-58.6-47.4-100.8-105.7-100.8z"/>',
+ snow:'<path d="m435.7 341.5-29.1-17c10.7-10.4 22.7-15.4 22.8-15.5 8.3-3.3 12.6-12.6 9.8-21-2.1-6.5-8.2-10.9-15-10.9-2.1 0-4.1.4-6 1.2-2.5 1-23.5 9.9-40.3 29.5L290.1 256l87.9-51.8c17.1 20.1 39.2 29.1 40.3 29.6 1.9.8 4 1.2 6 1.2 6.8 0 12.8-4.4 15-10.9 2.8-8.5-1.5-17.7-9.8-21-.1-.1-12.2-5.1-22.9-15.5l29.1-17c7.9-4.6 10.6-14.8 6.1-22.8-3-5.2-8.5-8.4-14.4-8.4-2.9 0-5.8.8-8.3 2.3l-29 16.9c-3.5-14.5-1.8-27.5-1.8-27.6 1.3-8.9-4.5-17.3-13.2-19.1-1.1-.2-2.2-.3-3.3-.3-7.8 0-14.3 5.6-15.6 13.4l-.1.3c-2.4 10.4-3.1 30.8 3.5 50.9L273 227.3V123.7c25-4.7 41.8-16.3 44.4-18.4 4.2-3.3 6.9-8.1 7.4-12.8.3-3.8-.9-7.5-3.3-10.3-3.2-3.6-8.4-5.6-14.3-5.6-4.4 0-8.4 1.2-11.4 3.4-1.4.9-8.8 6.5-22.8 10.5V56.7c0-9-7.8-16.7-17-16.7s-17 7.6-17 16.7v33.7c-11-3.7-18.6-8.7-22.7-11.4-4.1-2.8-9.1-4.2-12.1-4.2-2.9 0-9.8.1-13.7 6.6-3 4.9-2.8 9.2-2.4 11.8.5 2.9 1.9 6.3 5.5 10.2 3.6 3.9 23.4 16.1 45.4 20.3v103l-91.6-51.3c9.4-26 7.4-49.9 7.4-50.2-1.2-8.2-7-13.7-14.6-13.7-1.1 0-2.2.1-3.2.3-8.5 1.8-14 10-12.7 19.1.1.6 1.9 13.3-1.6 27.6l-29.8-16.9c-2.5-1.5-5.4-2.3-8.3-2.3-5.9 0-11.4 3.2-14.4 8.4-4.5 7.9-1.8 18.1 6.1 22.8l29.1 17c-10.7 10.3-22.7 15.4-22.8 15.5-8.3 3.3-12.6 12.6-9.8 21 2.1 6.5 8.2 10.9 15 10.9 2.1 0 4.1-.4 6-1.2 1-.4 23.1-9.5 40.3-29.6l89.9 51.8-89.9 51.8c-16.7-19.7-37.7-28.5-40.3-29.5-1.9-.8-4-1.2-6-1.2-6.8 0-12.8 4.4-15 10.9-2.8 8.5 1.5 17.7 9.7 21 .1.1 12.2 5.2 22.9 15.5l-29.1 17c-7.9 4.6-10.6 14.8-6.1 22.8 3 5.2 8.5 8.4 14.4 8.4 2.9 0 5.8-.8 8.3-2.3l29-16.9c3.5 14.5 1.8 27.5 1.8 27.6-1.3 8.9 4.5 17.2 13.2 19.1 1.1.2 2.2.3 3.3.3 7.9 0 14.5-5.8 15.6-13.7.5-3.4 3.2-26.8-5.4-50.2l88.6-51.3v103c-21 4.2-39.8 16.4-45.4 21.3l-.1.1c-2.9 2.3-4.6 5.6-4.9 9.3-.4 4.6 1.4 9.6 5.1 13.7 1.2 1.4 5 5.6 10.8 5.6 3.1 0 6.1-1.2 9.2-3.6l.5-.4c1-.9 13-8.8 25-12.7v33.7c0 9 7.8 16.7 17 16.7s17-7.6 17-16.7v-33.9c15 4 22.2 10.6 23.8 11.6 2.9 2.2 6.8 3.3 10.9 3.3 5.6 0 10.6-2 13.7-5.6 2.3-2.7 3.5-6.1 3.2-9.6-.4-4.7-3.5-9.7-8.1-13.4-.2-.2-16.5-14.4-43.5-19.4V285.7l86.6 51.1c-7.2 21.3-4.8 41.6-3.3 49.8v.2c1.2 7.8 6.3 13.6 14.5 13.6 1.1 0 2.2-.1 3.3-.3 8.8-1.8 14.9-10.3 13.7-19-.1-.8-1.4-13.6 2-27.8l29.1 17.1c2.5 1.5 5.4 2.5 8.3 2.5 6 0 11.5-3.4 14.4-8.6 4.5-7.8 1.8-18.2-6.1-22.8z"/>',
+ thunderstorm:'<path d="m374.4 141.9-13.3-.1C349.4 88.2 306 48 236 48S108.2 98.4 108.2 169.5l.3 4.8C66.3 179.9 32 219.6 32 264c0 47 37.9 88 84.7 88h96.8l8.6-32h-70.9l4.3-19.5 32-144 2.8-12.5h135.9l-6.2 20.6-17.8 59.4H370l-15.4 24.5L289.4 352H367c72 0 113-52 113-110 0-58.6-47.3-100.1-105.6-100.1z"/><path d="M341 240h-60.3l24-80H203l-32 144h72l-42.9 160z"/>'
+};
+function wxIcon(id){id=+id;
+  if(id>=200&&id<300)return 'thunderstorm';
+  if(id===511||(id>=600&&id<700))return 'snow';
+  if(id>=300&&id<600)return 'rainy';
+  if(id>=700&&id<800)return 'cloudy';
+  if(id===800)return 'sunny';
+  if(id===801)return 'partlysunny';
+  return 'cloudy';
+}
+let wxData=null;
+function wxFetch(){
+  fetch('/api/weather').then(r=>r.json()).then(d=>{
+    wxData=d;
+    if(ctlSerial&&ctlTab==='sys')renderControl(ctlCache[ctlSerial]||{});
+  }).catch(()=>{});
+}
+function wxSetLocation(){
+  const inp=document.getElementById('wxcity'); if(!inp||!inp.value.trim())return;
+  const city=inp.value.trim(); toast('locating '+city+'\\u2026');
+  fetch('/api/weather/location/'+encodeURIComponent(city),{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){toast('location: '+d.location.city);wxData=null;wxFetch();}
+    else toast(d.error||'city not found');
+  }).catch(()=>toast('set location failed'));
+}
+function wxSync(serial){
+  toast('syncing weather\\u2026');
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/weather-sync',{method:'POST'}).then(r=>r.json()).then(d=>{
+    toast(d.ok?('weather synced'+(d.city?': '+d.city:'')):('weather sync failed'+(d.error?' \\u2014 '+d.error:'')));
+  }).catch(()=>toast('weather sync failed'));
+}
+function bodyWeather(){
+  if(!wxData)return '';   // not fetched yet — the System tab triggers wxFetch
+  const loc=wxData.location, days=wxData.days||[];
+  const setter=`<div class="wx-set"><input id="wxcity" class="wx-in" placeholder="set city\\u2026" onkeydown="if(event.key==='Enter')wxSetLocation()"><button class="cc-act mini" onclick="wxSetLocation()">Set</button></div>`;
+  if(!loc||!days.length){
+    return `<div class="cc-sec"><div class="cc-sech">Weather</div>`+
+      `<div class="wx-none">${loc?esc(loc.city)+' \\u2014 no forecast':'no location set'}</div>${setter}</div>`;
+  }
+  const d0=days[0], icon=`<svg class="wxi" viewBox="0 0 512 512">${WXICONS[wxIcon(d0.id)]||''}</svg>`;
+  return `<div class="cc-sec"><div class="cc-sech">Weather</div>`+
+    `<div class="wx-row">${icon}<div class="wx-t"><div class="wx-temp">${d0.min_c}\\u00b0 / ${d0.max_c}\\u00b0</div>`+
+      `<div class="wx-city">${esc(loc.city)}</div></div>`+
+      `<button class="cc-act mini" onclick="wxSync('${ctlSerial}')" title="write this forecast to the watch">Sync to watch</button></div>${setter}</div>`;
 }
 
 // ── Network tab ─────────────────────────────────────────────────────────────
