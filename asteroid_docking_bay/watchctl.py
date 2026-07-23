@@ -499,6 +499,31 @@ class Watch:
                         on, self.serial, err.strip() or f"rc={rc}")
         return rc == 0
 
+    def standby_features(self) -> dict:
+        """The standby power consumers ON right now — WiFi, Bluetooth, always-on
+        display — captured at drain-start so a run self-documents its config for
+        per-feature drain attribution. WiFi/BT come from connmanctl (same source
+        the CC reads); AoD from its dconf key (default-on, so empty == on). Any
+        field is None when unreadable."""
+        feats = {"wifi": None, "bt": None, "aod": None}
+        _, out, _ = self.t.shell('"connmanctl technologies 2>/dev/null"', timeout=10)
+        ctype = None
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("Type ="):
+                ctype = s.split("=", 1)[1].strip()
+            elif s.startswith("Powered =") and ctype:
+                on = s.split("=", 1)[1].strip().lower() == "true"
+                if ctype == "wifi":
+                    feats["wifi"] = on
+                elif ctype == "bluetooth":
+                    feats["bt"] = on
+        _, aod, _ = self.user_cmd(
+            "HOME=/home/ceres dconf read /org/asteroidos/settings/always-on-display",
+            timeout=10)
+        feats["aod"] = aod.strip().lower() != "false"   # empty == default (on)
+        return feats
+
     def last_recording_path(self) -> Path:
         """Stable local path the last pulled mic recording sits at (per serial)."""
         return Path(tempfile.gettempdir()) / f"dockingbay_rec_{self.serial}.wav"

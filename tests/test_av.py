@@ -108,3 +108,20 @@ def test_record_audio_op_failure(monkeypatch):
                         lambda s: type("W", (), {"record_audio": lambda self, n: None})())
     d = rpcops.DISPATCH._data["watch.record_audio"]({"serial": "S"})
     assert d["ok"] is False and "mic" in d["error"]
+
+
+# ── standby feature capture (per-feature drain attribution) ──────────────────
+
+def test_standby_features_parses_connman_and_aod(monkeypatch):
+    conn = ("  Type = wifi\n  Powered = True\n  Connected = yes\n"
+            "  Type = bluetooth\n  Powered = False\n")
+    w = Watch("S", transport=_T(conn))
+    monkeypatch.setattr(w, "user_cmd", lambda c, timeout=None: (0, "true\n", ""))
+    assert w.standby_features() == {"wifi": True, "bt": False, "aod": True}
+
+
+def test_standby_features_aod_defaults_on_when_empty(monkeypatch):
+    w = Watch("S", transport=_T(""))                      # connman unreadable
+    monkeypatch.setattr(w, "user_cmd", lambda c, timeout=None: (0, "", ""))
+    f = w.standby_features()
+    assert f["aod"] is True and f["wifi"] is None and f["bt"] is None  # empty aod = default on

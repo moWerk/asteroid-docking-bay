@@ -200,6 +200,7 @@ def _save_drain_results(task: "dict | None", slot: str, codename: str) -> None:
             "end_pct":                task.get("last_pct"),
             "drain_rate_pct_per_hour":task.get("drain_rate"),
             "stopped_by_user":        task.get("stopped", False),
+            "features":               task.get("features"),   # WiFi/BT/AoD at start
             "readings":               task["readings"],
         }
         with out.open("w") as f:

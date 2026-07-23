@@ -29,7 +29,7 @@ from .events import (_DRAIN_FLOOR_PCT, _DRAIN_MAX_BLIND_POLLS,
 from .tasks import (_charge_stop, _charge_tasks, _drain_stop,
                     _drain_tasks, _flash_tasks, task_store,
                     _workbench_stop, _workbench_tasks)
-from .watchctl import wait_for_adb
+from .watchctl import Watch, wait_for_adb
 
 
 _CHARGE_POLL_SEC = 120  # battery poll interval in charge-to-target mode
@@ -582,12 +582,21 @@ class DrainOp(Operation):
                     return
 
                 now = time.time()
+                # Capture the standby consumers now (watch still reachable) so the
+                # run self-documents its config for per-feature drain attribution
+                # (WiFi/BT/AoD on vs off). Best-effort; None if unreadable.
+                try:
+                    features = Watch(serial).standby_features() if serial else None
+                except Exception as exc:
+                    log.debug("%s: drain feature capture failed: %s", codename, exc)
+                    features = None
                 task.update({
                     "start_ts":   now,
                     "start_pct":  start_pct,
                     "last_ts":    now,
                     "last_pct":   start_pct,
                     "drain_rate": None,
+                    "features":   features,
                     "readings":   [{"ts": now, "pct": start_pct}],
                 })
                 task_store.persist("drain", slot, loc, port, task)

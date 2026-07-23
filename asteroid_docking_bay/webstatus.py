@@ -567,6 +567,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                     "start_ts":    dt.get("start_ts"),
                     "done":        dt.get("done", True),
                     "stopped":     dt.get("stopped", False),
+                    "features":    dt.get("features"),   # WiFi/BT/AoD config of this run
                 }
             # Powered but nothing ever connects = the stale-node/fake-power
             # wedge; self-heal it (opt-in) when the port is otherwise idle.

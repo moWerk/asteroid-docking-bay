@@ -255,6 +255,7 @@ _WEB_TEMPLATE = """\
     .cbadge.wifi{border-color:#39c5cf;color:#39c5cf}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
     .orbit-hint{color:#a78bfa;font-size:.85em;opacity:.85}
+    .drain-cfg{color:#a78bfa;font-size:10px;letter-spacing:.3px}
     .regmask{position:fixed;inset:0;background:rgba(2,6,14,.6);z-index:40}
     .regpanel{position:fixed;top:5vh;left:50%;transform:translateX(-50%);width:min(880px,94vw);max-height:88vh;z-index:41;background:rgba(13,20,32,.97);border:1px solid #30363d;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);display:flex;flex-direction:column}
     .reg-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #21262d}
@@ -729,6 +730,13 @@ function reconcileRows(tb, htmls){
   for(const k in _rowSig)if(!seen.has(k))delete _rowSig[k];
   tb.replaceChildren(...out);
 }
+function drainCfg(f){
+  // The standby consumers a drain run captured at start — for per-feature
+  // attribution ("this run had WiFi on, that one didn't"). "idle" = all off.
+  if(!f)return '';
+  const on=[]; if(f.wifi)on.push('wifi'); if(f.bt)on.push('BT'); if(f.aod)on.push('AoD');
+  return on.length?on.join('·'):'idle';
+}
 function orbitBadge(p){
   // The connection column for an orbit row: a WiFi pill with the IP (the wire it
   // rides), physical-first grammar shared with adb/ssh. Offline → an honest note
@@ -887,7 +895,9 @@ function render(data){
             if(dr.last_pct>floor){const estH=(dr.last_pct-floor)/dr.drain_rate;txt+=` (~${fmtDur(estH)})`;}
             txt+='</span>';
           }
-          bat=batPill(p,'warn',txt,'drain test running');
+          const cfg=drainCfg(dr.features);   // the WiFi/BT/AoD config this run captured
+          if(cfg)txt+=` <span class="drain-cfg" title="consumers on for this run (per-feature drain attribution)">${cfg}</span>`;
+          bat=batPill(p,'warn',txt,'drain test running'+(cfg?' — consumers: '+cfg:''));
         }else if(p.drain&&p.drain.done&&p.drain.last_pct!==null){
           const dr=p.drain;
           const summary=dr.drain_rate!==null?` &minus;${dr.drain_rate.toFixed(1)}%/h`:'';
