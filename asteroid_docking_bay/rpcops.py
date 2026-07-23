@@ -33,7 +33,8 @@ from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config,
-                     orbit_add, orbit_forget, orbit_members)
+                     orbit_add, orbit_forget, orbit_members,
+                     hands_offset_for, set_hands_offset)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
@@ -251,8 +252,25 @@ def _watch_settime(args):
 @DISPATCH.op("watch.hands")
 def _watch_hands(args):
     """Physical hand position (HH:MM) for a hands watch (narwhal), or null on a
-    watch without the movement — read on demand for the live-view composite."""
-    return {"ok": True, "hands": _watch(args["serial"]).hands()}
+    watch without the movement — read on demand for the live-view composite. Also
+    returns the stored calibration offset so the control can pre-load it."""
+    serial = args["serial"]
+    return {"ok": True, "hands": _watch(serial).hands(),
+            "offset_min": hands_offset_for(load_config(), serial)}
+
+
+@DISPATCH.op("watch.set_hands_offset")
+def _watch_set_hands_offset(args):
+    """Persist a hands watch's calibration offset (signed minutes), dialled in by
+    the user nudging the physical hands to match real time. Applied on every
+    later sync — the drift the sysfs cannot sense, corrected once by eyeball."""
+    serial = args["serial"]
+    offset = int(args.get("offset_min", 0))
+    with _config_lock:
+        cfg = load_config()
+        set_hands_offset(cfg, serial, offset)
+        save_config(cfg)
+    return {"ok": True, "offset_min": offset}
 
 
 @DISPATCH.op("watch.set_hands")

@@ -178,6 +178,9 @@ _WEB_TEMPLATE = """\
     .dev-shot{position:absolute;z-index:1;object-fit:contain}   /* preserve aspect (no squish) and never over-scale past the cutout */
     .dev-fill{position:absolute;z-index:0;background:#000}
     .dev-hands{position:absolute;z-index:1;pointer-events:none}   /* over the shot, under the bezel */
+    .hands-cal{flex-wrap:wrap;gap:3px}
+    .hands-cal .spin-b{padding:2px 5px;font-size:11px;min-width:30px}
+    .hands-off{min-width:40px;text-align:center;font-variant-numeric:tabular-nums;color:#a78bfa;font-size:12px}
     .wimg-ctl{display:flex;flex-direction:column;gap:6px;align-items:center;padding:2px 6px 8px}
     .wimg-ctl-r{display:flex;gap:10px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
@@ -1497,10 +1500,11 @@ function onProdLoad(codename,serial,isRound,res){
 // writing a datetime to /sys/devices/sop716/time (dodoradio's hands-timesync
 // convention), so Sync-to-now corrects drift and the dial poses a time. All a
 // silent no-op on a watch with no movement.
-let handsPick=null, _handsSerial=null;
+let handsPick=null, _handsSerial=null, handsOffset=0;
 function loadHands(serial){
   _handsSerial=serial;
   fetch('/api/watch/'+encodeURIComponent(serial)+'/hands').then(r=>r.json()).then(d=>{
+    handsOffset=(d&&d.offset_min)||0;
     const hd=d&&d.hands; if(!hd)return;
     const el=document.getElementById('devhands');
     if(el){
@@ -1534,11 +1538,21 @@ function _renderHandsCtl(position){
   const box=document.getElementById('wimghands'); if(!box||!handsPick)return;
   const z=n=>String(n).padStart(2,'0');
   const cur=position!=null?`<span class="dim">physical: ${esc(position)}</span>`:'';
+  const off=(handsOffset>0?'+':'')+handsOffset+'m';
   box.innerHTML=
     `<div class="wimg-ctl-r">${cur}`+
-      `<button class="cc-act mini" onclick="handsSyncNow('${esc(_handsSerial)}')" title="move the hands to the current time (corrects drift)">Sync to now</button></div>`+
+      `<button class="cc-act mini" onclick="handsSyncNow('${esc(_handsSerial)}')" title="move the hands to the current time, applying the saved calibration">Sync to now</button></div>`+
+    `<div class="wimg-ctl-r hands-cal"><span class="dim" title="the hands drift in timepiece mode and the sysfs cannot sense it — nudge until the physical hands match real time, then Save">calibrate:</span>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',-60)" title="hands read an hour behind">&minus;1h</button>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',-5)">&minus;5m</button>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',-1)">&minus;1m</button>`+
+      `<span class="hands-off" id="handsoff">${off}</span>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',1)">+1m</button>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',5)">+5m</button>`+
+      `<button class="spin-b" onclick="handsNudge('${esc(_handsSerial)}',60)" title="hands read an hour ahead">+1h</button>`+
+      `<button class="cc-act mini" onclick="handsSaveOffset('${esc(_handsSerial)}')" title="save this calibration — pre-applied on every future Sync to now">Save</button></div>`+
     `<div class="wimg-ctl-r"><div class="spins">${_handsSpin('h',z(handsPick.h),'hr')}${_handsSpin('m',z(handsPick.m),'min')}</div>`+
-      `<button class="cc-act mini" onclick="handsSet('${esc(_handsSerial)}')" title="move the hands to the dialled time">Set hands</button></div>`;
+      `<button class="cc-act mini" onclick="handsSet('${esc(_handsSerial)}')" title="pose the hands at the dialled time (ignores calibration)">Set hands</button></div>`;
 }
 function _handsSet(serial,when,okmsg){
   toast('moving hands\\u2026');
@@ -1547,9 +1561,27 @@ function _handsSet(serial,when,okmsg){
       if(d.ok)setTimeout(()=>loadHands(serial),3500);})   // re-read the position as the hands settle
     .catch(()=>toast('set hands failed'));
 }
+function _handsWhen(){
+  // Real current time shifted by the calibration offset — the value we write so
+  // the physical hands land on real time despite the uncorrectable drift.
+  const z=n=>String(n).padStart(2,'0'), t=new Date(Date.now()+handsOffset*60000);
+  return `${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())} ${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`;
+}
 function handsSyncNow(serial){
-  const z=n=>String(n).padStart(2,'0'), t=new Date();
-  _handsSet(serial,`${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())} ${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`,'hands synced to now');
+  _handsSet(serial,_handsWhen(),'hands synced to now'+(handsOffset?' ('+(handsOffset>0?'+':'')+handsOffset+'m cal)':''));
+}
+function handsNudge(serial,delta){
+  // Each nudge repositions to now + the new offset (absolute, not incremental),
+  // so the user watches the physical hands converge on real time.
+  handsOffset+=delta;
+  const o=document.getElementById('handsoff');
+  if(o)o.textContent=(handsOffset>0?'+':'')+handsOffset+'m';
+  _handsSet(serial,_handsWhen(),'nudged '+(delta>0?'+':'')+delta+'m');
+}
+function handsSaveOffset(serial){
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/hands-offset/'+handsOffset,{method:'POST'})
+    .then(r=>r.json()).then(d=>toast(d.ok?('calibration saved: '+(handsOffset>0?'+':'')+handsOffset+'m'):'save failed'))
+    .catch(()=>toast('save failed'));
 }
 function handsSet(serial){
   if(!handsPick)return;

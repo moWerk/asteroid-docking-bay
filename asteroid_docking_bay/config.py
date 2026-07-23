@@ -248,6 +248,24 @@ def orbit_forget(cfg: dict, serial: "str | None") -> bool:
     return cfg.get("orbit", {}).pop(serial, None) is not None if serial else False
 
 
+# ── hands calibration ────────────────────────────────────────────────────────
+# A physical-hands watch (narwhal) drifts in timepiece mode — a microcontroller
+# steps the hands with no OS and no position feedback, so lost steps accumulate
+# and the sop716 sysfs cannot sense the true hand position. The drift is not
+# auto-correctable; the user eyeballs it. We store the correction they dial in as
+# a signed minute offset per serial and pre-apply it on every sync (write
+# now + offset), so the hands land on real time until drift shifts again.
+
+def hands_offset_for(cfg: dict, serial: "str | None") -> int:
+    """The stored hands-calibration offset (signed minutes) for a serial, or 0."""
+    return cfg.get("hands_offset", {}).get(serial, 0) if serial else 0
+
+
+def set_hands_offset(cfg: dict, serial: str, minutes: int) -> None:
+    """Persist a serial's hands-calibration offset (signed minutes)."""
+    cfg.setdefault("hands_offset", {})[serial] = int(minutes)
+
+
 class AmbiguousTargetError(ValueError):
     """A machine/image name that maps to several physical watches, with
     nothing given to pick one. Carries the candidates so the caller can tell

@@ -191,6 +191,18 @@ def serve(args, cfg: dict):
         d = _call("watch.set_hands", {"serial": serial, "when": when})
         return json.dumps(d)
 
+    # Persist a hands watch's calibration offset (signed minutes).
+    @app.post("/api/watch/<serial>/hands-offset/<offset>")
+    def api_watch_hands_offset(serial, offset):
+        resp.content_type = "application/json"
+        try:
+            minutes = int(offset)
+        except ValueError:
+            resp.status = 400
+            return json.dumps({"ok": False, "error": "offset must be an integer"})
+        return json.dumps(_call("watch.set_hands_offset",
+                                {"serial": serial, "offset_min": minutes}))
+
     @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
     def api_watch_quickpanel(serial, tid, state):
         resp.content_type = "application/json"

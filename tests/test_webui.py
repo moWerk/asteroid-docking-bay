@@ -284,6 +284,29 @@ def test_orbit_section_renders_rows_and_controls(tmp_path):
     assert "pwrGo(" not in orbit_part and "menuExecute(" not in orbit_part
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_hands_calibration_control_renders(tmp_path):
+    """The narwhal hands control renders the drift-calibration row: signed nudge
+    buttons wired to handsNudge, the current offset, a Save wired to
+    handsSaveOffset, alongside the existing Sync-to-now and pose Set-hands."""
+    import json
+    h = tmp_path / "hands.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 "\nglobal.document.getElementById('wimghands');"   # cache the node
+                 "handsPick={h:10,m:9};_handsSerial='NAR';handsOffset=-3;"
+                 "_renderHandsCtl('132:41');"
+                 "console.log(JSON.stringify(global.__els['wimghands'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "handsNudge('NAR',-1)" in html and "handsNudge('NAR',5)" in html
+    assert "handsNudge('NAR',60)" in html                # hour-scale nudge
+    assert "handsSaveOffset('NAR')" in html              # save the calibration
+    assert "-3m" in html                                 # current offset shown
+    assert "handsSyncNow('NAR')" in html and "handsSet('NAR')" in html
+
+
 def test_refreshing_row_pulse_survives_hover():
     """The refreshing-row pulse is the only feedback that a re-identify is in
     flight. An !important background on the :hover rule outranks the animation
