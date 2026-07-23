@@ -33,7 +33,7 @@ from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config,
-                     orbit_add, orbit_forget)
+                     orbit_add, orbit_forget, orbit_members)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
@@ -67,9 +67,16 @@ def _reachable_transport(serial: str):
     with no change at the call site beyond going through _watch()."""
     if _adb_state(adb_devices(), serial) == "device":
         return None
-    ip = ssh_ip_for_serial(load_config(), serial)
+    cfg = load_config()
+    ip = ssh_ip_for_serial(cfg, serial)
     if ip and _detect_rndis(ip):
         return SshTransport(ip)
+    # Off the dock but in orbit: reach it over WiFi at its stored address. This
+    # is the whole point of the Orbit port — every per-watch op (CC, weather,
+    # settings, screenshot) routes over WiFi with no change at the call site.
+    member = orbit_members(cfg).get(serial)
+    if member and member.get("ip") and orbit.reachable(member["ip"]):
+        return SshTransport(member["ip"])
     return None
 
 

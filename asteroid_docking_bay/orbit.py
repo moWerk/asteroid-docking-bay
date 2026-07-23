@@ -10,6 +10,7 @@ watch is the same member whether docked or in orbit) plus its image codename and
 geometry. An orbiting watch is just that Watch, minus a USB port. Verified
 end-to-end on skipjack (docked→WiFi) and catfish (never docked)."""
 
+import socket
 import time
 
 from .transport import SshTransport
@@ -41,10 +42,16 @@ def probe(ip):
             "added": int(time.time())}
 
 
-def reachable(ip, timeout=6):
-    """Cheap liveness check that an orbiting watch answers over SSH at ip — for
-    the status path, which must never pay the full probe per cycle."""
+def reachable(ip, timeout=3):
+    """Cheap, bounded liveness gate: is the watch's SSH port open at ip? A TCP
+    connect, not a full handshake — so an offline member costs at most `timeout`,
+    never the SSH connect default. Mirrors _detect_rndis's role for the rndis
+    link: the gate that keeps the status path and per-watch ops from blocking on
+    a watch that has left WiFi."""
     if not ip:
         return False
-    rc, _, _ = SshTransport(ip).shell('"true"', timeout=timeout)
-    return rc == 0
+    try:
+        with socket.create_connection((ip, 22), timeout=timeout):
+            return True
+    except OSError:
+        return False

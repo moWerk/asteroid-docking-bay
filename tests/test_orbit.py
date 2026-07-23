@@ -77,6 +77,70 @@ def test_probe_survives_geometry_none(monkeypatch):
     assert m["serial"] == "S1" and m["codename"] is None
 
 
+# ── reachability gate ────────────────────────────────────────────────────────
+
+def test_reachable_true_when_port_open(monkeypatch):
+    opened = {}
+
+    class _Sock:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_connect(addr, timeout=None):
+        opened["addr"], opened["timeout"] = addr, timeout
+        return _Sock()
+
+    monkeypatch.setattr(orbit.socket, "create_connection", fake_connect)
+    assert orbit.reachable("10.0.0.5", timeout=2) is True
+    assert opened["addr"] == ("10.0.0.5", 22) and opened["timeout"] == 2
+
+
+def test_reachable_false_when_refused_or_timeout(monkeypatch):
+    def boom(addr, timeout=None):
+        raise OSError("connection refused")
+    monkeypatch.setattr(orbit.socket, "create_connection", boom)
+    assert orbit.reachable("10.0.0.5") is False
+
+
+def test_reachable_false_on_empty_ip():
+    assert orbit.reachable("") is False and orbit.reachable(None) is False
+
+
+# ── per-watch transport routing (the Orbit integration seam) ─────────────────
+
+def test_reachable_transport_routes_to_orbit_wifi(monkeypatch):
+    # Not on adb, no rndis SSH IP, but an orbiting member with a live WiFi IP →
+    # the op should reach it over WiFi. This is what makes CC/weather/etc. work.
+    monkeypatch.setattr(rpcops, "adb_devices", lambda: {})
+    monkeypatch.setattr(rpcops, "_adb_state", lambda devs, s: None)
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9"}}})
+    monkeypatch.setattr(rpcops, "ssh_ip_for_serial", lambda cfg, s: None)
+    monkeypatch.setattr(rpcops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(rpcops, "SshTransport", lambda ip: ("ssh", ip))
+    assert rpcops._reachable_transport("S1") == ("ssh", "10.0.0.9")
+
+
+def test_reachable_transport_none_when_orbit_unreachable(monkeypatch):
+    # An orbiting member that is off WiFi → None (default AdbTransport / stale),
+    # never a transport that would block on a dead address.
+    monkeypatch.setattr(rpcops, "adb_devices", lambda: {})
+    monkeypatch.setattr(rpcops, "_adb_state", lambda devs, s: None)
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9"}}})
+    monkeypatch.setattr(rpcops, "ssh_ip_for_serial", lambda cfg, s: None)
+    monkeypatch.setattr(rpcops.orbit, "reachable", lambda ip, **k: False)
+    assert rpcops._reachable_transport("S1") is None
+
+
+def test_reachable_transport_adb_wins_over_orbit(monkeypatch):
+    # A watch that is BOTH docked and an orbit member must use adb (docked wins),
+    # not its stale WiFi link.
+    monkeypatch.setattr(rpcops, "adb_devices", lambda: {"S1": "device"})
+    monkeypatch.setattr(rpcops, "_adb_state", lambda devs, s: "device")
+    assert rpcops._reachable_transport("S1") is None
+
+
 # ── config helpers ───────────────────────────────────────────────────────────
 
 def test_orbit_add_get_and_forget_round_trip():
