@@ -10,12 +10,14 @@ import time
 from pathlib import Path
 
 from .util import _run, log
-from .adb import adb_devices_checked, get_battery_level, wait_serial_online
+from .adb import (adb_devices_checked, battery_and_screen, get_battery_level,
+                  wait_serial_online)
 from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for_loc_port,
                      find_port_for_codename, find_serial_for_loc_port,
-                     is_port_smart, is_slot_smart, load_config)
-from . import fastboot, usb
+                     is_port_smart, is_slot_smart, load_config, orbit_members)
+from . import fastboot, orbit, usb
 from .usb import uhubctl_get_power, uhubctl_set_power
+from .transport import SshTransport
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _switch_ssh_to_adb,
                        _wait_for_fastboot)
@@ -202,6 +204,24 @@ def _background_warmer() -> None:
                         if v is not None:
                             usb.power_cache.put((loc, n), v)
                         time.sleep(0.25)        # gentle on the bus
+            # Orbit reachability: probe each orbiting watch over WiFi (a bounded
+            # TCP connect) and cache the verdict, so the status path shows a live
+            # WiFi badge without blocking. A reachable member also gets a fresh
+            # battery read over its link, recorded to last_seen for its row.
+            for serial, member in orbit_members(cfg).items():
+                ip = member.get("ip")
+                ok = orbit.reachable(ip) if ip else False
+                orbit.note_reachable(serial, ok)
+                if ok:
+                    try:
+                        bat, screen, _ = battery_and_screen(
+                            serial, shell=SshTransport(ip).shell)
+                        if bat is not None:
+                            last_seen.record(serial, battery=bat,
+                                             screen_forced=screen)
+                    except Exception as e:
+                        log.debug("orbit battery %s: %s", serial, e)
+                time.sleep(0.1)
         except Exception as e:
             log.debug("cache warmer: %s", e)
         time.sleep(5)

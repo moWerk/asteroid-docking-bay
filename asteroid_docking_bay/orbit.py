@@ -55,3 +55,21 @@ def reachable(ip, timeout=3):
             return True
     except OSError:
         return False
+
+
+# Reachability cache, keyed by serial and fed by the background warmer, so the
+# status path reads whether an orbiting watch is live without ever paying a probe
+# itself. Unknown (never probed) reads as not reachable — a row fills in within
+# one warmer cycle rather than blocking the first refresh.
+_reach: dict = {}
+
+
+def note_reachable(serial, ok):
+    """Record a warmer's reachability verdict for an orbiting watch."""
+    _reach[serial] = {"reachable": bool(ok), "ts": time.time()}
+
+
+def is_reachable_cached(serial):
+    """The last warmer verdict for a serial — False when never probed."""
+    entry = _reach.get(serial)
+    return bool(entry and entry["reachable"])

@@ -8,6 +8,7 @@ through config without duplicating a re-launched watch."""
 
 import asteroid_docking_bay.orbit as orbit
 import asteroid_docking_bay.rpcops as rpcops
+import asteroid_docking_bay.webstatus as ws
 from asteroid_docking_bay.config import orbit_add, orbit_forget, orbit_members
 
 
@@ -169,6 +170,62 @@ def test_forget_absent_or_no_serial_is_false_noop():
 
 def test_members_empty_when_never_used():
     assert orbit_members({}) == {}
+
+
+# ── reachability cache ───────────────────────────────────────────────────────
+
+def test_warmer_imports_orbit_members_directly():
+    # The background warmer iterates orbit members; it must import orbit_members
+    # at module load (a direct, loud import) rather than via a runtime attribute
+    # lookup whose failure the warmer's broad except would swallow to debug.
+    import asteroid_docking_bay.ops as ops
+    assert ops.orbit_members is orbit_members
+
+
+def test_reach_cache_round_trip():
+    orbit.note_reachable("S1", True)
+    orbit.note_reachable("S2", False)
+    assert orbit.is_reachable_cached("S1") is True
+    assert orbit.is_reachable_cached("S2") is False
+    assert orbit.is_reachable_cached("never-probed") is False   # unknown → False
+
+
+# ── status hub-view ──────────────────────────────────────────────────────────
+
+def test_orbit_hub_view_builds_row_for_undocked_reachable(monkeypatch):
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
+    monkeypatch.setattr(ws.last_seen, "get",
+                        lambda s: {"battery": 50, "last_live_ts": 1.0})
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9",
+                            "codename": "catfish", "resolution": "400x400"}}}
+    v = ws._orbit_hub_view(cfg, set())
+    assert v["location"] == "orbit" and v["virtual"] is True
+    row = v["ports"][0]
+    assert row["serial"] == "S1" and row["orbit"] is True
+    assert row["adb"] == "ssh" and row["reachable"] is True     # reachable = live SSH
+    assert row["battery_cached"] == 50 and row["ip"] == "10.0.0.9"
+    assert row["machine"] == "catfish"
+
+
+def test_orbit_hub_view_skips_docked_serial(monkeypatch):
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: {})
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x"}}}
+    assert ws._orbit_hub_view(cfg, {"S1"}) is None              # docked → dock wins
+
+
+def test_orbit_hub_view_unreachable_keeps_last_known(monkeypatch):
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+    monkeypatch.setattr(ws.last_seen, "get",
+                        lambda s: {"battery": 42, "last_live_ts": 9.0})
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x", "codename": "pike"}}}
+    row = ws._orbit_hub_view(cfg, set())["ports"][0]
+    assert row["adb"] is None and row["reachable"] is False     # no live link
+    assert row["battery_cached"] == 42                          # but last-known shown
+
+
+def test_orbit_hub_view_none_when_empty():
+    assert ws._orbit_hub_view({}, set()) is None
 
 
 # ── ops ──────────────────────────────────────────────────────────────────────

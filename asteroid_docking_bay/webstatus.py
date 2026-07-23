@@ -12,8 +12,9 @@ from .util import log
 from .adb import (_adb_state, _resolve_conn_state, adb_devices,
                   battery_and_screen, get_watch_codename)
 from .config import (_config_lock, charge_config, find_codename_for_serial,
-                     load_config, record_exact_codename, save_config,
-                     ssh_ip_for_serial, usb_mode_preference)
+                     load_config, orbit_members, record_exact_codename,
+                     save_config, ssh_ip_for_serial, usb_mode_preference)
+from . import orbit
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, uhubctl_cycle,
                   uhubctl_list)
@@ -389,6 +390,10 @@ def _web_status_data(cfg: dict) -> list[dict]:
     hub_locs = set(physical.keys())
     drain_summaries = _latest_drain_summaries()
     result: list[dict] = []
+    # Serials that have a home on a physical hub. An orbiting watch that also
+    # lives on the rig shows on its USB row (dock wins); only watches with no
+    # physical port surface in the Orbit section, so nothing is listed twice.
+    docked_serials: set[str] = set()
 
     for cfg_hub in cfg.get("hubs", []):
         loc         = cfg_hub["location"]
@@ -427,6 +432,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 serial = (next((x for x in serials_for_codename if x in devices), None)
                           or next((x for x in serials_for_codename if x in fb_devices), None)
                           or (serials_for_codename[0] if serials_for_codename else None))
+            if serial:
+                docked_serials.add(serial)
             adb_state = _resolve_conn_state(
                 _adb_state(devices, serial) if serial else None,
                 bool(serial and serial in fb_devices),
@@ -629,11 +636,50 @@ def _web_status_data(cfg: dict) -> list[dict]:
         socks = [p["socket"] for p in h["ports"] if p.get("socket") is not None]
         return (h["location"].split(".")[0], min(socks) if socks else 9999)
     result.sort(key=_hub_key)
+    orbit_view = _orbit_hub_view(cfg, docked_serials)
+    if orbit_view:
+        result.append(orbit_view)          # always last, below the physical hubs
     _persist_exact_codenames(_detected_exact)
     elapsed = time.perf_counter() - _t0
     if elapsed > 1.0:     # quiet when fast; flag only the occasional slow refresh
         log.info("slow status refresh: %.2fs", elapsed)
     return result
+
+
+def _orbit_hub_view(cfg: dict, docked_serials: set) -> "dict | None":
+    """The Orbit port as a virtual hub-view: one row per orbiting watch that has
+    no physical port right now. Reachability comes from the warmer-fed cache and
+    battery/geometry from last_seen, so this stays pure cache reads — no probe,
+    no block. None when nothing is in orbit (the section then does not render)."""
+    members = orbit_members(cfg)
+    rows: list[dict] = []
+    for serial, member in members.items():
+        if serial in docked_serials:
+            continue                        # on the rig now → its USB row wins
+        reachable = orbit.is_reachable_cached(serial)
+        cached = last_seen.get(serial) or {}
+        machine = member.get("codename") or find_codename_for_serial(cfg, serial)
+        observed = {"resolution": member.get("resolution")}
+        display = exact_codename(machine, observed) if machine else (machine or serial)
+        rows.append({
+            "codename": display, "machine": machine, "serial": serial,
+            "orbit": True, "empty": False,
+            "ip": member.get("ip"),
+            # A reachable orbiting watch is a live SSH link, so the row and the
+            # Control Center treat it exactly like a docked SSH watch.
+            "adb": "ssh" if reachable else None,
+            "reachable": reachable,
+            "battery": None,
+            "battery_cached": cached.get("battery"),
+            "last_live_ts": cached.get("last_live_ts"),
+            "geometry": cached.get("geometry"),
+            "added": member.get("added"),
+        })
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (r["codename"] or "").lower())
+    return {"location": "orbit", "description": "Orbit — over the air",
+            "ports": rows, "virtual": True, "hidden": False}
 
 
 def _persist_exact_codenames(detected: dict) -> None:
