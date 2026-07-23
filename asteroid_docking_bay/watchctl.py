@@ -434,6 +434,56 @@ class Watch:
                         key, self.serial, err.strip() or f"rc={rc}")
         return rc == 0
 
+    def av_read(self) -> dict:
+        """Display brightness + sound volume/mute + whether the watch has a
+        speaker. Brightness is MCE (mcetool, root); volume/mute are PulseAudio
+        (pactl, in the ceres session); HAS_SPEAKER is the machine.conf capability
+        DeviceSpecs reads. Volume/mute are only meaningful — and only read — when
+        the watch actually has a speaker. Any field is None when unreadable."""
+        rc, out, _ = self.t.shell(
+            "\"mcetool 2>/dev/null | grep -i '^Brightness'; echo ---CAP---; "
+            "grep -i HAS_SPEAKER /etc/asteroid/machine.conf 2>/dev/null\"", timeout=10)
+        head, _, cap = out.partition("---CAP---")
+        bm = re.search(r"(\d+)", head)
+        av = {"brightness": int(bm.group(1)) if bm else None,
+              "has_speaker": "true" in cap.lower(),
+              "volume": None, "muted": None}
+        if av["has_speaker"]:
+            _, vout, _ = self.user_cmd(
+                "pactl get-sink-volume @DEFAULT_SINK@; echo ---; "
+                "pactl get-sink-mute @DEFAULT_SINK@", timeout=10)
+            vm = re.search(r"(\d+)%", vout)
+            av["volume"] = int(vm.group(1)) if vm else None
+            av["muted"] = "mute: yes" in vout.lower()
+        return av
+
+    def set_brightness(self, pct: int) -> bool:
+        """Set display brightness 1..100 via mcetool (MCE, root). Caller clamps."""
+        rc, _, err = self.t.shell(
+            f'"mcetool --set-display-brightness={int(pct)}"', timeout=8)
+        if rc != 0:
+            log.warning("set_brightness %s on %s failed: %s",
+                        pct, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
+
+    def set_volume(self, pct: int) -> bool:
+        """Set the master sink volume 0..100%% via pactl (ceres session)."""
+        rc, _, err = self.user_cmd(
+            f"pactl set-sink-volume @DEFAULT_SINK@ {int(pct)}%", timeout=10)
+        if rc != 0:
+            log.warning("set_volume %s on %s failed: %s",
+                        pct, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
+
+    def set_mute(self, on: bool) -> bool:
+        """Mute/unmute the master sink via pactl (ceres session)."""
+        rc, _, err = self.user_cmd(
+            f"pactl set-sink-mute @DEFAULT_SINK@ {1 if on else 0}", timeout=10)
+        if rc != 0:
+            log.warning("set_mute %s on %s failed: %s",
+                        on, self.serial, err.strip() or f"rc={rc}")
+        return rc == 0
+
     def notify(self) -> bool:
         """Send a test notification."""
         cmd = ('notificationtool -o add --application=docking-bay --urgency=2 '

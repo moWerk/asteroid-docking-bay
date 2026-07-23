@@ -182,6 +182,9 @@ _WEB_TEMPLATE = """\
     .hmode{background:#0d1420;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:2px 9px;font-size:12px;cursor:pointer;font-family:inherit}
     .hmode.on{border-color:#a78bfa;color:#d6c7ff;background:rgba(167,139,250,.12)}
     .hchoreo,.hcal{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:6px}
+    .av-sl{display:flex;align-items:center;gap:8px}
+    .av-range{flex:1;accent-color:#58a6ff;min-width:90px}
+    .av-val{min-width:38px;text-align:right;font-variant-numeric:tabular-nums;color:#c9d1d9;font-size:12px}
     .wimg-ctl{display:flex;flex-direction:column;gap:6px;align-items:center;padding:2px 6px 8px}
     .wimg-ctl-r{display:flex;gap:10px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
@@ -1282,6 +1285,7 @@ function bodyBat(d){
 // already control (mo): the boolean prefs are live toggles that write dconf;
 // watchface/launcher/wallpaper show read-only (a fleet manager rarely sets them
 // remotely). Fetched on demand like the battery history, cached per serial.
+let avData={};   // per-serial {brightness, has_speaker, volume, muted}
 function settingsFetch(serial){
   fetch('/api/watch/'+encodeURIComponent(serial)+'/settings').then(r=>r.json()).then(d=>{
     if(ctlSerial!==serial)return;
@@ -1293,6 +1297,11 @@ function settingsFetch(serial){
     ctlSettings[serial]={ok:false,error:'unreachable'};
     if(ctlTab==='set')renderControl(ctlCache[serial]||{});
   });
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/av').then(r=>r.json()).then(a=>{
+    if(ctlSerial!==serial||!a||!a.ok)return;
+    avData[serial]=a;
+    if(ctlTab==='set')renderControl(ctlCache[serial]||{});
+  }).catch(()=>{});
 }
 function settingsWrite(key,on){
   const s=ctlSerial;
@@ -1379,7 +1388,35 @@ function bodyClock(d){
       `<button class="cc-act mini" id="cc-time" onclick="ccSyncTime()" title="reset the watch clock + timezone to the host">Sync from host</button>`+
     `</div></div>`;
 }
-function bodySet(d){return bodyClock(d)+bodyQuickpanel((ctlSettings[ctlSerial]||{}).quickpanel)+bodySetGroups();}
+function bodySet(d){return bodyClock(d)+bodyAV()+bodyQuickpanel((ctlSettings[ctlSerial]||{}).quickpanel)+bodySetGroups();}
+function bodyAV(){
+  const av=avData[ctlSerial]; if(!av)return '';
+  const snap=(v,d)=>v!=null?Math.round(v/10)*10:d;   // to the nearest 10 (the slider step)
+  const slider=(val,min,fn)=>`<input type="range" class="av-range" min="${min}" max="100" step="10" value="${val}" `+
+    `oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="${fn}(this.value)">`+
+    `<span class="av-val">${val}%</span>`;
+  let items=`<div class="cc-k">Brightness</div><div class="cc-v av-sl">${slider(snap(av.brightness,50),10,'avBright')}</div>`;
+  if(av.has_speaker){
+    items+=`<div class="cc-k">Volume</div><div class="cc-v av-sl">${slider(snap(av.volume,50),0,'avVol')}</div>`;
+    const m=!!av.muted;
+    items+=`<div class="cc-k">Mute</div><div class="cc-v">`+
+      `<button class="cc-tgl set-tgl${m?' on':''}${ctlPending.has('av:mute')?' cmd-pending':''}" onclick="avMute(${m?0:1})">${m?'ON':'OFF'}</button></div>`;
+  }
+  return `<div class="cc-sec"><div class="cc-sech">Display &amp; Sound</div><div class="cc-grid">${items}</div></div>`;
+}
+function _avPost(path,fn){
+  const s=ctlSerial;
+  fetch('/api/watch/'+encodeURIComponent(s)+'/'+path,{method:'POST'})
+    .then(r=>r.json()).then(fn).catch(()=>toast('failed'));
+}
+function avBright(v){_avPost('brightness/'+v,d=>{if(avData[ctlSerial])avData[ctlSerial].brightness=+v;if(!d||!d.ok)toast('brightness failed');});}
+function avVol(v){_avPost('volume/'+v,d=>{if(avData[ctlSerial])avData[ctlSerial].volume=+v;if(!d||!d.ok)toast('volume failed');});}
+function avMute(on){
+  ctlPending.add('av:mute'); renderControl(ctlCache[ctlSerial]||{});
+  _avPost('mute/'+(on?'on':'off'),d=>{ctlPending.delete('av:mute');
+    if(d&&d.ok&&avData[ctlSerial])avData[ctlSerial].muted=!!on; else toast('mute failed');
+    renderControl(ctlCache[ctlSerial]||{});});
+}
 function bodySetGroups(){
   const st=ctlSettings[ctlSerial];
   if(!st)return `<div class="cc-sec"><span class="dim">loading&hellip;</span></div>`;

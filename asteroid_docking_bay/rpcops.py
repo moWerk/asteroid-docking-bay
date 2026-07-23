@@ -303,6 +303,43 @@ def _watch_set_hands_cal(args):
     return {"ok": True, "cal": {"min_deg": min_deg, "hr_deg": hr_deg}}
 
 
+# ── display & sound (MCE brightness + PulseAudio volume/mute) ────────────────
+
+@DISPATCH.op("watch.av_read")
+def _watch_av_read(args):
+    """Display brightness + sound volume/mute + hasSpeaker, for the Settings tab
+    Display & Sound group. Volume/mute are read only on a speaker watch."""
+    return {"ok": True, **_watch(args["serial"]).av_read()}
+
+
+@DISPATCH.op("watch.set_brightness")
+def _watch_set_brightness(args):
+    """Set display brightness (clamped 1..100) via MCE."""
+    try:
+        pct = int(args.get("pct"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "pct must be an integer"}
+    pct = max(1, min(100, pct))
+    return {"ok": _watch(args["serial"]).set_brightness(pct), "pct": pct}
+
+
+@DISPATCH.op("watch.set_volume")
+def _watch_set_volume(args):
+    """Set master volume (clamped 0..100) via PulseAudio."""
+    try:
+        pct = int(args.get("pct"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "pct must be an integer"}
+    pct = max(0, min(100, pct))
+    return {"ok": _watch(args["serial"]).set_volume(pct), "pct": pct}
+
+
+@DISPATCH.op("watch.set_mute")
+def _watch_set_mute(args):
+    """Mute/unmute the master sink."""
+    return {"ok": _watch(args["serial"]).set_mute(bool(args.get("on")))}
+
+
 @DISPATCH.op("watch.set_hands")
 def _watch_set_hands(args):
     """Move a hands watch's physical hands to an explicit YYYY-MM-DD HH:MM:SS

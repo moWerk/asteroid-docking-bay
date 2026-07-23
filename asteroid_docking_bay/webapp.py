@@ -206,6 +206,26 @@ def serve(args, cfg: dict):
                                 {"serial": serial, "min_deg": min_deg,
                                  "hr_deg": hr_deg}))
 
+    @app.get("/api/watch/<serial>/av")
+    def api_watch_av(serial):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.av_read", {"serial": serial}))
+
+    @app.post("/api/watch/<serial>/brightness/<pct>")
+    def api_watch_brightness(serial, pct):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.set_brightness", {"serial": serial, "pct": pct}))
+
+    @app.post("/api/watch/<serial>/volume/<pct>")
+    def api_watch_volume(serial, pct):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.set_volume", {"serial": serial, "pct": pct}))
+
+    @app.post("/api/watch/<serial>/mute/<state>")
+    def api_watch_mute(serial, state):
+        resp.content_type = "application/json"
+        return json.dumps(_call("watch.set_mute", {"serial": serial, "on": state == "on"}))
+
     @app.post("/api/watch/<serial>/quickpanel/<tid>/<state>")
     def api_watch_quickpanel(serial, tid, state):
         resp.content_type = "application/json"
