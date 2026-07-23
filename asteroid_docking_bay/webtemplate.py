@@ -164,7 +164,7 @@ _WEB_TEMPLATE = """\
           background:#161b22;border:1px solid #30363d;border-radius:10px;
           box-shadow:0 12px 40px rgba(0,0,0,.6);padding:14px;max-width:94vw;max-height:92vh;overflow:auto}
     .wimg-hd{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:10px;
-             color:#58a6ff;font-weight:700}
+             color:#58a6ff;font-weight:700;cursor:move;user-select:none}
     .wimg-hd .dim{font-weight:400;font-size:11px}
     .wimg-x{cursor:pointer;color:#6e7681;font-size:18px;line-height:1}
     .wimg-x:hover{color:#fff}
@@ -988,7 +988,7 @@ function spark(id,min,max,bad){
 function _ncpu(d){const m=(d.cores||'').match(/([0-9]+) *$/);return m?(+m[1]+1):1;}
 function _memPct(d){const t=+d.memtotal;return t?Math.round((t-(+d.memfree||0))/t*100):null;}
 function _load1(d){const x=parseFloat((d.load||'').split(/ +/)[0]);return isNaN(x)?null:x;}
-let wimgAX=0, wimgAY=0;
+let wimgAX=0, wimgAY=0, _wimgDrag=null, _wimgMoved=false;
 let _compo=null;   // {boxW, target, aspect} for an open composite, else null
 function sizeComposite(){
   // Set the product width so the screen hole shows the screenshot at `target`
@@ -1031,12 +1031,14 @@ function ctlDragStart(e){
   _drag={dx:e.clientX-r.left, dy:e.clientY-r.top}; ctlMoved=true; e.preventDefault();
 }
 document.addEventListener('mousemove',e=>{
-  if(!_drag)return;
-  const cc=document.getElementById('cc'), w=cc.offsetWidth, h=cc.offsetHeight;
-  cc.style.left=Math.min(Math.max(0,e.clientX-_drag.dx),window.innerWidth-w)+'px';
-  cc.style.top=Math.min(Math.max(0,e.clientY-_drag.dy),window.innerHeight-h)+'px';
+  // One handler drags both floating windows: the Control Center (_drag) and the
+  // live view (_wimgDrag). A single listener keeps them from shadowing each other.
+  const d=_drag||_wimgDrag; if(!d)return;
+  const o=document.getElementById(_drag?'cc':'wimg'), w=o.offsetWidth, h=o.offsetHeight;
+  o.style.left=Math.min(Math.max(0,e.clientX-d.dx),window.innerWidth-w)+'px';
+  o.style.top=Math.min(Math.max(0,e.clientY-d.dy),window.innerHeight-h)+'px';
 });
-document.addEventListener('mouseup',()=>{_drag=null;});
+document.addEventListener('mouseup',()=>{_drag=null;_wimgDrag=null;});
 // First open of a watch has no client cache, so instead of a "loading…" wait
 // paint the server's last-known values immediately — the /stale endpoint reads
 // them with no device I/O, so it returns at once (amber, marked stale). The
@@ -1456,11 +1458,12 @@ function holeFor(codename,img){
 }
 function openWatchImg(codename,serial,ev,isRound,res){
   if(ev){ev.stopPropagation();wimgAX=ev.clientX;wimgAY=ev.clientY;}
+  _wimgMoved=false;   // a fresh open re-anchors to the click, like the Control Center
   // Load the product photo in a device frame; onProdLoad then decides the
   // layout once we can inspect the image for a transparent screen cutout.
   const o=document.getElementById('wimg');
   o.innerHTML=
-    `<div class="wimg-hd"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
+    `<div class="wimg-hd" onmousedown="wimgDragStart(event)"><span>${esc(codename)}</span><span class="wimg-x" onclick="closeWatchImg()">&times;</span></div>`+
     `<div class="wimg-body" id="wimg-body">`+
       `<div class="device" id="device"><div class="dev-frame" id="devframe">`+
         `<img class="dev-prod" id="prodimg" alt="" onerror="closeWatchImg()" `+
@@ -1697,12 +1700,20 @@ function wimgPlace(){
   // the Control Center — images load async, so this is called again on each
   // image's onload once the real panel size is known.
   const o=document.getElementById('wimg');
-  if(o.style.display!=='block')return;
+  if(o.style.display!=='block'||_wimgMoved)return;   // don't re-anchor a user-dragged window
   const h=o.offsetHeight, w=o.offsetWidth;
   let left=Math.min(wimgAX, window.innerWidth-w-8);
   let top=wimgAY+10;
   if(top+h>window.innerHeight-8) top=wimgAY-h-10;
   o.style.left=Math.max(8,left)+'px'; o.style.top=Math.max(8,top)+'px';
+}
+// Drag the live view by its title bar, like the Control Center — handy for
+// calibration (park the window beside the physical watch). Sets _wimgMoved so
+// wimgPlace() stops re-anchoring it on image loads.
+function wimgDragStart(e){
+  if(e.target.classList&&e.target.classList.contains('wimg-x'))return;   // not the close X
+  const o=document.getElementById('wimg'), r=o.getBoundingClientRect();
+  _wimgDrag={dx:e.clientX-r.left, dy:e.clientY-r.top}; _wimgMoved=true; e.preventDefault();
 }
 function loadShot(serial,res){
   const suffix=res?' · '+res:'';
@@ -1723,7 +1734,7 @@ function loadShot(serial,res){
       const c=document.getElementById('shotcap');if(c){c.className='wimg-cap';c.textContent='screen off';}
     });
 }
-function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;_handsDrag=null;_handsDevEl=null;handsMode='time';}
+function closeWatchImg(){document.getElementById('wimg').style.display='none';_compo=null;_handsDrag=null;_wimgDrag=null;_handsDevEl=null;handsMode='time';}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeWatchImg();closeControl();closeMenu();closeRegistry();}});
 // ── Fleet Registry: every watch ever seen, with a Log of what changed ────────
 function openRegistry(){

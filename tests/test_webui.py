@@ -1391,6 +1391,30 @@ def test_hands_choreography_commands_the_motors(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_live_view_window_drags_by_its_title(tmp_path):
+    """The live-view overlay drags by its title bar like the Control Center — the
+    header wires wimgDragStart (handy for parking it beside the watch to calibrate)."""
+    import json
+    h = tmp_path / "wdrag.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.document.getElementById('wimg');"
+                 "openWatchImg('narwhal','S9',{stopPropagation(){},clientX:10,clientY:10},1,'400x400');"
+                 "const html=global.__els['wimg'].innerHTML;"
+                 "global.__els['wimg'].getBoundingClientRect=()=>({left:100,top:100});"
+                 "wimgDragStart({target:{classList:{contains:()=>false}},"
+                 "clientX:150,clientY:130,preventDefault(){}});"
+                 "global.__h.mousemove({clientX:300,clientY:260});"   # the shared handler
+                 "console.log(JSON.stringify({html,moved:_wimgMoved,"
+                 "left:global.__els['wimg'].style.left}));process.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert 'onmousedown="wimgDragStart(event)"' in o["html"]
+    assert o["moved"] is True                 # a title drag pins the window
+    assert o["left"] == "250px"               # the shared mousemove moved it (300-50)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_panel_not_rebuilt_while_typing_in_a_field(tmp_path):
     """A 3s poll re-render must not rebuild the panel out from under a focused
     text field (the weather city input) — it dropped focus and the typed text
