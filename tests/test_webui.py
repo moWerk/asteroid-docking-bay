@@ -1293,23 +1293,31 @@ def test_network_toggle_also_pulses_while_in_flight(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_live_view_draws_the_physical_hands(tmp_path):
-    """The live-view composite overlays a hands watch's physical hand angles as
-    two rects (narwhal). Ticks are 0-59 → tick*6°: 39:33 → 234.0° / 198.0°."""
+def test_live_view_overlays_the_real_hand_art(tmp_path):
+    """The live-view composite lays a hands watch's real hour/minute SVG art over
+    the hands-removed base, each rotated by its angle (ticks*6°: 39:33 →
+    234.0°/198.0°) and served from the per-codename hand route."""
     import json
     h = tmp_path / "hands.js"
     h.write_text(_DOM_CAPTURE + JS +
-                 "\nglobal.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
+                 "\nglobal.document.getElementById('devframe');"      # cache nodes
+                 "global.document.getElementById('prodimg');"
+                 "global.document.getElementById('devhands');"
+                 "global.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
                  "{ok:true,hands:{h:39,m:33,position:'39:33'}})});"
-                 "loadHands('S9');"
-                 "setTimeout(()=>{const el=global.__els['devhands']||{};"
-                 "console.log(JSON.stringify({html:el.innerHTML||'',title:el.title||''}));"
-                 "process.exit(0);},90);\n")
+                 "loadHands('S9','narwhal');"
+                 "setTimeout(()=>{const el=global.__els['devhands']||{},"
+                 "p=global.__els['prodimg']||{};"
+                 "console.log(JSON.stringify({html:el.innerHTML||'',title:el.title||'',"
+                 "base:p.src||''}));process.exit(0);},90);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     o = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "rotate(234.0)" in o["html"] and "rotate(198.0)" in o["html"], o["html"][:200]
-    assert "39:33" in o["title"], "the hand position is not surfaced"
+    assert "rotate(234.0deg)" in o["html"] and "rotate(198.0deg)" in o["html"], o["html"][:300]
+    assert "/api/watch-hand/narwhal/hour" in o["html"]
+    assert "/api/watch-hand/narwhal/minute" in o["html"]
+    assert o["base"].endswith("/api/watch-hand/narwhal/base")   # handless base swapped in
+    assert "39:33" in o["title"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

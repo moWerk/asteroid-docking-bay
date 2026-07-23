@@ -217,6 +217,25 @@ def serve(args, cfg: dict):
         d = _call("weather.set_location", {"city": city})
         return json.dumps(d)
 
+    # Physical-hands art for a hands watch (narwhal): the hands-removed base
+    # photo + the hour/minute hand SVGs, locally placed in the watch-image cache
+    # (like the -trans.png cutouts). Overlaid + rotated by the live view.
+    @app.get("/api/watch-hand/<codename>/<part>")
+    def api_watch_hand(codename, part):
+        from .watchimg import _CACHE_DIR
+        names = {"base": (f"{codename}-trans-dot.png", "image/png"),
+                 "hour": (f"{codename}-hour.svg", "image/svg+xml"),
+                 "minute": (f"{codename}-minute.svg", "image/svg+xml")}
+        entry = names.get(part)
+        path = (_CACHE_DIR / entry[0]) if entry else None
+        if not path or not path.exists():
+            resp.status = 404
+            resp.content_type = "text/plain"
+            return "no such hand asset"
+        resp.content_type = entry[1]
+        resp.headers["Cache-Control"] = "max-age=3600"
+        return path.read_bytes()
+
     @app.get("/api/registry")
     def api_registry():
         resp.content_type = "application/json"

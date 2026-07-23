@@ -1497,7 +1497,7 @@ function onProdLoad(codename,serial,isRound,res){
       // revealed through the product's transparent face like the screenshot.
       const hands=document.createElement('div'); hands.className='dev-hands'; hands.id='devhands';
       hands.style.cssText=css; frame.insertBefore(hands,prod);
-      loadHands(serial);
+      loadHands(serial,codename);
     }
     const cap=document.createElement('div'); cap.className='wimg-cap'; cap.id='shotcap';
     cap.textContent=serial?'loading…':('screen off'+(res?' · '+res:''));
@@ -1523,22 +1523,35 @@ function onProdLoad(codename,serial,isRound,res){
 // writing a datetime to /sys/devices/sop716/time (dodoradio's hands-timesync
 // convention), so Sync-to-now corrects drift and the dial poses a time. All a
 // silent no-op on a watch with no movement.
-let handsPick=null, _handsSerial=null, handsOffset=0;
-function loadHands(serial){
-  _handsSerial=serial;
+let handsPick=null, _handsSerial=null, _handsCodename=null, handsOffset=0;
+// Hand-art size as a % of the product frame — a first cut; tune if the hands
+// read too long/short against the dial (mo eyeballs it on narwhal).
+const HANDS_SIZE=100;
+function loadHands(serial,codename){
+  _handsSerial=serial; if(codename)_handsCodename=codename;
   fetch('/api/watch/'+encodeURIComponent(serial)+'/hands').then(r=>r.json()).then(d=>{
     handsOffset=(d&&d.offset_min)||0;
     const hd=d&&d.hands; if(!hd)return;
-    const el=document.getElementById('devhands');
-    if(el){
+    const cn=_handsCodename, frame=document.getElementById('devframe');
+    const prod=document.getElementById('prodimg'), el=document.getElementById('devhands');
+    if(frame&&prod&&el&&cn){
+      // A hands watch: an opaque hands-removed base with the real hour/minute art
+      // ON TOP, centred on the dial and rotated about its centre. Drop the
+      // screenshot-through-hole layers — here the hands ARE the display, not
+      // something seen through the face.
+      const shot=document.getElementById('shotimg'); if(shot)shot.remove();
+      const fill=frame.querySelector('.dev-fill'); if(fill)fill.remove();
+      prod.onload=null;   // swapping src must not re-run the hole composite
+      prod.src='/api/watch-hand/'+encodeURIComponent(cn)+'/base';
       const hourA=((hd.h%60)*6).toFixed(1), minA=((hd.m%60)*6).toFixed(1);
-      el.title='physical hands at '+hd.position;
-      el.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">`+
-        `<g transform="translate(50,50)">`+
-          `<rect x="-2.6" y="-27" width="5.2" height="30" rx="2.6" fill="#f0f6fc" transform="rotate(${hourA})"/>`+
-          `<rect x="-1.8" y="-40" width="3.6" height="44" rx="1.8" fill="#f0f6fc" transform="rotate(${minA})"/>`+
-          `<circle r="3.4" fill="#c9d1d9"/>`+
-        `</g></svg>`;
+      el.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';
+      frame.appendChild(el);   // lift the hands layer above the product image
+      const hand=(part,ang)=>`<img class="hand-svg" alt="" onerror="this.remove()" `+
+        `src="/api/watch-hand/${encodeURIComponent(cn)}/${part}" `+
+        `style="position:absolute;left:50%;top:50%;width:${HANDS_SIZE}%;height:${HANDS_SIZE}%;`+
+        `transform:translate(-50%,-50%) rotate(${ang}deg);transform-origin:center center">`;
+      el.innerHTML=hand('hour',hourA)+hand('minute',minA);
+      el.title='hands ~ '+hd.position;
     }
     if(handsPick===null){const t=new Date();handsPick={h:t.getHours(),m:t.getMinutes()};}
     _renderHandsCtl(hd.position);
