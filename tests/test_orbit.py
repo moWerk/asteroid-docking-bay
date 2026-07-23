@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""The Orbit port — onboarding a watch reachable over the air (WiFi-SSH).
+
+The transport is injected so these run offline. What must hold: probe() keys the
+member on ro.serialno (the fleet serial, so orbit == docked identity), refuses
+anything that does not answer as a watch, and the launch/de-orbit ops round-trip
+through config without duplicating a re-launched watch."""
+
+import asteroid_docking_bay.orbit as orbit
+import asteroid_docking_bay.rpcops as rpcops
+from asteroid_docking_bay.config import orbit_add, orbit_forget, orbit_members
+
+
+class _FakeTransport:
+    """Stand-in for SshTransport: canned shell output, no network."""
+
+    def __init__(self, out, rc=0):
+        self._out, self._rc = out, rc
+
+    def shell(self, cmd, timeout=None):
+        return self._rc, self._out, ""
+
+
+def _patch_probe(monkeypatch, out, rc=0, geo=None):
+    monkeypatch.setattr(orbit, "SshTransport",
+                        lambda ip: _FakeTransport(out, rc))
+    monkeypatch.setattr(orbit, "Watch",
+                        lambda serial, transport=None: type(
+                            "W", (), {"geometry": lambda self: geo})())
+
+
+# ── probe ────────────────────────────────────────────────────────────────────
+
+def test_probe_reads_serial_mac_and_geometry(monkeypatch):
+    _patch_probe(monkeypatch, "720EX8C130737\n---\n30:95:e3:2d:64:71\n",
+                 geo={"machine": "catfish", "resolution": "400x400"})
+    m = orbit.probe("192.168.176.97")
+    assert m["serial"] == "720EX8C130737"        # ro.serialno = the fleet serial
+    assert m["wlanmac"] == "30:95:e3:2d:64:71"
+    assert m["codename"] == "catfish" and m["resolution"] == "400x400"
+    assert m["ip"] == "192.168.176.97" and isinstance(m["added"], int)
+
+
+def test_probe_strips_ip_whitespace(monkeypatch):
+    _patch_probe(monkeypatch, "S\n---\naa:bb\n", geo={"machine": "x"})
+    assert orbit.probe("  10.0.0.5  ")["ip"] == "10.0.0.5"
+
+
+def test_probe_none_on_empty_ip():
+    assert orbit.probe("") is None and orbit.probe(None) is None
+    assert orbit.probe("   ") is None
+
+
+def test_probe_none_when_ssh_fails(monkeypatch):
+    # rc != 0 → nothing answered / not reachable → no member, never a half one.
+    _patch_probe(monkeypatch, "", rc=255)
+    assert orbit.probe("192.168.176.97") is None
+
+
+def test_probe_none_when_no_serial(monkeypatch):
+    # Answered, but no ro.serialno (not an AsteroidOS watch) → refused.
+    _patch_probe(monkeypatch, "\n---\n30:95:e3:2d:64:71\n", geo={"machine": "x"})
+    assert orbit.probe("192.168.176.97") is None
+
+
+def test_probe_tolerates_missing_mac(monkeypatch):
+    # A watch whose wlan0 read came back empty still onboards; MAC is optional.
+    _patch_probe(monkeypatch, "S123\n---\n\n", geo={"machine": "pike"})
+    m = orbit.probe("10.0.0.9")
+    assert m["serial"] == "S123" and m["wlanmac"] is None
+
+
+def test_probe_survives_geometry_none(monkeypatch):
+    # geometry() returning None must not crash the launch — codename just unknown.
+    _patch_probe(monkeypatch, "S1\n---\naa:bb\n", geo=None)
+    m = orbit.probe("10.0.0.1")
+    assert m["serial"] == "S1" and m["codename"] is None
+
+
+# ── config helpers ───────────────────────────────────────────────────────────
+
+def test_orbit_add_get_and_forget_round_trip():
+    cfg = {}
+    orbit_add(cfg, {"serial": "S1", "ip": "10.0.0.1", "codename": "pike"})
+    assert orbit_members(cfg) == {"S1": {"serial": "S1", "ip": "10.0.0.1",
+                                         "codename": "pike"}}
+    assert orbit_forget(cfg, "S1") is True
+    assert orbit_members(cfg) == {}
+
+
+def test_relaunch_same_serial_overwrites_not_duplicates():
+    cfg = {}
+    orbit_add(cfg, {"serial": "S1", "ip": "10.0.0.1"})
+    orbit_add(cfg, {"serial": "S1", "ip": "10.0.0.9"})   # same watch, new IP
+    assert list(orbit_members(cfg)) == ["S1"]
+    assert orbit_members(cfg)["S1"]["ip"] == "10.0.0.9"
+
+
+def test_forget_absent_or_no_serial_is_false_noop():
+    cfg = {"orbit": {"S1": {"serial": "S1"}}}
+    assert orbit_forget(cfg, "S9") is False              # not present
+    assert orbit_forget(cfg, None) is False              # no serial given
+    assert orbit_members(cfg) == {"S1": {"serial": "S1"}}  # untouched
+
+
+def test_members_empty_when_never_used():
+    assert orbit_members({}) == {}
+
+
+# ── ops ──────────────────────────────────────────────────────────────────────
+
+def test_launch_op_probes_and_persists(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(rpcops.orbit, "probe",
+                        lambda ip: {"serial": "S1", "ip": ip, "codename": "pike"})
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg))
+    d = rpcops.DISPATCH._data["orbit.launch"]({"ip": "10.0.0.1"})
+    assert d["ok"] is True and d["member"]["serial"] == "S1"
+    assert saved["orbit"]["S1"]["ip"] == "10.0.0.1"
+
+
+def test_launch_op_fails_cleanly_when_unreachable(monkeypatch):
+    calls = {"saved": 0}
+    monkeypatch.setattr(rpcops.orbit, "probe", lambda ip: None)
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "save_config",
+                        lambda cfg: calls.__setitem__("saved", calls["saved"] + 1))
+    d = rpcops.DISPATCH._data["orbit.launch"]({"ip": "1.2.3.4"})
+    assert d["ok"] is False and "reachable" in d["error"]
+    assert calls["saved"] == 0                           # nothing written on failure
+
+
+def test_deorbit_op_removes_and_saves(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"orbit": {"S1": {"serial": "S1"}}})
+    monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg))
+    d = rpcops.DISPATCH._data["orbit.deorbit"]({"serial": "S1"})
+    assert d["ok"] is True and saved["orbit"] == {}
+
+
+def test_deorbit_op_noop_skips_write(monkeypatch):
+    calls = {"saved": 0}
+    monkeypatch.setattr(rpcops, "load_config", lambda: {"orbit": {}})
+    monkeypatch.setattr(rpcops, "save_config",
+                        lambda cfg: calls.__setitem__("saved", calls["saved"] + 1))
+    d = rpcops.DISPATCH._data["orbit.deorbit"]({"serial": "S9"})
+    assert d["ok"] is False and calls["saved"] == 0

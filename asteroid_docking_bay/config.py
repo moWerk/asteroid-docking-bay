@@ -223,6 +223,31 @@ def record_exact_codename(cfg: dict, serial: "str | None",
     return True
 
 
+# ── Orbit port members ───────────────────────────────────────────────────────
+# The Orbit port is a virtual hub of fleet watches reachable over the air
+# (WiFi-SSH) rather than on a USB socket. Members are keyed by serial — the same
+# identity a docked watch has — so a watch is one fleet member whether it is in a
+# cradle or in orbit. Reachability is never stored (it is probed live, like a
+# docked watch's connection state); only the persistent facts learned at launch
+# live here.
+
+def orbit_members(cfg: dict) -> dict:
+    """The orbiting watches: {serial: {codename, ip, wlanmac, resolution, added}}."""
+    return cfg.get("orbit", {})
+
+
+def orbit_add(cfg: dict, member: dict) -> None:
+    """Launch a watch into orbit, or refresh one, keyed by its serial. A re-launch
+    (same watch, new IP) overwrites the stored facts rather than duplicating it."""
+    cfg.setdefault("orbit", {})[member["serial"]] = member
+
+
+def orbit_forget(cfg: dict, serial: "str | None") -> bool:
+    """De-orbit a watch. Returns True only when one was actually removed, so a
+    caller can skip the config write on a no-op de-orbit."""
+    return cfg.get("orbit", {}).pop(serial, None) is not None if serial else False
+
+
 class AmbiguousTargetError(ValueError):
     """A machine/image name that maps to several physical watches, with
     nothing given to pick one. Carries the candidates so the caller can tell

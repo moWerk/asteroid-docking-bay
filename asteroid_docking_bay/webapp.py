@@ -205,6 +205,16 @@ def serve(args, cfg: dict):
         d = _call("weather.set_location", {"city": city})
         return json.dumps(d)
 
+    @app.post("/api/orbit/launch/<ip>")
+    def api_orbit_launch(ip):
+        resp.content_type = "application/json"
+        return json.dumps(_call("orbit.launch", {"ip": ip}))
+
+    @app.post("/api/orbit/deorbit/<serial>")
+    def api_orbit_deorbit(serial):
+        resp.content_type = "application/json"
+        return json.dumps(_call("orbit.deorbit", {"serial": serial}))
+
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         d = _call("watch.screenshot", {"serial": serial})

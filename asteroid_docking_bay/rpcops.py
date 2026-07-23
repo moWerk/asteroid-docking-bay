@@ -32,7 +32,8 @@ from .adb import _adb_state, adb_devices, get_watch_codename
 from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
-                     flash_config, load_config, save_config)
+                     flash_config, load_config, save_config,
+                     orbit_add, orbit_forget)
 from .usb import (_sysfs_path_to_serial_map, test_port_power_switching,
                   uhubctl_cycle, uhubctl_set_power)
 from .watchctl import DIAG_ROOT, Watch
@@ -43,6 +44,7 @@ from .transport import SshTransport
 from .watchimg import watch_image_bytes
 from .variants import image_of
 from .weather import dconf_writeset, fetch_forecast, geocode
+from . import orbit
 from .events import _DRAIN_FLOOR_PCT, _DRAIN_RESULTS_DIR, event_log
 from .webstatus import _web_status_data
 from .lastseen import last_seen
@@ -295,6 +297,35 @@ def _watch_weather_sync(args):
         return {"ok": False, "error": "weather fetch failed"}
     ok = _watch(args["serial"]).weather_sync(dconf_writeset(loc.get("city"), days))
     return {"ok": ok, "city": loc.get("city"), "days": days}
+
+
+# ── Orbit port (watches reachable over the air) ─────────────────────────────
+
+@DISPATCH.op("orbit.launch")
+def _orbit_launch(args):
+    """Launch a watch into orbit by IP: SSH-probe it over WiFi, read its serial +
+    codename + geometry, and record it as an orbiting fleet member. Idempotent —
+    re-launching the same watch just refreshes its stored IP."""
+    member = orbit.probe(args.get("ip", ""))
+    if not member:
+        return {"ok": False, "error": "no watch reachable at that address"}
+    with _config_lock:
+        cfg = load_config()
+        orbit_add(cfg, member)
+        save_config(cfg)
+    return {"ok": True, "member": member}
+
+
+@DISPATCH.op("orbit.deorbit")
+def _orbit_deorbit(args):
+    """De-orbit a watch: drop it from the Orbit port. The watch itself is
+    untouched — this only forgets how to reach it over the air."""
+    with _config_lock:
+        cfg = load_config()
+        removed = orbit_forget(cfg, args.get("serial"))
+        if removed:
+            save_config(cfg)
+    return {"ok": removed}
 
 
 _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
