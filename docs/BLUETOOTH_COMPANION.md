@@ -11,6 +11,73 @@ This doc records what the watches expose over BLE, what the reference companion
 protocol facts are cross-checked between the watch daemon
 (`AsteroidOS/asteroid-btsyncd`) and GadgetBridge; they agree 100%.
 
+---
+
+## DIRECTION CHANGE — Orbit-over-BT, not a sync companion (2026-07-23 pm, mo)
+
+**The BLE-sync-companion framing below is superseded for P2.** mo's decision:
+a-d-b will **not** re-emulate a phone sync client — we already push time,
+weather and notifications over adb/ssh/wifi. BT joins the **Orbit port** as a
+*diagnostic + onboarding* link, and the chosen path is:
+
+> **Classic BT → pair → identify by MAC → PAN/BNEP → IP-over-BT → `SshTransport(bt_ip)`**,
+> which reuses the *entire* existing a-d-b stack over BT with no per-feature code
+> — exactly how WiFi did. Classic first because RFCOMM/PAN are simple, solved,
+> well-supported from a modern Linux host; BLE (the sync stack) stays a distant
+> maybe for asleep-watch battery-notify / buzz-to-find only.
+
+### Confirmed this session (feeds tomorrow's hardware work)
+
+- **The AsteroidOS sync stack is BLE-only.** `AsteroidOSSync` (cloned to
+  `~/Git/AsteroidOSSync`, HEAD `510ec5c`) uses the Nordic Android-BLE-Library +
+  BLE scanner; **zero** classic profiles (no RFCOMM/OBEX/PAN/L2CAP). So Bluetooth
+  Classic does **not** expose the GATT sync services — confirming we should not
+  try to borrow them.
+- **Identity over the air is BT-MAC ONLY.** The sync protocol carries **no serial
+  or codename** (no DIS `180A`, no `2A25`). ⇒ correlate a discovered watch to the
+  fleet by **BT MAC**, captured once while docked (a-d-b already reads `hci0`
+  address into the Network tab). Serial↔MAC is learned on the wire, never over BT.
+- **Pairing** is OS-level, confirmed **on the watch** (Just-Works/numeric, no
+  app-supplied PIN); the bond is persistent (`Trusted=true`). The web UI shows the
+  pairing state and any passkey; the human confirms on the watch.
+- **GATT map** (corrected, for the record / a possible far-future BLE path):
+  base `0000XXXX-0000-0000-0000-00A57E401D05`; services end `71`, chars end `NN`.
+  Time svc `5071`/char `5001` (6 bytes `[yr-1900,mon0-11,day,h,m,s]`); Weather svc
+  `8071` chars `8001` city / `8002` ids / `8003` min / `8004` max (5×BE int16,
+  Kelvin); Notif svc `9071`/`9001`; Media `7071`; Screenshot `6071`; Battery
+  standard `180F`/`2A19` (NOTIFY, 1 byte). Chars need a **bonded/encrypted link**.
+- **bluez versions** (the new Network data point): host w541 **5.87**, skipjack
+  **5.79** — both modern *userspace*. The real constraint is the **kernel BT =
+  4.1-subsystem backport** (RAG `wiki_reference`/`pike_ble_arc`), which limits
+  MGMT/BLE — matters far less for **classic** from a modern host. `asteroid-btsyncd`
+  runs as ceres (DBus multiplexer BlueZ5↔apps).
+
+### Open questions ONLY tomorrow's hardware can settle (BT 5.4 adapter)
+
+1. **Classic discoverability.** The watch auto-enables BT + discovery, but the
+   AsteroidOS marker (`…1D05`) is *BLE-advertised* — it won't show on a classic
+   inquiry. So: does the watch answer a **BR/EDR inquiry** at all, and how do we
+   recognize it (device name = watch/codename? class-of-device?)? Verify with
+   `bluetoothctl scan on` / `hcitool inq` once the 5.4 adapter is in.
+2. **PAN feasibility — the linchpin.** IP-over-BT needs the watch to run a PAN
+   role (PANU) and get an address over `bnep0`. Neither AsteroidOSSync nor the
+   watch sync stack does PAN, so this likely needs **watch-side connman/bluez
+   config** (possibly a meta-nemo/-smartwatch addition). If the watch won't PAN
+   out of the box, fall back to RFCOMM for a shell/identity channel and treat
+   PAN-IP as a follow-up. **Test PAN before building the Orbit-BT UI on top of it.**
+3. **Multi-pair / serialized connect.** Confirm the rig can bond several watches
+   and connect them one at a time (simultaneous not needed).
+4. **Toggle BLE↔classic** on the watch, if discoverability (Q1) needs it.
+
+### Watch-side BT record (mo's "all watches get a BT record")
+
+Store per serial in config, learned while docked: `{bt_mac, paired: bool,
+last_bt_link: ts}`. MAC is the correlation key (Q about serial-over-BT is
+answered: no). This slots beside the `orbit` members; a BT-reachable member gets
+a `bt` subkey `{mac, bonded}` alongside `ip`, per AIR→ORBIT_FLEET.md's data model.
+
+---
+
 ## Why this is compelling
 
 The rig already docks the whole fleet over USB, and 0.8's transport work lets
