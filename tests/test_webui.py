@@ -1162,3 +1162,23 @@ def test_network_toggle_also_pulses_while_in_flight(tmp_path):
     assert r.returncode == 0, r.stderr[:400]
     o = json.loads(r.stdout.strip().splitlines()[-1])
     assert o["pulsing"] and o["pending"], "the network toggle did not pulse in flight"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_live_view_draws_the_physical_hands(tmp_path):
+    """The live-view composite overlays a hands watch's physical hand angles as
+    two rects (narwhal). Ticks are 0-59 → tick*6°: 39:33 → 234.0° / 198.0°."""
+    import json
+    h = tmp_path / "hands.js"
+    h.write_text(_DOM_CAPTURE + JS +
+                 "\nglobal.fetch=()=>Promise.resolve({json:()=>Promise.resolve("
+                 "{ok:true,hands:{h:39,m:33,position:'39:33'}})});"
+                 "loadHands('S9');"
+                 "setTimeout(()=>{const el=global.__els['devhands']||{};"
+                 "console.log(JSON.stringify({html:el.innerHTML||'',title:el.title||''}));"
+                 "process.exit(0);},90);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    o = json.loads(r.stdout.strip().splitlines()[-1])
+    assert "rotate(234.0)" in o["html"] and "rotate(198.0)" in o["html"], o["html"][:200]
+    assert "39:33" in o["title"], "the hand position is not surfaced"

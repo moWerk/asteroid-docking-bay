@@ -44,6 +44,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.cc", "watch.timeline", "watch.settings_read", "watch.settings_write",
         "watch.quickpanel_set",
         "watch.toggle", "watch.settime", "watch.set_datetime", "watch.notify",
+        "watch.hands",
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb", "watch.switch_ssh",
@@ -705,3 +706,28 @@ def test_log_live_battery_throttles_and_ignores_unreadable(monkeypatch):
     assert len(logged) == 1 and logged[0]["pct"] == 73, "live reading not throttled"
     rpcops._log_live_battery("S1", None)    # unreadable — nothing logged
     assert len(logged) == 1
+
+
+# ── physical hands (narwhal live-view overlay) ────────────────────────────────
+
+def test_watch_hands_parses_the_sysfs_position():
+    from asteroid_docking_bay.watchctl import Watch
+    w = Watch("S1", transport=object())
+    w.t = type("T", (), {"shell": lambda self, c, timeout=8: (0, "18:31\n", "")})()
+    assert w.hands() == {"position": "18:31", "h": 18, "m": 31}
+    w.t = type("T", (), {"shell": lambda self, c, timeout=8: (0, "", "")})()
+    assert w.hands() is None        # no movement → empty sysfs → None
+
+
+def test_watch_hands_op_dispatches(monkeypatch):
+    class W:
+        def __init__(self, *a, **k):
+            pass
+
+        def hands(self):
+            return {"position": "18:31", "h": 18, "m": 31}
+
+    monkeypatch.setattr(rpcops, "Watch", W)
+    monkeypatch.setattr(rpcops, "_reachable_transport", lambda s: None)
+    d = rpcops.DISPATCH._data["watch.hands"]({"serial": "S1"})
+    assert d["ok"] is True and d["hands"]["h"] == 18 and d["hands"]["m"] == 31

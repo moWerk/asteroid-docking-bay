@@ -238,6 +238,13 @@ def _watch_settime(args):
     return {"ok": True, "timezone": _watch(args["serial"]).set_time_from_host()}
 
 
+@DISPATCH.op("watch.hands")
+def _watch_hands(args):
+    """Physical hand position (HH:MM) for a hands watch (narwhal), or null on a
+    watch without the movement — read on demand for the live-view composite."""
+    return {"ok": True, "hands": _watch(args["serial"]).hands()}
+
+
 _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 
 

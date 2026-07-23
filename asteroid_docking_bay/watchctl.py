@@ -361,6 +361,20 @@ class Watch:
                         tid, self.serial, err.strip() or f"rc={rc}")
         return rc == 0
 
+    def hands(self) -> "dict | None":
+        """Where a physical-hands watch's hands actually point, HH:MM, read from
+        the soprod-movement sysfs (narwhal: /sys/devices/sop716/position). None
+        on a watch with no such movement — the sysfs is simply absent."""
+        rc, out, _ = self.t.shell('"cat /sys/devices/sop716/position 2>/dev/null"',
+                                   timeout=8)
+        if rc != 0:
+            return None
+        m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", out)
+        if not m:
+            return None
+        return {"position": f"{int(m.group(1))}:{m.group(2)}",
+                "h": int(m.group(1)), "m": int(m.group(2))}
+
     def settings_write(self, key: str, value) -> bool:
         """Write one togglable setting over dconf in the ceres session (same env
         the read uses). Refuses any key not in the writable catalog — display-

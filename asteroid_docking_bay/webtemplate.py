@@ -169,6 +169,7 @@ _WEB_TEMPLATE = """\
     .device.cut .dev-prod{max-width:none;height:auto}   /* JS (sizeComposite) sets the width, aspect-safe */
     .dev-shot{position:absolute;z-index:1;object-fit:contain}   /* preserve aspect (no squish) and never over-scale past the cutout */
     .dev-fill{position:absolute;z-index:0;background:#000}
+    .dev-hands{position:absolute;z-index:1;pointer-events:none}   /* over the shot, under the bezel */
     .wimg-shot{height:230px;width:auto;max-width:44vw;object-fit:contain;background:#000}
     .wimg-cap{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;margin-top:5px}
     /* Fluid: columns follow the page width with a minimal content margin, so
@@ -1323,6 +1324,11 @@ function onProdLoad(codename,serial,isRound,res){
     if(serial){
       const shot=document.createElement('img'); shot.className='dev-shot'; shot.id='shotimg';
       shot.style.cssText=css; frame.insertBefore(shot,prod);
+      // Physical-hands overlay (narwhal): angled rectangles over the screen,
+      // revealed through the product's transparent face like the screenshot.
+      const hands=document.createElement('div'); hands.className='dev-hands'; hands.id='devhands';
+      hands.style.cssText=css; frame.insertBefore(hands,prod);
+      loadHands(serial);
     }
     const cap=document.createElement('div'); cap.className='wimg-cap'; cap.id='shotcap';
     cap.textContent=serial?'loading…':('screen off'+(res?' · '+res:''));
@@ -1341,6 +1347,28 @@ function onProdLoad(codename,serial,isRound,res){
     }
   }
   wimgPlace();
+}
+function loadHands(serial){
+  // Draw where a hands watch's physical hands actually point (narwhal sysfs),
+  // as two rectangles angled from the dial centre — first value = hour hand
+  // (short/thick), second = minute hand (long/thin). The sysfs `position` is
+  // two independent 0-59 tick positions (verified on narwhal: 39:33 stable,
+  // values exceed 23 so it is NOT wall-clock time — it is where each hand
+  // physically sits, drifted from the ideal), so tick*6 = degrees clockwise
+  // from 12. First cut: the hands are drawn from the real angle, the screen
+  // behind is the real screenshot. Silent no-op on a watch with no movement.
+  fetch('/api/watch/'+encodeURIComponent(serial)+'/hands').then(r=>r.json()).then(d=>{
+    const hd=d&&d.hands, el=document.getElementById('devhands');
+    if(!hd||!el)return;
+    const hourA=((hd.h%60)*6).toFixed(1), minA=((hd.m%60)*6).toFixed(1);
+    el.title='physical hands at '+hd.position;
+    el.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">`+
+      `<g transform="translate(50,50)">`+
+        `<rect x="-2.6" y="-27" width="5.2" height="30" rx="2.6" fill="#f0f6fc" transform="rotate(${hourA})"/>`+
+        `<rect x="-1.8" y="-40" width="3.6" height="44" rx="1.8" fill="#f0f6fc" transform="rotate(${minA})"/>`+
+        `<circle r="3.4" fill="#c9d1d9"/>`+
+      `</g></svg>`;
+  }).catch(()=>{});
 }
 function wimgPlace(){
   // Anchor to the click and flip above if it would run off the bottom, like
