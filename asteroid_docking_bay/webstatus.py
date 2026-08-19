@@ -1338,6 +1338,19 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
         if not isinstance(member, dict):
             continue
         reachable = orbit.is_reachable_cached(serial)
+        # A DOCKED watch earns its Orbit row only while WiFi actually answers.
+        # It is on the rig and its port row already says so; listing it here as
+        # "offline" adds a second row that reports a connection it does not
+        # have, for a watch that is plainly present. The row is the live claim
+        # "you can also reach this over the air", so it disappears the moment
+        # that stops being true.
+        #
+        # A watch that is NOT on the rig keeps its row either way: that row is
+        # the only place it exists, and dropping it when WiFi blinks would make
+        # the watch vanish entirely rather than show as offline with its
+        # last-known state.
+        if serial in connected_serials and not reachable:
+            continue
         cached = last_seen.get(serial) or {}
         machine = member.get("codename") or find_codename_for_serial(cfg, serial)
         observed = {"resolution": member.get("resolution")}

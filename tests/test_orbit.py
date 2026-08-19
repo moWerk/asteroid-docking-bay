@@ -643,3 +643,38 @@ def test_one_orbiting_watch_does_not_claim_its_shelved_twins(monkeypatch):
     solo["serials"]["SOL-USB-2"] = "sol"
     assert orbit_member_for(solo, "SOL-USB") is None, (
         "guessed between two units of one model -- one of them is not on WiFi")
+
+
+def test_orbit_drops_a_docked_watch_that_is_not_reachable(monkeypatch):
+    """Two different meanings of an Orbit row, and only one survives going
+    offline.
+
+    For a DOCKED watch the row is a live claim -- "you can also reach this over
+    the air" -- so when WiFi stops answering the claim is false and the row
+    goes. The watch is plainly present on the rig and its port row says so; a
+    second row reporting a connection it does not have is just noise.
+
+    For a watch that is NOT on the rig, that row is the only place it exists.
+    Dropping it when WiFi blinks would make the watch vanish altogether instead
+    of showing offline with its last-known state.
+    """
+    monkeypatch.setattr(ws.last_seen, "get",
+                        lambda s: {"battery": 42, "last_live_ts": 9.0})
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x", "codename": "pike"}}}
+
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+    assert ws._orbit_hub_view(cfg, {"S1"})["ports"] == [], (
+        "a docked watch with no WiFi was listed in Orbit anyway -- the row "
+        "claims a reachability it does not have, beside a port row that "
+        "already shows the watch is right here")
+
+    away = ws._orbit_hub_view(cfg, set())["ports"]
+    assert len(away) == 1 and away[0]["reachable"] is False, (
+        "an away watch vanished when WiFi dropped -- that row is the only "
+        "place it exists, so it must stay and show as offline")
+    assert away[0]["battery_cached"] == 42
+
+    # docked AND reachable is still listed: the claim is true
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
+    both = ws._orbit_hub_view(cfg, {"S1"})["ports"]
+    assert len(both) == 1 and both[0]["docked"] is True
