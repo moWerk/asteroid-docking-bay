@@ -73,3 +73,15 @@ def is_reachable_cached(serial):
     """The last warmer verdict for a serial — False when never probed."""
     entry = _reach.get(serial)
     return bool(entry and entry["reachable"])
+
+
+def probed(serial) -> bool:
+    """Whether this serial has a verdict at all yet.
+
+    The cache is in memory, so after a restart everything reads "unreachable"
+    until the first warmer pass lands. That is indistinguishable from a watch
+    that is genuinely off WiFi, and a caller that drops rows on False makes
+    them vanish for a few seconds on every restart. Not-yet-known is its own
+    state and callers that act on absence need to ask for it.
+    """
+    return serial in _reach

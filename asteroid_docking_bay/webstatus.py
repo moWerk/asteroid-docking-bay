@@ -1349,7 +1349,7 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
         # the only place it exists, and dropping it when WiFi blinks would make
         # the watch vanish entirely rather than show as offline with its
         # last-known state.
-        if serial in connected_serials and not reachable:
+        if serial in connected_serials and not reachable and orbit.probed(serial):
             continue
         cached = last_seen.get(serial) or {}
         machine = member.get("codename") or find_codename_for_serial(cfg, serial)

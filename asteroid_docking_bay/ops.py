@@ -236,7 +236,10 @@ _SSH_REALIGN_COOLDOWN = 60.0
 # address is not the same as this host being able to reach it -- different
 # subnet, AP isolation, a stale lease -- and a mirror nobody can reach is worse
 # than none, because the row would claim reachability it does not have.
-_ORBIT_MIRROR_EVERY = 300.0     # per watch; enrollment is not urgent
+# Per watch. Long enough not to hammer a watch that has no WiFi, short enough
+# to notice one that just joined: at 300s a watch whose WiFi came back sat
+# unmirrored for five minutes with everything working, which reads as broken.
+_ORBIT_MIRROR_EVERY = 60.0
 _ORBIT_DROP_AFTER = 3           # consecutive failed passes before un-mirroring
 _orbit_mirror_tried: "dict[str, float]" = {}
 _orbit_miss: "dict[str, int]" = {}

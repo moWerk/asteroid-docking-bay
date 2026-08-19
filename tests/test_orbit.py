@@ -663,6 +663,7 @@ def test_orbit_drops_a_docked_watch_that_is_not_reachable(monkeypatch):
     cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x", "codename": "pike"}}}
 
     monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+    monkeypatch.setattr(ws.orbit, "probed", lambda s: True)
     assert ws._orbit_hub_view(cfg, {"S1"})["ports"] == [], (
         "a docked watch with no WiFi was listed in Orbit anyway -- the row "
         "claims a reachability it does not have, beside a port row that "
@@ -678,3 +679,26 @@ def test_orbit_drops_a_docked_watch_that_is_not_reachable(monkeypatch):
     monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
     both = ws._orbit_hub_view(cfg, {"S1"})["ports"]
     assert len(both) == 1 and both[0]["docked"] is True
+
+
+def test_a_docked_row_survives_until_wifi_has_actually_been_probed(monkeypatch):
+    """The reachability cache lives in memory, so after a restart every watch
+    reads "unreachable" until the first warmer pass lands -- indistinguishable
+    from one that is genuinely off WiFi.
+
+    Dropping docked rows on that made them vanish for a few seconds on every
+    restart and then reappear, which looks like the fleet flickering. Not yet
+    known is its own state: keep the row until there is an actual verdict.
+    """
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: {})
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x", "codename": "pike"}}}
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+
+    monkeypatch.setattr(ws.orbit, "probed", lambda s: False)      # never probed yet
+    assert len(ws._orbit_hub_view(cfg, {"S1"})["ports"]) == 1, (
+        "a docked watch was dropped from Orbit before its WiFi had been probed "
+        "even once -- every restart would blink the mirrored rows out")
+
+    monkeypatch.setattr(ws.orbit, "probed", lambda s: True)       # verdict is in
+    assert ws._orbit_hub_view(cfg, {"S1"})["ports"] == [], (
+        "an actual unreachable verdict no longer drops the row")
