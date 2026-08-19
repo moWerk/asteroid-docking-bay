@@ -3504,3 +3504,42 @@ def test_the_orbit_pill_carries_the_serial_not_the_address(tmp_path):
     assert "192.168.176.132" in out["linked"], "the address vanished from the tooltip too"
     assert "4C111JEAYW00RJ" in out["unlinked"], (
         "a watch with no linked port serial lost its identity entirely")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_orbit_rows_say_whether_the_watch_is_also_docked(tmp_path):
+    """An Orbit row has no port column, and that space is the only place this
+    section can answer the question it otherwise cannot: is this watch ALSO on
+    the rig, or is Orbit the only way to reach it?
+
+    The distinction has consequences. An orbiting watch cannot be powered,
+    charged or flashed until it is back in a cradle, and it can walk out of
+    range; a docked one is simply here, with this row as its second link.
+    """
+    import json
+    doc = {"version": "t", "thresholds": {"low": 40, "high": 80},
+           "drain_floor": 15, "wearable_min_hours": 24,
+           "hubs": [{"location": "orbit", "description": "vicinity",
+                     "hidden": False, "ports": [
+               {"codename": "sturgeon", "serial": "S-STU", "ip": "10.0.0.1",
+                "orbit": True, "empty": False, "reachable": True, "docked": True,
+                "adb": "ssh"},
+               {"codename": "sol", "serial": "S-SOL", "ip": "sol",
+                "orbit": True, "empty": False, "reachable": True, "docked": False,
+                "adb": "ssh"}]}]}
+    h = tmp_path / "ob.js"
+    h.write_text(_DOM_CAPTURE + JS + global_simple() +
+                 f"\nconst S={json.dumps(doc)};render(S);"
+                 "console.log(JSON.stringify(global.__els['tb'].innerHTML));"
+                 "\nprocess.exit(0);\n")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
+    html = json.loads(r.stdout.strip().splitlines()[-1])
+
+    assert "docked" in html and "orbiting" in html, (
+        "the rows do not distinguish a watch that is also on the rig from one "
+        "that is reachable only over the air")
+    # the orbiting one carries the consequence in its tooltip, not just a word
+    assert "Power, charging and flashing need it back in a cradle" in html
+    assert html.index("orbiting") > html.index("S-STU"), (
+        "the pills are not on the rows they describe")

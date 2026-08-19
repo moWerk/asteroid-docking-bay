@@ -396,6 +396,7 @@ _WEB_TEMPLATE = """\
     .cbadge.drain{border-color:#58a6ff;color:#58a6ff}
     .cbadge.wifi{border-color:#39c5cf;color:#39c5cf}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
+    .cbadge.orbiting{border-color:#a78bfa;color:#a78bfa}
     /* Machine Room — the compile cluster the dock itself runs on. Teal so it
        reads as a sibling of Orbit (violet) rather than as another hub. */
     .mroom-hdr .hl{color:#5ad1c3}
@@ -1394,7 +1395,14 @@ function renderOrbit(hub,rows,lo,hi){
     rows.push(
       `<tr class="wr orbit-row${p.reachable?'':' offrow'}" id="wr-orbit-${esc(p.serial)}">`+
       `<td class="pcell"><span class="orbitglyph" title="in orbit — reached over the air, not on a USB port">&#x1F6F0;</span></td>`+
-      `<td class="smtc"></td>`+
+            // The port column is empty on an orbit row, so the space says the one
+      // thing this section cannot otherwise show: whether the watch is ALSO on
+      // the rig. Docked is neutral -- it is here, nothing follows from it.
+      // Orbiting is the state with consequences: no power control, no
+      // flashing, and it can walk out of range.
+      `<td class="smtc">${p.docked
+        ? `<span class="cbadge bat" title="${ux('also on a rig port right now — this row is the WiFi link to the same watch','this watch is on the dock as well; this row is its WiFi connection')}">${ux('docked','on the dock')}</span>`
+        : `<span class="cbadge orbiting" title="${ux('not on any rig port — reachable over WiFi only. Power, charging and flashing need it back in a cradle.','away from the dock, reachable over WiFi only')}">${ux('orbiting','away')}</span>`}</td>`+
       `<td class="connc">${orbitBadge(p)}</td>`+
       `<td class="thumb">${mkthumb(p)}</td>`+
       `<td><b class="cn${p.reachable?'':' offname'}" onclick="openCC('${jsq(p.serial)}','${jsq(p.codename)}',event)" title="${isDev()?'open Control Center over WiFi (stale if offline)':'codename '+esc(p.codename)+' — click for details'}">${esc(watchName(p.codename))}</b> <span class="dim orbit-ip">${esc(p.ip||'')}</span></td>`+
