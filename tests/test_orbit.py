@@ -702,3 +702,36 @@ def test_a_docked_row_survives_until_wifi_has_actually_been_probed(monkeypatch):
     monkeypatch.setattr(ws.orbit, "probed", lambda s: True)       # verdict is in
     assert ws._orbit_hub_view(cfg, {"S1"})["ports"] == [], (
         "an actual unreachable verdict no longer drops the row")
+
+
+def test_a_watch_back_on_usb_leaves_orbit_under_either_identity(monkeypatch):
+    """A watch that has come back to the rig should stop being listed as an
+    away watch, and its two serials must not stop that happening.
+
+    sol answers 4C111JEAYW00RJ over SSH and 0123456789ABCDEF over USB. Asking
+    only "is this member's serial connected" missed it entirely: the member was
+    treated as away, so the offline rule that keeps away watches visible kept
+    listing it -- "offline for 29 minutes" beside a watch sitting on ADB.
+    """
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: {})
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+    monkeypatch.setattr(ws.orbit, "probed", lambda s: True)
+
+    cfg = {"serials": {"0123456789ABCDEF": "sol"},
+           "orbit": {"4C111JEAYW00RJ": {"serial": "4C111JEAYW00RJ", "ip": "sol",
+                                        "codename": "sol"}}}
+
+    # connected under its USB identity -> the member is the same watch
+    assert ws._orbit_hub_view(cfg, {"0123456789ABCDEF"})["ports"] == [], (
+        "a watch back on USB was still listed as an away watch gone offline, "
+        "because its USB serial and its over-the-air serial are different")
+
+    # nothing connected -> it is genuinely away, so it stays and shows offline
+    assert len(ws._orbit_hub_view(cfg, set())["ports"]) == 1
+
+    # the explicit link works too, without any codename involved
+    cfg2 = {"serials": {},
+            "orbit": {"WIFI-ID": {"serial": "WIFI-ID", "ip": "x",
+                                  "codename": "beluga", "auto": True,
+                                  "docked_serial": "USB-ID"}}}
+    assert ws._orbit_hub_view(cfg2, {"USB-ID"})["ports"] == []

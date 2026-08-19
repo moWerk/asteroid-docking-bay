@@ -1333,6 +1333,16 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
     after the 0.9 rig-test data reset the whole feature looked deleted
     (2026-07-26). The frontend has always had the empty-state row for this."""
     members = orbit_members(cfg)
+    # Which members are the watches currently connected here? A watch's
+    # over-the-air identity and its USB one are different strings -- sol is
+    # 4C111JEAYW00RJ over SSH and 0123456789ABCDEF over USB -- so asking
+    # "is this member's serial connected" misses every mirrored watch and
+    # leaves it listed as an away watch that has gone offline.
+    docked_members = set()
+    for s in connected_serials:
+        m = orbit_member_for(cfg, s)
+        if m and m.get("serial"):
+            docked_members.add(m["serial"])
     rows: list[dict] = []
     for serial, member in members.items():
         if not isinstance(member, dict):
@@ -1349,7 +1359,8 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
         # the only place it exists, and dropping it when WiFi blinks would make
         # the watch vanish entirely rather than show as offline with its
         # last-known state.
-        if serial in connected_serials and not reachable and orbit.probed(serial):
+        docked = serial in connected_serials or serial in docked_members
+        if docked and not reachable and orbit.probed(serial):
             continue
         cached = last_seen.get(serial) or {}
         machine = member.get("codename") or find_codename_for_serial(cfg, serial)
@@ -1363,7 +1374,7 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
             # watch that is also on WiFi is reachable both ways. Hiding it made
             # the section a list of watches that had LEFT, which is a different
             # and much less useful question.
-            "docked": serial in connected_serials,
+            "docked": docked,
             "ip": member.get("ip"),
             # A reachable orbiting watch is a live SSH link, so the row and the
             # Control Center treat it exactly like a docked SSH watch.
