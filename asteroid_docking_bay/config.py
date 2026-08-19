@@ -430,6 +430,33 @@ def orbit_add(cfg: dict, member: dict) -> None:
     cfg.setdefault("orbit", {})[member["serial"]] = member
 
 
+def orbit_member_for(cfg: dict, serial: "str | None") -> "dict | None":
+    """The orbit member that IS this watch, matched by serial or by codename.
+
+    A watch does not have one serial. It has whatever each channel reports:
+    sol's USB descriptor says `0123456789ABCDEF` (a placeholder), while over
+    SSH it reports `4C111JEAYW00RJ`. A watch launched into orbit by hostname is
+    therefore keyed by an identity its own port row has never seen, and a
+    serial-only match silently fails -- the port shows nothing while the watch
+    sits reachable in the Orbit section.
+
+    So fall back to the codename, which both channels agree on. Refuse when it
+    is AMBIGUOUS: if the codename names more than one orbit member, no match is
+    better than the wrong watch. Two units can share a codename (they share an
+    image), which is exactly when guessing would attach one unit's row to
+    another unit's connection.
+    """
+    members = orbit_members(cfg)
+    if serial and serial in members:
+        return members[serial]
+    codename = find_codename_for_serial(cfg, serial) if serial else None
+    if not codename:
+        return None
+    hits = [m for m in members.values()
+            if (m.get("codename") or "").lower() == codename.lower()]
+    return hits[0] if len(hits) == 1 else None
+
+
 def orbit_forget(cfg: dict, serial: "str | None") -> bool:
     """De-orbit a watch. Returns True only when one was actually removed, so a
     caller can skip the config write on a no-op de-orbit."""

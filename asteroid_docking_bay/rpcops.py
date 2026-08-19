@@ -39,7 +39,7 @@ from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config,
-                     orbit_add, orbit_forget, orbit_members,
+                     orbit_add, orbit_forget, orbit_members, orbit_member_for,
                      hands_cal_for, set_hands_cal, set_hub_name,
                      register_hubs, seed_hub_names, hub_name_for)
 from .usb import (_sysfs_hub_scan, _sysfs_path_to_serial_map, adb_usb_paths,
@@ -143,9 +143,15 @@ def _reachable_transport(serial: str):
     # Off the dock but in orbit: reach it over WiFi at its stored address. This
     # is the whole point of the Orbit port — every per-watch op (CC, weather,
     # settings, screenshot) routes over WiFi with no change at the call site.
-    member = orbit_members(cfg).get(serial)
+    # By serial OR codename: the watch's USB identity and its over-the-air one
+    # are frequently different strings, and the row that offers the Control
+    # Center is keyed by the USB one.
+    member = orbit_member_for(cfg, serial)
     if member and member.get("ip") and orbit.reachable(member["ip"]):
-        return SshTransport(member["ip"])
+        # over='wifi': this link is not the USB one, and the Control Center
+        # shows the transport kind. Calling a WiFi link 'usb' misreports which
+        # cable, if any, the watch is on.
+        return SshTransport(member["ip"], over="wifi")
     return None
 
 

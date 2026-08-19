@@ -22,6 +22,7 @@ from .config import (_config_lock, charge_config, find_codename_for_serial,
                      hub_name_entry_for, load_config, loc_port_for_serial,
                      orbit_members,
                      record_exact_codename, save_config, ssh_ip_for_serial,
+                     orbit_member_for,
                      usb_mode_preference)
 from . import orbit
 from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
@@ -864,7 +865,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
             if serial and adb_state in ("device", "ssh", "fastboot"):
                 connected_serials.add(serial)
             elif _port_handed_off(serial, adb_state, orbit_here,
-                                  orbit.is_reachable_cached):
+                                  orbit.is_reachable_cached,
+                                  member=orbit_member_for(cfg, serial)):
                 # This port's watch left the cradle and is reachable over the
                 # air. It used to empty the port and leave a dim hint, which
                 # read as "nothing here" for a watch a-d-b can talk to right
@@ -1178,12 +1180,24 @@ def _web_status_data(cfg: dict) -> list[dict]:
     return result
 
 
-def _port_handed_off(serial, adb_state, orbit_map, reachable) -> bool:
-    """True when a mapped port's watch has left the cradle but is reachable in
-    orbit: not connected on any wire here, yet an orbit member the warmer can
-    still reach. Such a port frees to available and the watch shows in Orbit."""
-    return bool(serial and adb_state not in ("device", "ssh", "fastboot")
-                and serial in orbit_map and reachable(serial))
+def _port_handed_off(serial, adb_state, orbit_map, reachable,
+                     member=None) -> bool:
+    """True when a mapped port's watch has left the cradle but is reachable
+    over the air: not connected on any wire here, yet an orbit member the
+    warmer can still reach.
+
+    `member` is the orbit entry for this port, resolved by orbit_member_for --
+    which matches by serial OR by codename, because a watch launched into orbit
+    by hostname is keyed by the serial its SSH side reports, and that is often
+    NOT the one its USB descriptor gives. sol answers 0123456789ABCDEF over USB
+    and 4C111JEAYW00RJ over SSH; a serial-only match left its port blank while
+    the watch sat reachable two rows below.
+    """
+    if adb_state in ("device", "ssh", "fastboot"):
+        return False
+    if member is not None:
+        return bool(reachable(member.get("serial") or serial))
+    return bool(serial and serial in orbit_map and reachable(serial))
 
 
 def _direct_hub_view(cfg: dict, devices: dict, adb_paths: dict,

@@ -119,8 +119,10 @@ def test_reachable_transport_routes_to_orbit_wifi(monkeypatch):
                         lambda: {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9"}}})
     monkeypatch.setattr(rpcops, "ssh_ip_for_serial", lambda cfg, s: None)
     monkeypatch.setattr(rpcops.orbit, "reachable", lambda ip, **k: True)
-    monkeypatch.setattr(rpcops, "SshTransport", lambda ip: ("ssh", ip))
-    assert rpcops._reachable_transport("S1") == ("ssh", "10.0.0.9")
+    monkeypatch.setattr(rpcops, "SshTransport", lambda ip, over="usb": ("ssh", ip, over))
+    # over='wifi': the Control Center shows the transport kind, and calling a
+    # WiFi link 'usb' misreports which cable the watch is on.
+    assert rpcops._reachable_transport("S1") == ("ssh", "10.0.0.9", "wifi")
 
 
 def test_reachable_transport_none_when_orbit_unreachable(monkeypatch):
@@ -545,3 +547,43 @@ def test_direct_view_shows_a_watch_that_is_only_on_ssh(monkeypatch):
         "an SSH watch rendered as offline -- the row exists but claims the "
         "watch cannot be reached, which is the opposite of true")
     assert row["product"] == "HUAWEI WATCH"
+
+
+def test_a_watch_is_matched_to_orbit_by_serial_or_codename(monkeypatch):
+    """A watch does not have one serial -- it has whatever each channel reports.
+
+    Measured on sol 2026-08-19: its USB descriptor says `0123456789ABCDEF` (a
+    placeholder), while over SSH it reports `4C111JEAYW00RJ`. Launched into
+    orbit by hostname, it is keyed by the second, and its port row knows only
+    the first. A serial-only match left the port blank while the watch sat
+    reachable two rows below, and the Control Center could not follow it.
+
+    The codename is what both channels agree on, so it is the fallback -- but
+    only when UNAMBIGUOUS. Two units can share a codename, since they share an
+    image, and that is exactly when guessing would attach one unit's row to
+    another unit's connection.
+    """
+    from asteroid_docking_bay.config import orbit_member_for
+
+    cfg = {"serials": {"0123456789ABCDEF": "sol"},
+           "orbit": {"4C111JEAYW00RJ": {"serial": "4C111JEAYW00RJ",
+                                        "ip": "sol", "codename": "sol"}}}
+
+    m = orbit_member_for(cfg, "0123456789ABCDEF")
+    assert m and m["ip"] == "sol", (
+        "the watch was not recognised as the orbit member it is -- its two "
+        "channels simply report different serials")
+
+    # an exact serial match still wins, and needs no codename at all
+    assert orbit_member_for(cfg, "4C111JEAYW00RJ")["ip"] == "sol"
+
+    # unknown watch -> no match rather than the only member present
+    assert orbit_member_for(cfg, "SOMEONE-ELSE") is None
+
+    # two orbit members share the codename -> refuse, do not guess
+    cfg2 = {"serials": {"USB-A": "tunny"},
+            "orbit": {"X": {"serial": "X", "ip": "a", "codename": "tunny"},
+                      "Y": {"serial": "Y", "ip": "b", "codename": "tunny"}}}
+    assert orbit_member_for(cfg2, "USB-A") is None, (
+        "picked one of two watches sharing a codename -- the row would show "
+        "another unit's connection")
