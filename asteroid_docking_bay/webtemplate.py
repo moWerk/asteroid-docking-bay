@@ -1239,7 +1239,18 @@ function orbitBadge(p){
   // The connection column for an orbit row: a WiFi pill with the IP (the wire it
   // rides), physical-first grammar shared with adb/ssh. Offline → an honest note
   // with the last-live age. A BT pill (+serial) will join this when BT lands.
-  if(p.reachable)return `<span class="cbadge wifi" title="reachable over WiFi at ${esc(p.ip||'')}">WiFi <span class="dim">${esc(p.ip||'')}</span></span>`;
+  if(p.reachable){
+    // The pill carries the SERIAL, not the address. The address is already on
+    // this row, beside the name, so repeating it here said one thing twice and
+    // left the identity — the only thing that matches an Orbit row to a rig
+    // row — shown nowhere. Prefer the serial the PORT row displays when the
+    // two are linked: a watch answers different serials on different channels,
+    // and matching is the whole point of showing one.
+    const id=p.docked_serial||p.serial||'';
+    return `<button class="cbadge wifi" onclick="openNC('${jsq(p.serial||'')}','${jsq(p.codename||'')}',event,'${jsq(p.ip||'')}','orbit')" `+
+      `title="reachable over WiFi at ${esc(p.ip||'')}${p.docked_serial&&p.docked_serial!==p.serial?` — answers ${esc(p.serial)} over the air`:''} — click for network details">`+
+      `WiFi <span class="dim">${esc(id)}</span></button>`;
+  }
   const age=fmtAge(p.last_live_ts);
   return `<span class="dim" title="off WiFi — last live ${age||'unknown'} ago">offline${age?' &middot; '+age:''}</span>`;
 }

@@ -3464,3 +3464,43 @@ def test_the_gadget_badge_separates_both_from_dead(tmp_path):
         "a dead gadget rendered as a healthy NCM watch")
     assert "+NCM" not in out["plain"], "an ordinary adb watch was marked NCM"
     assert out["plain"].count("cbadge") == 1, "an ordinary adb watch grew a pill"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_orbit_pill_carries_the_serial_not_the_address(tmp_path):
+    """The Orbit row already prints the address beside the name, so a pill that
+    repeats it says one thing twice and shows the identity nowhere -- and the
+    identity is what matches an Orbit row to a rig row.
+
+    Which serial matters: a watch answers different ones on different channels
+    (sol is 0123456789ABCDEF over USB and 4C111JEAYW00RJ over the air). The one
+    worth displaying is the one the PORT row shows, so a user can pair them by
+    eye; the over-the-air one stays in the tooltip rather than being lost.
+    """
+    import json
+    h = tmp_path / "op.js"
+    h.write_text(_DOM_STUBS + JS + r"""
+      const out = {
+        linked: orbitBadge({reachable:true, ip:'192.168.176.132',
+                            serial:'WIFI-ID', docked_serial:'USB-ID',
+                            codename:'belugaxl'}),
+        unlinked: orbitBadge({reachable:true, ip:'sol', serial:'4C111JEAYW00RJ',
+                              codename:'sol'}),
+      };
+      console.log(JSON.stringify(out));
+      process.exit(0);
+    """)
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    body = out["linked"].split("title=")[0] + out["linked"].split(">", 1)[1]
+    assert "USB-ID" in out["linked"], (
+        "the pill does not show the serial the port row shows, so the two rows "
+        "for one watch cannot be matched by eye")
+    assert "192.168.176.132" not in out["linked"].split("title=")[1].split(">")[1], (
+        "the address is still printed in the pill, beside the copy already on "
+        "the row")
+    assert "192.168.176.132" in out["linked"], "the address vanished from the tooltip too"
+    assert "4C111JEAYW00RJ" in out["unlinked"], (
+        "a watch with no linked port serial lost its identity entirely")

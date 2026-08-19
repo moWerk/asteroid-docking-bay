@@ -1386,6 +1386,10 @@ def _orbit_hub_view(cfg: dict, on_rig_serials: set) -> dict:
             # the section a list of watches that had LEFT, which is a different
             # and much less useful question.
             "docked": docked,
+            # The identity the watch's PORT row shows, when the two are linked.
+            # A watch answers different serials on different channels, and the
+            # one worth displaying is the one a user can match against the rig.
+            "docked_serial": member.get("docked_serial"),
             "ip": member.get("ip"),
             # A reachable orbiting watch is a live SSH link, so the row and the
             # Control Center treat it exactly like a docked SSH watch.
