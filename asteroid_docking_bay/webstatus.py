@@ -777,7 +777,12 @@ def _web_status_data(cfg: dict) -> list[dict]:
     # out of its hub row (the port frees to available) and surfaces in the Orbit
     # section; redocking reverses it. So the Orbit section excludes exactly the
     # watches physically present now — not the ones merely mapped to a port.
-    connected_serials: set[str] = set()
+    # Watches PRESENT on the rig, in any USB state -- not merely the ones
+    # a-d-b can talk to. A watch that enumerates but reports `offline` (adb
+    # sees the device and cannot speak to it: mid-reboot, a wedged daemon,
+    # usb-moded switching) is still sitting in its cradle, and Orbit must not
+    # list it as an away watch that has gone quiet.
+    on_rig_serials: set[str] = set()
     orbit_here = orbit_members(cfg)
 
     for cfg_hub in cfg.get("hubs", []):
@@ -862,8 +867,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 in_fastboot,
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             in_orbit = False
+            if serial and adb_state:
+                # Any USB state at all means the watch is in its cradle, even
+                # `offline`, which is adb saying it can see the device but not
+                # speak to it. An away watch has no USB state here at all --
+                # the "orbit" state is assigned further down, after this.
+                on_rig_serials.add(serial)
             if serial and adb_state in ("device", "ssh", "fastboot"):
-                connected_serials.add(serial)
+                on_rig_serials.add(serial)
             elif _port_handed_off(serial, adb_state, orbit_here,
                                   orbit.is_reachable_cached,
                                   member=orbit_member_for(cfg, serial)):
@@ -878,7 +889,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 # a cable still works over the air. The state is neither
                 # connected nor absent, so it gets its own: "orbit".
                 #
-                # Deliberately NOT added to connected_serials, so the watch
+                # Deliberately NOT added to on_rig_serials, so the watch
                 # also keeps its row in the Orbit section. That mirroring is
                 # the point: one row says where it lives, the other says how it
                 # is reachable now.
@@ -1167,7 +1178,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
         cfg, devices, _adb_paths, fb_by_path))
     if direct_view:
         result.append(direct_view)
-    orbit_view = _timed("orbit", lambda: _orbit_hub_view(cfg, connected_serials))
+    orbit_view = _timed("orbit", lambda: _orbit_hub_view(cfg, on_rig_serials))
     result.append(orbit_view)              # always last, below the physical hubs
     _persist_exact_codenames(_detected_exact)
     elapsed = time.perf_counter() - _t0
@@ -1316,7 +1327,7 @@ def _direct_hub_view(cfg: dict, devices: dict, adb_paths: dict,
             "ports": rows, "virtual": True, "hidden": False}
 
 
-def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
+def _orbit_hub_view(cfg: dict, on_rig_serials: set) -> dict:
     """The Orbit port as a virtual hub-view: one row per watch reachable over
     the air, whether or not it is also on a rig port right now.
 
@@ -1339,7 +1350,7 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
     # "is this member's serial connected" misses every mirrored watch and
     # leaves it listed as an away watch that has gone offline.
     docked_members = set()
-    for s in connected_serials:
+    for s in on_rig_serials:
         m = orbit_member_for(cfg, s)
         if m and m.get("serial"):
             docked_members.add(m["serial"])
@@ -1359,7 +1370,7 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
         # the only place it exists, and dropping it when WiFi blinks would make
         # the watch vanish entirely rather than show as offline with its
         # last-known state.
-        docked = serial in connected_serials or serial in docked_members
+        docked = serial in on_rig_serials or serial in docked_members
         if docked and not reachable and orbit.probed(serial):
             continue
         cached = last_seen.get(serial) or {}

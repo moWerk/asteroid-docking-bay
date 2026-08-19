@@ -1214,3 +1214,48 @@ def test_a_port_keeps_its_watch_while_that_watch_is_in_orbit(monkeypatch):
     assert "SKIP1" not in seen_orbit["connected"], (
         "the watch was marked as connected here, which would drop it from the "
         "Orbit section -- the mirroring is the point")
+
+
+def test_a_watch_that_enumerates_but_is_offline_still_counts_as_on_the_rig(monkeypatch):
+    """`offline` on adb means the device is enumerated and cannot be spoken to
+    -- mid-reboot, a wedged daemon, usb-moded switching. The watch is sitting
+    in its cradle.
+
+    Orbit keeps an AWAY watch listed when it goes quiet, on purpose, because
+    that row is the only place such a watch exists. Treating an offline-but-
+    present watch as away therefore left sol reading "offline for 29 minutes"
+    in Orbit while it sat plugged into socket 5. Presence on the rig, not
+    talkability, is what decides.
+    """
+    from asteroid_docking_bay import webstatus as ws
+
+    cfg = {"hubs": [{"location": "1-2", "ppps": True,
+                     "ports": {"1": "sol"}, "port_serials": {"1": "USB-SOL"}}],
+           "serials": {"USB-SOL": "sol"},
+           "orbit": {"WIFI-SOL": {"serial": "WIFI-SOL", "ip": "sol",
+                                  "codename": "sol"}}}
+
+    monkeypatch.setattr(ws, "adb_devices", lambda: {"USB-SOL": {"status": "offline"}})
+    monkeypatch.setattr(ws, "adb_usb_paths", lambda d: {"USB-SOL": "1-2.1"})
+    monkeypatch.setattr(ws, "_adb_state", lambda devices, serial: "offline")
+    monkeypatch.setattr(ws, "_resolve_conn_state", lambda a, fb, ssh: a)
+    monkeypatch.setattr(ws, "_fastboot_list", lambda: {})
+    monkeypatch.setattr(ws, "_sysfs_hub_scan", lambda c: [
+        {"location": "1-2", "ports": [1, 2], "power": {}, "connect": {}}])
+    monkeypatch.setattr(ws, "_soft_remap", lambda cfg, online: None)
+    monkeypatch.setattr(ws, "port_device_info", lambda loc, port: None)
+    monkeypatch.setattr(ws, "_geometry_view", lambda state, serial: None)
+    monkeypatch.setattr(ws, "_battery_view", lambda *a: (None, None))
+    monkeypatch.setattr(ws, "battery_and_screen", lambda serial, shell=None: (None, False, None))
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda p: {"adb": True, "ncm": False,
+                                   "mass_storage_only": False, "interfaces": []})
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: False)
+    monkeypatch.setattr(ws.orbit, "probed", lambda s: True)
+    monkeypatch.setattr(ws, "_direct_hub_view", lambda *a, **k: None)
+    monkeypatch.setattr(ws.last_seen, "get", lambda s: {})
+
+    orbit_rows = [h for h in ws._web_status_data(cfg) if h["location"] == "orbit"][0]["ports"]
+    assert orbit_rows == [], (
+        "a watch enumerated in its cradle was listed in Orbit as an away watch "
+        "gone offline -- it is right here, merely not answering adb")
