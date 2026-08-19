@@ -447,14 +447,36 @@ def orbit_member_for(cfg: dict, serial: "str | None") -> "dict | None":
     another unit's connection.
     """
     members = orbit_members(cfg)
-    if serial and serial in members:
+    if not serial:
+        return None
+    if serial in members and isinstance(members[serial], dict):
         return members[serial]
-    codename = find_codename_for_serial(cfg, serial) if serial else None
+    # Defensive: a member that is not a dict is not a member. Nothing here may
+    # raise on a malformed config -- this runs on the status path, and a
+    # traceback there empties the whole fleet view rather than one row.
+    members = {k: m for k, m in members.items() if isinstance(m, dict)}
+    # An auto-mirror records the docked watch it was probed FROM, so the two
+    # identities of one watch are linked exactly and nothing has to be guessed.
+    for m in members.values():
+        if m.get("docked_serial") == serial:
+            return m
+    # Codename fallback, for a watch launched by hand: it is the only thing the
+    # two channels agree on. Ambiguous on EITHER side means refuse.
+    codename = find_codename_for_serial(cfg, serial)
     if not codename:
         return None
     hits = [m for m in members.values()
             if (m.get("codename") or "").lower() == codename.lower()]
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) != 1:
+        return None
+    # THE SIDE THAT WAS MISSED: this rig holds three belugas and one orbiting
+    # beluga. Matching on the codename alone attached that single member to
+    # every beluga row -- including two that were SHELVED and unpowered, which
+    # then claimed to be reachable over WiFi. A watch that cannot possibly
+    # answer must never be shown as answering.
+    same_codename = sum(1 for cn in (cfg.get("serials") or {}).values()
+                        if (cn or "").lower() == codename.lower())
+    return hits[0] if same_codename <= 1 else None
 
 
 def orbit_forget(cfg: dict, serial: "str | None") -> bool:

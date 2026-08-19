@@ -587,3 +587,42 @@ def test_a_watch_is_matched_to_orbit_by_serial_or_codename(monkeypatch):
     assert orbit_member_for(cfg2, "USB-A") is None, (
         "picked one of two watches sharing a codename -- the row would show "
         "another unit's connection")
+
+
+def test_one_orbiting_watch_does_not_claim_its_shelved_twins(monkeypatch):
+    """The rig holds THREE belugas and one of them was mirrored into Orbit.
+
+    Matching that member by codename alone attached it to every beluga row --
+    including two that were SHELVED and unpowered, which then displayed as
+    reachable over WiFi. A watch that cannot possibly answer must never be
+    shown as answering; that is the failure this refusal exists to prevent.
+
+    The right answer is not a better guess but an exact link: an auto-mirror
+    records the docked watch it was probed from, so the watch's over-the-air
+    identity and its USB one are tied together and no codename is involved.
+    """
+    from asteroid_docking_bay.config import orbit_member_for
+
+    cfg = {"serials": {"BEL-A": "beluga", "BEL-B": "beluga", "BEL-C": "beluga"},
+           "orbit": {"100c0a32": {"serial": "100c0a32", "ip": "192.168.176.132",
+                                  "codename": "beluga", "auto": True,
+                                  "docked_serial": "BEL-A"}}}
+
+    a = orbit_member_for(cfg, "BEL-A")
+    assert a and a["ip"] == "192.168.176.132", (
+        "the watch that was actually probed lost its own mirror")
+    assert orbit_member_for(cfg, "BEL-B") is None, (
+        "a shelved twin claimed the other watch's WiFi connection")
+    assert orbit_member_for(cfg, "BEL-C") is None
+
+    # Without the exact link, a single unit of that codename may still match --
+    # that is the hand-launched case, and it stays unambiguous.
+    solo = {"serials": {"SOL-USB": "sol"},
+            "orbit": {"SOL-WIFI": {"serial": "SOL-WIFI", "ip": "sol",
+                                   "codename": "sol"}}}
+    assert orbit_member_for(solo, "SOL-USB")["ip"] == "sol"
+
+    # ...but the moment a second unit of that codename exists, it refuses
+    solo["serials"]["SOL-USB-2"] = "sol"
+    assert orbit_member_for(solo, "SOL-USB") is None, (
+        "guessed between two units of one model -- one of them is not on WiFi")

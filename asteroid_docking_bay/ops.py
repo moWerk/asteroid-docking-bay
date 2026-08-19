@@ -22,7 +22,7 @@ from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for
 from . import fastboot, oplock, orbit, usb
 from .registry import registry
 from .usb import (_SYSFS_USB, _port_device_present, _sysfs_get_power,
-                  power_cache, uhubctl_get_power, uhubctl_set_power)
+                  adb_usb_paths, power_cache, uhubctl_get_power, uhubctl_set_power)
 from .transport import SshTransport
 from .fastboot import (_clear_ssh_known_hosts, _detect_rndis, _download_nightly,
                        _fastboot_devices, _flash_watch, _route_winner_iface,
@@ -262,8 +262,17 @@ def _maybe_mirror_to_orbit(cfg: dict) -> None:
     """
     devices = adb_devices()
     now = time.time()
+    # Resolve each mapped port to the serial ACTUALLY enumerated there, rather
+    # than to the one the config remembers. A port's stored serial can be
+    # missing entirely (belugaxl had none) or be from another channel -- a
+    # fastboot-era serial, or a descriptor the watch has since stopped
+    # reporting. Keying on the live sysfs path is exact and needs no history.
+    at_path = {path: serial for serial, path in adb_usb_paths(devices).items()}
     for hub in cfg.get("hubs", []):
-        for port_str, serial in (hub.get("port_serials") or {}).items():
+        loc = hub.get("location")
+        for port_str in (hub.get("ports") or {}):
+            serial = (at_path.get(f"{loc}.{port_str}")
+                      or (hub.get("port_serials") or {}).get(port_str))
             if not serial or serial not in devices:
                 continue                       # not docked and talking
             if orbit_member_for(cfg, serial):
@@ -278,6 +287,11 @@ def _maybe_mirror_to_orbit(cfg: dict) -> None:
             if not member:
                 return
             member["auto"] = True              # only auto entries are auto-dropped
+            # The watch this was probed FROM. Its over-the-air serial and its
+            # USB one are different strings, and without this link the only way
+            # back is the codename -- which is ambiguous the moment a rig holds
+            # two units of one model, and this one holds three belugas.
+            member["docked_serial"] = serial
             with _config_lock:
                 fresh = load_config()
                 orbit_add(fresh, member)

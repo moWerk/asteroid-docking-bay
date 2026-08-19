@@ -927,14 +927,20 @@ def test_a_docked_wifi_watch_is_mirrored_into_orbit(monkeypatch):
     """
     import asteroid_docking_bay.ops as ops
 
+    # Port 2 has NO stored serial on purpose: belugaxl had none, and an
+    # enrolment that iterates remembered serials skips such a port forever.
+    # The live sysfs path is what says who is actually there.
     cfg = {"hubs": [{"location": "1-2", "ports": {"1": "skipjack", "2": "tunny"},
-                     "port_serials": {"1": "SKIP1", "2": "TUN1"}}],
+                     "port_serials": {"1": "SKIP1"}}],
            "serials": {"SKIP1": "skipjack", "TUN1": "tunny"}, "orbit": {}}
     saved = {}
     monkeypatch.setattr(ops, "adb_devices",
                         lambda: {"SKIP1": {"status": "device"},
                                  "TUN1": {"status": "device"},
                                  "STRANGER": {"status": "device"}})
+    monkeypatch.setattr(ops, "adb_usb_paths",
+                        lambda d: {"SKIP1": "1-2.1", "TUN1": "1-2.2",
+                                   "STRANGER": "1-9.1"})
     monkeypatch.setattr(ops, "_watch_wifi_ip",
                         lambda s: {"SKIP1": "10.0.0.5", "TUN1": "10.0.0.6"}.get(s))
     monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: ip == "10.0.0.5")
@@ -947,6 +953,11 @@ def test_a_docked_wifi_watch_is_mirrored_into_orbit(monkeypatch):
     ops._maybe_mirror_to_orbit(cfg)
     assert list(saved.get("orbit", {})) == ["SKIP-WIFI"], (
         f"expected exactly the reachable, mapped watch to be mirrored: {saved.get('orbit')}")
+    assert saved["orbit"]["SKIP-WIFI"]["docked_serial"] == "SKIP1", (
+        "the mirror does not record WHICH docked watch it was probed from. "
+        "Without that link the only way back is the codename, which is "
+        "ambiguous the moment the rig holds two units of one model -- and a "
+        "shelved twin then displays as reachable over WiFi")
     assert saved["orbit"]["SKIP-WIFI"]["auto"] is True, (
         "not marked auto -- a hand-launched watch and a learned one must be "
         "told apart, because only the learned one may be dropped automatically")
@@ -960,6 +971,18 @@ def test_a_docked_wifi_watch_is_mirrored_into_orbit(monkeypatch):
     assert saved == {}, (
         "mirrored a watch this host cannot reach -- the row would claim a "
         "reachability it does not have")
+
+    # The port with no remembered serial is still a candidate, resolved from
+    # the live path. Hold the other back so this is the only fresh one.
+    saved.clear(); ops._orbit_mirror_tried.clear()
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(ops.orbit, "probe",
+                        lambda ip: {"serial": "TUN-WIFI", "ip": ip, "codename": "tunny"})
+    ops._orbit_mirror_tried["SKIP1"] = ops.time.time()
+    ops._maybe_mirror_to_orbit(cfg)
+    assert saved.get("orbit", {}).get("TUN-WIFI", {}).get("docked_serial") == "TUN1", (
+        "a mapped port with no remembered serial was never considered -- the "
+        "watch on it can never be mirrored, however reachable it is")
 
     # STRANGER is docked, reachable, and known by serial -- but sits on no
     # mapped port. Hold the two mapped watches back with the rate limit so it
