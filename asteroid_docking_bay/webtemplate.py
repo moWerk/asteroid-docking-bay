@@ -340,7 +340,7 @@ _WEB_TEMPLATE = """\
     .hl{color:#58a6ff;font-weight:bold;margin-right:8px}
     .orbit-hdr .hl{color:#a78bfa}
     .orbit-add{float:right;font-weight:400;letter-spacing:0}
-    .orbit-add input{width:118px;background:#0d1420;border:1px solid #30363d;color:#c9d1d9;border-radius:5px;padding:2px 7px;font-size:12px;margin-right:5px}
+    .orbit-add input{width:250px;background:#0d1420;border:1px solid #30363d;color:#c9d1d9;border-radius:5px;padding:2px 7px;font-size:12px;margin-right:5px}
     .orbit-add input:focus{border-color:#a78bfa;outline:none}
     .orbitglyph{opacity:.75;font-size:14px}
     .orbit-ip{font-size:11px;margin-left:6px}
@@ -1382,7 +1382,7 @@ function renderOrbit(hub,rows,lo,hi){
   rows.push(
     `<tr class="hub-hdr orbit-hdr"><td colspan="8">`+
     `<span class="hl">&#x1F6F0; Orbit</span><span class="dim">${esc(hub.description)}</span>`+
-    `<span class="orbit-add"><input id="orbip" type="text" placeholder="watch IP on WiFi" `+
+    `<span class="orbit-add"><input id="orbip" type="text" placeholder="Add watch to orbit by IP/hostname" `+
       `spellcheck="false" autocomplete="off" onkeydown="if(event.key==='Enter')launchOrbit()">`+
     `<button class="btn" onclick="launchOrbit()" title="SSH-probe this address and launch the watch into orbit">Launch</button></span>`+
     `</td></tr>`
