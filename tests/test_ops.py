@@ -1050,3 +1050,48 @@ def test_only_an_auto_mirror_is_dropped_and_only_after_several_passes(monkeypatc
         "one miss after a successful pass dropped the mirror -- the count did "
         "not reset, so old misses accumulate forever and any watch eventually "
         "falls out of Orbit")
+
+
+def test_a_landed_watch_comes_back_once_its_wifi_returns(monkeypatch):
+    """Landing switches a watch's radios off, and the member stays as the
+    record. That record must not become a life sentence.
+
+    While the watch is down there is no address to find, so nothing happens.
+    But a landed watch on the rig is still a MEMBER, so without this it would
+    be skipped forever -- turning WiFi back on from the watch's own settings
+    would change nothing, and moWerk asked specifically that such a watch be
+    detected again.
+    """
+    import asteroid_docking_bay.ops as ops
+
+    cfg = {"hubs": [{"location": "1-2", "ports": {"1": "skipjack"},
+                     "port_serials": {"1": "SKIP1"}}],
+           "serials": {"SKIP1": "skipjack"},
+           "orbit": {"SKIP-WIFI": {"serial": "SKIP-WIFI", "ip": "10.0.0.5",
+                                   "codename": "skipjack", "auto": True,
+                                   "docked_serial": "SKIP1", "landed": True}}}
+    saved = {}
+    monkeypatch.setattr(ops, "adb_devices", lambda: {"SKIP1": {"status": "device"}})
+    monkeypatch.setattr(ops, "adb_usb_paths", lambda d: {"SKIP1": "1-2.1"})
+    monkeypatch.setattr(ops, "load_config", lambda: json.loads(json.dumps(cfg)))
+    monkeypatch.setattr(ops, "save_config", lambda c: saved.update(c))
+    ops._orbit_mirror_tried.clear()
+
+    # still down: no address, so nothing is claimed
+    monkeypatch.setattr(ops, "_watch_wifi_ip", lambda s: None)
+    ops._maybe_mirror_to_orbit(cfg)
+    assert saved == {}, "claimed a watch whose WiFi is still off"
+
+    # WiFi switched on from the watch -> it answers, so it comes back
+    ops._orbit_mirror_tried.clear()
+    monkeypatch.setattr(ops, "_watch_wifi_ip", lambda s: "10.0.0.5")
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(ops.orbit, "probe",
+                        lambda ip: {"serial": "SKIP-WIFI", "ip": ip,
+                                    "codename": "skipjack"})
+    ops._maybe_mirror_to_orbit(cfg)
+    member = saved["orbit"]["SKIP-WIFI"]
+    assert "landed" not in member, (
+        "the watch answered again and stayed marked landed -- it would never "
+        "return to Orbit, however long its WiFi stays on")
+    assert member["docked_serial"] == "SKIP1"

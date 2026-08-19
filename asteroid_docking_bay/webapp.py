@@ -420,6 +420,11 @@ def serve(args, cfg: dict):
         resp.content_type = "application/json"
         return json.dumps(_call("orbit.deorbit", {"serial": serial}))
 
+    @app.post("/api/orbit/rescan/<serial>")
+    def api_orbit_rescan(serial):
+        resp.content_type = "application/json"
+        return json.dumps(_call("orbit.rescan", {"serial": serial}))
+
     @app.get("/api/watch/<serial>/screenshot.jpg")
     def api_watch_screenshot(serial):
         d = _call("watch.screenshot", {"serial": serial})

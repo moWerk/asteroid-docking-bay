@@ -422,7 +422,10 @@ def test_orbit_section_renders_rows_and_controls(tmp_path):
     assert "Orbit" in html                                       # section header
     assert "cbadge wifi" in html and "10.0.0.9" in html          # reachable → WiFi pill + IP
     assert "offrow" in html                                      # pike is offline/dimmed
-    assert "deorbit('CAT'" in html and "deorbit('PIKE'" in html  # de-orbit per serial
+    # Landing is ARMED through the shared helper, not a bare call: the first
+    # click relabels the button with what the second one will do. For a watch
+    # off the rig it is one-way -- the radios go off over the link being used.
+    assert "armGo(this" in html and "doLand('CAT'" in html and "doLand('PIKE'" in html  # de-orbit per serial
     assert "openCC('CAT'" in html                                # codename opens CC
     assert 'id="wr-orbit-CAT"' in html and 'id="wr-orbit-PIKE"' in html
     # No power toggle / smart / menuExecute on an orbit row (no wire to act on).

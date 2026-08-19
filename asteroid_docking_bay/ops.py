@@ -278,8 +278,15 @@ def _maybe_mirror_to_orbit(cfg: dict) -> None:
                       or (hub.get("port_serials") or {}).get(port_str))
             if not serial or serial not in devices:
                 continue                       # not docked and talking
-            if orbit_member_for(cfg, serial):
+            existing = orbit_member_for(cfg, serial)
+            if existing and not existing.get("landed"):
                 continue                       # already mirrored, or launched by hand
+            # A LANDED watch is deliberately down, so it is skipped while it
+            # stays down -- there is no address to find. The moment somebody
+            # turns WiFi on from the watch's own settings it answers again,
+            # and re-mirroring is how it comes back. Without this a landed
+            # watch on the rig would stay landed forever: it is still a member,
+            # so nothing would ever look at it again.
             if now - _orbit_mirror_tried.get(serial, 0) < _ORBIT_MIRROR_EVERY:
                 continue
             _orbit_mirror_tried[serial] = now

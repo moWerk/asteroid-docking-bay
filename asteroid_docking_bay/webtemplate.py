@@ -1408,7 +1408,9 @@ function renderOrbit(hub,rows,lo,hi){
       `<td><b class="cn${p.reachable?'':' offname'}" onclick="openCC('${jsq(p.serial)}','${jsq(p.codename)}',event)" title="${isDev()?'open Control Center over WiFi (stale if offline)':'codename '+esc(p.codename)+' — click for details'}">${esc(watchName(p.codename))}</b> <span class="dim orbit-ip">${esc(p.ip||'')}</span></td>`+
       `<td class="stats"></td>`+
       `<td class="batc" id="bat-orbit-${esc(p.serial)}">${mkbatCell(p,lo,hi)}</td>`+
-      `<td class="actc"><button class="btn ex" onclick="deorbit('${jsq(p.serial)}','${jsq(p.codename)}')" title="land this watch — remove it from Orbit. The watch itself is untouched; a docked one keeps its port row, and an auto-mirrored one returns on its own while WiFi answers.">land</button></td>`+
+      `<td class="actc">${p.landed
+        ? `<button class="btn ex" onclick="relaunch('${jsq(p.serial)}','${jsq(p.codename)}')" title="${ux('look for this watch at its last known address again. Nothing here can switch its WiFi back on — that has to happen on the watch — so this asks whether it has.','check whether this watch is back on WiFi')}">Launch</button>`
+        : `<button class="btn ex" onclick="armGo(this,&quot;doLand('${jsq(p.serial)}','${jsq(p.codename)}')&quot;,'land ${jsq(p.codename||'')}')" title="${ux('land this watch: switch its WiFi and Bluetooth off from here. A watch on the rig stays reachable over USB; one that is NOT on the rig becomes unreachable until it is docked again, and its row stays as the way back.','switch this watch off the air. If it is not on the dock, nothing can reach it until you dock it again.')}">land</button>`}</td>`+
       `</tr>`
     );
   });
@@ -1424,11 +1426,26 @@ function launchOrbit(){
       else{toastErr((d&&d.error)||'launch failed — is the watch on WiFi in SSH mode?');el.focus();}
     }).catch(()=>{el.disabled=false;toastErr('launch failed');el.focus();});
 }
-function deorbit(serial,name){
-  if(!confirm('Land '+name+'? The watch itself is untouched - this only forgets how to reach it over the air.'))return;
+// Armed through armGo, like every other destructive action: the first click
+// relabels the button with what the second one will do. No confirm() dialog --
+// for a watch NOT on the rig this is one-way, its radios go off over the very
+// link being used, and nothing can reach it until it is docked again.
+function doLand(serial,name){
   fetch('/api/orbit/deorbit/'+encodeURIComponent(serial),{method:'POST'})
-    .then(r=>r.json()).then(d=>{if(d&&d.ok){toast('de-orbited '+name);refresh();}else toastErr('de-orbit failed');})
-    .catch(()=>toastErr('de-orbit failed'));
+    .then(r=>r.json()).then(d=>{
+      toastRes(d&&d.ok,name+' landed'+((d&&d.switched&&d.switched.length)?' ('+d.switched.join(', ')+' off)':''),
+               (d&&d.error)||'landing failed');
+      refresh();
+    }).catch(()=>toastErr('landing failed'));
+}
+function relaunch(serial,name){
+  toast('looking for '+name+' at its last known address…');
+  fetch('/api/orbit/rescan/'+encodeURIComponent(serial),{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      toastRes(d&&d.ok,name+' is back on the air',
+               (d&&d.error)||'no answer — still landed');
+      refresh();
+    }).catch(()=>toastErr('could not look for '+name));
 }
 function render(data){
   lastData=data;
@@ -3671,8 +3688,10 @@ let _armSeq=0;
 function armGo(el,fn,what){
   if(el.dataset.armed==='1'){closeMenu();(new Function(fn))();return;}
   // Disarm any sibling first — two armed destructive items at once is exactly
-  // the confusion this is meant to remove.
-  el.closest('.menu').querySelectorAll('.menu-item.danger[data-armed="1"]').forEach(b=>{
+  // the confusion this is meant to remove. A row button has no menu around it,
+  // so there is nothing to disarm and nothing to look up.
+  const menu=el.closest('.menu');
+  if(menu)menu.querySelectorAll('.menu-item.danger[data-armed="1"]').forEach(b=>{
     b.dataset.armed='0';b.textContent=b.dataset.label||b.textContent;});
   el.dataset.label=el.textContent;
   el.dataset.armed='1';

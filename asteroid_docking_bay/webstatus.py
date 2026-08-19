@@ -1390,6 +1390,10 @@ def _orbit_hub_view(cfg: dict, on_rig_serials: set) -> dict:
             # A watch answers different serials on different channels, and the
             # one worth displaying is the one a user can match against the rig.
             "docked_serial": member.get("docked_serial"),
+            # Brought down on purpose: its radios were switched off from here.
+            # The row stays as the record of a watch nothing can reach, and as
+            # the only way back.
+            "landed": bool(member.get("landed")),
             "ip": member.get("ip"),
             # A reachable orbiting watch is a live SSH link, so the row and the
             # Control Center treat it exactly like a docked SSH watch.

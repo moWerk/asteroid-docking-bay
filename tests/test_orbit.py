@@ -299,13 +299,86 @@ def test_launch_op_fails_cleanly_when_unreachable(monkeypatch):
     assert calls["saved"] == 0                           # nothing written on failure
 
 
-def test_deorbit_op_removes_and_saves(monkeypatch):
-    saved = {}
+def test_landing_switches_the_radios_off_and_keeps_the_row(monkeypatch):
+    """Landing is the opposite of launching, not an undo of it.
+
+    Forgetting the address left the watch broadcasting and reachable, and
+    auto-mirroring put it straight back -- so the button did nothing lasting.
+    Switching the radios off is what actually brings a watch down.
+
+    The member is KEPT and marked landed. For a watch that is not on the rig,
+    that row is the only record it exists and the only way back: nothing can
+    reach it until it is docked, or until somebody turns WiFi on from the
+    watch's own settings and the row's own button finds it again. Deleting the
+    row would delete that.
+    """
+    saved, toggled = {}, []
+
+    class FakeWatch:
+        def toggle(self, tech, on):
+            toggled.append((tech, on))
+            return True
+
+    monkeypatch.setattr(rpcops, "_watch", lambda s: FakeWatch())
     monkeypatch.setattr(rpcops, "load_config",
-                        lambda: {"orbit": {"S1": {"serial": "S1"}}})
-    monkeypatch.setattr(rpcops, "save_config", lambda cfg: saved.update(cfg))
+                        lambda: {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9"}}})
+    monkeypatch.setattr(rpcops, "save_config", lambda c: saved.update(c))
+    monkeypatch.setattr(rpcops.orbit, "note_reachable", lambda s, ok: None)
+
     d = rpcops.DISPATCH._data["orbit.deorbit"]({"serial": "S1"})
-    assert d["ok"] is True and saved["orbit"] == {}
+    assert d["ok"] and d["landed"] is True
+    assert toggled == [("wifi", False), ("bluetooth", False)], (
+        f"the radios were not switched off: {toggled}")
+    assert saved["orbit"]["S1"]["landed"] is True, (
+        "the row was dropped instead of marked landed -- for an away watch "
+        "that row is the only record it exists and the only way back")
+
+
+def test_landing_survives_the_link_dying_under_it(monkeypatch):
+    """The command travels over the very link it switches off, so the
+    connection dying IS the success case. A raising transport must not leave
+    the watch marked airborne when its radios are in fact off."""
+    saved = {}
+
+    class DyingWatch:
+        def toggle(self, tech, on):
+            raise OSError("connection reset by peer")
+
+    monkeypatch.setattr(rpcops, "_watch", lambda s: DyingWatch())
+    monkeypatch.setattr(rpcops, "load_config",
+                        lambda: {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9"}}})
+    monkeypatch.setattr(rpcops, "save_config", lambda c: saved.update(c))
+    monkeypatch.setattr(rpcops.orbit, "note_reachable", lambda s, ok: None)
+
+    d = rpcops.DISPATCH._data["orbit.deorbit"]({"serial": "S1"})
+    assert d["ok"] and saved["orbit"]["S1"]["landed"] is True
+
+
+def test_rescan_only_unlands_a_watch_that_actually_answers(monkeypatch):
+    """The way back for a landed watch: somebody turns WiFi on from the watch's
+    own settings, and this asks whether the old address answers again.
+
+    It must PROBE rather than assume. A watch that took a different lease, or
+    never came back, has to stay landed -- otherwise the row claims a link it
+    does not have, which is the failure the whole landed state exists to avoid.
+    """
+    saved = {}
+    cfg = {"orbit": {"S1": {"serial": "S1", "ip": "10.0.0.9", "landed": True,
+                            "landed_at": 1}}}
+    monkeypatch.setattr(rpcops, "load_config", lambda: json.loads(json.dumps(cfg)))
+    monkeypatch.setattr(rpcops, "save_config", lambda c: saved.update(c))
+    monkeypatch.setattr(rpcops.orbit, "note_reachable", lambda s, ok: None)
+
+    monkeypatch.setattr(rpcops.orbit, "reachable", lambda ip, **k: False)
+    d = rpcops.DISPATCH._data["orbit.rescan"]({"serial": "S1"})
+    assert not d["ok"] and saved == {}, "un-landed a watch that never answered"
+
+    monkeypatch.setattr(rpcops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(rpcops.orbit, "probe",
+                        lambda ip: {"serial": "S1", "ip": ip})
+    d = rpcops.DISPATCH._data["orbit.rescan"]({"serial": "S1"})
+    assert d["ok"]
+    assert "landed" not in saved["orbit"]["S1"], "still marked landed after answering"
 
 
 def test_deorbit_op_noop_skips_write(monkeypatch):

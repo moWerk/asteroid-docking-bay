@@ -39,7 +39,7 @@ from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
                      find_codename_for_loc_port, find_serial_for_loc_port,
                      flash_config, load_config, save_config,
-                     orbit_add, orbit_forget, orbit_members, orbit_member_for,
+                     orbit_add, orbit_members, orbit_member_for,
                      hands_cal_for, set_hands_cal, set_hub_name,
                      register_hubs, seed_hub_names, hub_name_for)
 from .usb import (_sysfs_hub_scan, _sysfs_path_to_serial_map, adb_usb_paths,
@@ -612,14 +612,83 @@ def _orbit_launch(args):
 
 @DISPATCH.op("orbit.deorbit")
 def _orbit_deorbit(args):
-    """De-orbit a watch: drop it from the Orbit port. The watch itself is
-    untouched — this only forgets how to reach it over the air."""
+    """LAND a watch: switch its over-the-air links off and mark it landed.
+
+    Landing is the opposite of launching, not an undo of it. Merely forgetting
+    the address left the watch broadcasting and reachable, and auto-mirroring
+    put it straight back -- so the button did nothing lasting. Switching the
+    radios off is what actually brings it down.
+
+    The member is KEPT, marked landed. For a watch that is not on the rig that
+    row is the only record it ever existed, and after this it is the only way
+    back: nothing can reach the watch until it is docked again, or until
+    somebody turns WiFi on from the watch's own settings and the row's re-scan
+    finds it. Deleting the row would delete that.
+
+    Radios are switched off over the very link being switched off, so a
+    non-zero return is expected and not an error -- the command lands and the
+    connection dies with it. What matters is that the watch stops answering.
+    """
+    serial = args.get("serial")
+    if not serial:
+        return {"ok": False, "error": "no serial"}
+    cfg = load_config()
+    member = orbit_member_for(cfg, serial) or {}
+    key = member.get("serial") or serial
+
+    switched = []
+    try:
+        watch = _watch(serial)
+        for tech in ("wifi", "bluetooth"):
+            if watch.toggle(tech, False):
+                switched.append(tech)
+    except Exception as exc:                  # the link dying IS the success case
+        log.info("%s: link dropped while landing (expected): %s", serial, exc)
+
     with _config_lock:
-        cfg = load_config()
-        removed = orbit_forget(cfg, args.get("serial"))
-        if removed:
-            save_config(cfg)
-    return {"ok": removed}
+        fresh = load_config()
+        m = (fresh.get("orbit") or {}).get(key)
+        if not m:
+            return {"ok": False, "error": "not in orbit"}
+        m["landed"] = True
+        m["landed_at"] = int(time.time())
+        save_config(fresh)
+    orbit.note_reachable(key, False)
+    log.info("%s landed: %s switched off", m.get("codename") or key,
+             ", ".join(switched) or "nothing (already down)")
+    return {"ok": True, "landed": True, "switched": switched}
+
+
+@DISPATCH.op("orbit.rescan")
+def _orbit_rescan(args):
+    """Look for a landed watch at its last known address.
+
+    The way back for a watch nobody can reach: somebody turns WiFi on from the
+    watch's own settings, and this asks whether the old address answers again.
+    It probes rather than assumes, so a watch that took a different lease
+    simply stays landed instead of the row claiming a link it does not have.
+    """
+    serial = args.get("serial")
+    cfg = load_config()
+    member = orbit_member_for(cfg, serial) or {}
+    key, ip = member.get("serial") or serial, member.get("ip")
+    if not ip:
+        return {"ok": False, "error": "no address on record for this watch"}
+    if not orbit.reachable(ip):
+        orbit.note_reachable(key, False)
+        return {"ok": False, "error": f"{ip} did not answer — still landed"}
+    fresh_member = orbit.probe(ip) or {}
+    with _config_lock:
+        fresh = load_config()
+        m = (fresh.get("orbit") or {}).get(key)
+        if m:
+            m.pop("landed", None)
+            m.pop("landed_at", None)
+            if fresh_member.get("ip"):
+                m["ip"] = fresh_member["ip"]
+            save_config(fresh)
+    orbit.note_reachable(key, True)
+    return {"ok": True, "ip": ip}
 
 
 _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
