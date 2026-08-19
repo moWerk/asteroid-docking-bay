@@ -1317,9 +1317,14 @@ def _direct_hub_view(cfg: dict, devices: dict, adb_paths: dict,
 
 
 def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
-    """The Orbit port as a virtual hub-view: one row per orbiting watch that is
-    not physically on a rig port right now (a docked watch stays on its USB row;
-    an undocked one that is still reachable hands off to here). Reachability comes
+    """The Orbit port as a virtual hub-view: one row per watch reachable over
+    the air, whether or not it is also on a rig port right now.
+
+    It used to hide any watch that was docked, which made this a list of
+    watches that had LEFT rather than a list of what is reachable by WiFi. The
+    point of mirroring is continuity: the same watch appears on its port (how
+    it is wired) and here (how else it can be reached), so when the cable drops
+    nothing has to be rediscovered. Reachability comes
     from the warmer-fed cache and battery/geometry from last_seen, so this stays
     pure cache reads — no probe, no block.
 
@@ -1330,8 +1335,8 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
     members = orbit_members(cfg)
     rows: list[dict] = []
     for serial, member in members.items():
-        if serial in connected_serials:
-            continue                        # on a rig port now → its USB row wins
+        if not isinstance(member, dict):
+            continue
         reachable = orbit.is_reachable_cached(serial)
         cached = last_seen.get(serial) or {}
         machine = member.get("codename") or find_codename_for_serial(cfg, serial)
@@ -1340,6 +1345,12 @@ def _orbit_hub_view(cfg: dict, connected_serials: set) -> dict:
         rows.append({
             "codename": display, "machine": machine, "serial": serial,
             "orbit": True, "empty": False,
+            # Also sitting on a rig port right now. The row is shown ANYWAY:
+            # Orbit is the list of watches reachable over WiFi, and a docked
+            # watch that is also on WiFi is reachable both ways. Hiding it made
+            # the section a list of watches that had LEFT, which is a different
+            # and much less useful question.
+            "docked": serial in connected_serials,
             "ip": member.get("ip"),
             # A reachable orbiting watch is a live SSH link, so the row and the
             # Control Center treat it exactly like a docked SSH watch.

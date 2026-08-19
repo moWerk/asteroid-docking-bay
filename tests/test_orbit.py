@@ -230,11 +230,28 @@ def test_orbit_hub_view_builds_row_for_undocked_reachable(monkeypatch):
     assert row["machine"] == "catfish"
 
 
-def test_orbit_hub_view_skips_docked_serial(monkeypatch):
+def test_orbit_lists_a_docked_watch_too(monkeypatch):
+    """Orbit is the list of watches reachable OVER THE AIR, not the list of
+    watches that have left.
+
+    It used to hide any watch that was also docked, which answered a different
+    and much less useful question. The point of mirroring is continuity: the
+    same watch appears on its port (how it is wired) and here (how else it can
+    be reached), so when the cable drops nothing has to be rediscovered.
+    """
     monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
     monkeypatch.setattr(ws.last_seen, "get", lambda s: {})
     cfg = {"orbit": {"S1": {"serial": "S1", "ip": "x"}}}
-    assert ws._orbit_hub_view(cfg, {"S1"})["ports"] == []       # docked → dock wins
+
+    row = ws._orbit_hub_view(cfg, {"S1"})["ports"][0]
+    assert row["serial"] == "S1", (
+        "a docked watch vanished from Orbit, so the section cannot answer "
+        "'what can I reach over WiFi'")
+    assert row["docked"] is True, (
+        "the row does not say the watch is also on a port, so the UI cannot "
+        "tell a mirrored watch from one that has actually left")
+
+    assert ws._orbit_hub_view(cfg, set())["ports"][0]["docked"] is False
 
 
 def test_orbit_hub_view_unreachable_keeps_last_known(monkeypatch):
