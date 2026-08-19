@@ -1384,7 +1384,7 @@ function renderOrbit(hub,rows,lo,hi){
     `<span class="hl">&#x1F6F0; Orbit</span><span class="dim">${esc(hub.description)}</span>`+
     `<span class="orbit-add"><input id="orbip" type="text" placeholder="Add watch to orbit by IP/hostname" `+
       `spellcheck="false" autocomplete="off" onkeydown="if(event.key==='Enter')launchOrbit()">`+
-    `<button class="btn" onclick="launchOrbit()" title="SSH-probe this address and launch the watch into orbit">Launch</button></span>`+
+    `<button class="btn ex" onclick="launchOrbit()" title="SSH-probe this address and launch the watch into orbit">Launch</button></span>`+
     `</td></tr>`
   );
   if(!hub.ports.length){
@@ -1408,7 +1408,7 @@ function renderOrbit(hub,rows,lo,hi){
       `<td><b class="cn${p.reachable?'':' offname'}" onclick="openCC('${jsq(p.serial)}','${jsq(p.codename)}',event)" title="${isDev()?'open Control Center over WiFi (stale if offline)':'codename '+esc(p.codename)+' — click for details'}">${esc(watchName(p.codename))}</b> <span class="dim orbit-ip">${esc(p.ip||'')}</span></td>`+
       `<td class="stats"></td>`+
       `<td class="batc" id="bat-orbit-${esc(p.serial)}">${mkbatCell(p,lo,hi)}</td>`+
-      `<td class="actc"><button class="btn" onclick="deorbit('${jsq(p.serial)}','${jsq(p.codename)}')" title="remove from Orbit — the watch itself is untouched">de-orbit</button></td>`+
+      `<td class="actc"><button class="btn ex" onclick="deorbit('${jsq(p.serial)}','${jsq(p.codename)}')" title="land this watch — remove it from Orbit. The watch itself is untouched; a docked one keeps its port row, and an auto-mirrored one returns on its own while WiFi answers.">land</button></td>`+
       `</tr>`
     );
   });
@@ -1425,7 +1425,7 @@ function launchOrbit(){
     }).catch(()=>{el.disabled=false;toastErr('launch failed');el.focus();});
 }
 function deorbit(serial,name){
-  if(!confirm('De-orbit '+name+'? The watch itself is untouched - this only forgets how to reach it over the air.'))return;
+  if(!confirm('Land '+name+'? The watch itself is untouched - this only forgets how to reach it over the air.'))return;
   fetch('/api/orbit/deorbit/'+encodeURIComponent(serial),{method:'POST'})
     .then(r=>r.json()).then(d=>{if(d&&d.ok){toast('de-orbited '+name);refresh();}else toastErr('de-orbit failed');})
     .catch(()=>toastErr('de-orbit failed'));
