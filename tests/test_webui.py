@@ -431,18 +431,27 @@ def test_orbit_section_renders_rows_and_controls(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_handed_off_port_renders_available_with_orbit_hint(tmp_path):
-    """A port whose watch handed off to orbit renders as an AVAILABLE empty port
-    (power toggle + Onboard) with a dim '<codename> ↗ orbit' hint — not the watch,
-    which now lives in the Orbit section."""
+def test_a_watch_in_orbit_keeps_its_port_row(tmp_path):
+    """A watch that left its cradle but is reachable over the air keeps its ROW.
+
+    It used to empty the port and leave a dim "<codename> ↗ orbit" hint, which
+    read as "nothing here" for a watch a-d-b can talk to right now -- and took
+    the Control Center, the readings and the identity with it. The port still
+    belongs to this watch and the watch is coming back to this cradle.
+
+    So the row stays, the codename stays clickable (the Control Center works
+    over the air), and the connection column says what is true: in orbit,
+    neither connected nor absent.
+    """
     import json
     doc = {"version": "t", "thresholds": {"low": 40, "high": 80},
            "drain_floor": 15, "wearable_min_hours": 24,
            "hubs": [{"location": "1-2", "description": "Hub", "hidden": False,
                      "ports": [
-               {"port": 1, "codename": None, "slot_loc": "1-2", "power": True,
-                "smart": True, "adb": None, "battery": None, "empty": True,
-                "orbited_codename": "skipjack", "socket": 1}]}]}
+               {"port": 1, "codename": "skipjack", "slot_loc": "1-2",
+                "serial": "SKIP1", "power": True, "smart": True,
+                "adb": "orbit", "in_orbit": True, "battery": 61,
+                "empty": False, "socket": 1}]}]}
     h = tmp_path / "ho.js"
     h.write_text(_DOM_CAPTURE + JS + global_simple() +
                  f"\nconst S={json.dumps(doc)};render(S);"
@@ -451,9 +460,16 @@ def test_handed_off_port_renders_available_with_orbit_hint(tmp_path):
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, f"harness failed:\n{r.stderr[:600]}"
     html = json.loads(r.stdout.strip().splitlines()[-1])
-    assert "skipjack" in html and "orbit-hint" in html   # whose port, now in orbit
-    assert "pwrMenu(event,'1-2:1'" in html             # port is available
-    assert "doRemap('1-2:1')" in html                    # Onboard offered
+
+    assert "skipjack" in html, "the port lost the identity of the watch that owns it"
+    assert "in orbit" in html, (
+        "the connection column does not say the watch is reachable over the "
+        "air -- an empty-looking row for a watch a-d-b can read right now")
+    assert "openCC(" in html, (
+        "the codename is not clickable: the Control Center works over the air "
+        "and is most of what this row is for while the watch is away")
+    assert "doRemap('1-2:1')" not in html, (
+        "offered Onboard on a port whose watch is known and merely elsewhere")
 
 
 def test_refreshing_row_pulse_survives_hover():

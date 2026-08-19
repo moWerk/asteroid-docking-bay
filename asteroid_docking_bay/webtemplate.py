@@ -396,7 +396,6 @@ _WEB_TEMPLATE = """\
     .cbadge.drain{border-color:#58a6ff;color:#58a6ff}
     .cbadge.wifi{border-color:#39c5cf;color:#39c5cf}
     .cbadge.bat{border-color:#6e7681;color:#c9d1d9}
-    .orbit-hint{color:#a78bfa;font-size:.85em;opacity:.85}
     /* Machine Room — the compile cluster the dock itself runs on. Teal so it
        reads as a sibling of Orbit (violet) rather than as another hub. */
     .mroom-hdr .hl{color:#5ad1c3}
@@ -1057,6 +1056,15 @@ function ncmTag(ncm){
 }
 function mkadb(adb,fbprod,os,serial,sshIp,name,ncm){
   const nm=esc(name||serial||'');
+  if(adb==='orbit'){
+    // The watch is off its cradle but reachable over the air. Neither
+    // connected nor absent, so it says what it is rather than showing the
+    // blank of a port with nothing on it -- everything that does not need a
+    // cable still works, and the port is still this watch's home.
+    return `<button class="cbadge wifi" onclick="openNC('${jsq(serial||'')}','${nm}',event,'','orbit')" `+
+      `title="${ux('off the cradle and reachable over WiFi — readings, Control Center and settings work; flashing and power do not','this watch is away from its dock but reachable over WiFi')}">`+
+      `&#x1F6F0; ${ux('in orbit','in orbit')}</button>`;
+  }
   if(adb==='device'){
     // Clicking the badge opens the Network Center (addresses, links, the USB
     // mode toggle) rather than switching mode inline — an inline toggle here
@@ -1448,9 +1456,7 @@ function render(data){
         const fbLabel=p.fastboot_product?`fastboot: ${esc(p.fastboot_product)}`:(p.adb==='fastboot'?'fastboot':'');
         const nameCell=p.unmapped
           ?`<span class="dim">${esc(p.codename)} <span style="font-size:.8em;opacity:.6">(click Onboard)</span></span>`
-          :(p.orbited_codename
-            ?`<span class="dim" title="this port's watch left the cradle and is now in Orbit (on WiFi) — the port is free">${esc(p.orbited_codename)} <span class="orbit-hint">&#8599; orbit</span></span>`
-            :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:(devLabel(p)||'<span class="dim">&mdash;</span>')));
+          :(p.fastboot_product?`<span class="warn">${esc(p.fastboot_product)}</span>`:(devLabel(p)||'<span class="dim">&mdash;</span>'));
         const onb=onboardStart[slot];
         // Onboarding blinks white in the connection column, exactly like booting/
         // reconnecting, so a port being brought up reads the same everywhere.

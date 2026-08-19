@@ -860,22 +860,28 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 _adb_state(devices, serial) if serial else None,
                 in_fastboot,
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
+            in_orbit = False
             if serial and adb_state in ("device", "ssh", "fastboot"):
                 connected_serials.add(serial)
             elif _port_handed_off(serial, adb_state, orbit_here,
                                   orbit.is_reachable_cached):
-                # Handoff: this port's watch left the cradle but is reachable in
-                # orbit — free the port to available and let the Orbit section
-                # show it. A dim hint keeps the port's identity ("skipjack ↗").
-                hub_ports.append({
-                    "port": port_num, "codename": None, "slot_loc": loc,
-                    "power": power, "smart": smart, "adb": None,
-                    "battery": None, "empty": True,
-                    "orbited_codename": codename,
-                    "socket": sockets.get(port_str),
-                    "excluded": excludes.get(port_str),
-                })
-                continue
+                # This port's watch left the cradle and is reachable over the
+                # air. It used to empty the port and leave a dim hint, which
+                # read as "nothing here" for a watch a-d-b can talk to right
+                # now -- and lost the Control Center, the readings and the
+                # identity along with it.
+                #
+                # Keep the row. The port still belongs to this watch, it is
+                # coming back to this cradle, and everything that does not need
+                # a cable still works over the air. The state is neither
+                # connected nor absent, so it gets its own: "orbit".
+                #
+                # Deliberately NOT added to connected_serials, so the watch
+                # also keeps its row in the Orbit section. That mirroring is
+                # the point: one row says where it lives, the other says how it
+                # is reachable now.
+                in_orbit = True
+                adb_state = "orbit"
             if adb_state == "device":
                 battery, screen_forced, charge_status = battery_and_screen(serial)
             elif adb_state == "ssh":
@@ -1055,6 +1061,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "excluded": excludes.get(port_str),
                 # adb and ssh together on one gadget: nothing to switch, and
                 # switching anyway is destructive on these kernels.
+                "in_orbit": in_orbit,
                 "ncm": comp["ncm"],
                 # The dead composition. A port CYCLE cannot fix it -- the
                 # gadget is wrong, not the enumeration -- so the UI must say

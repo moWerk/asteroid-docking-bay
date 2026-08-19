@@ -1157,3 +1157,60 @@ def test_a_row_reports_what_the_gadget_offers(monkeypatch):
     assert dead["gadget_dead"] is True, (
         "a mass-storage-only gadget was not flagged, so the UI would offer a "
         "power cycle that cannot fix it")
+
+
+def test_a_port_keeps_its_watch_while_that_watch_is_in_orbit(monkeypatch):
+    """A watch off its cradle but reachable over the air keeps its PORT ROW.
+
+    This used to empty the port and leave a dim hint. For a watch a-d-b can
+    read right now that is simply wrong: the row went blank, and the Control
+    Center, the readings and the identity went with it. The port still belongs
+    to this watch and the watch is coming back to this cradle.
+
+    Also pinned: the watch is NOT added to connected_serials, so it keeps its
+    row in the Orbit section too. The mirroring is deliberate -- one row says
+    where it lives, the other says how it is reachable now.
+    """
+    from asteroid_docking_bay import webstatus as ws
+
+    cfg = {"hubs": [{"location": "1-2", "ppps": True,
+                     "ports": {"1": "skipjack"},
+                     "port_serials": {"1": "SKIP1"}}],
+           "serials": {"SKIP1": "skipjack"}}
+
+    monkeypatch.setattr(ws, "adb_devices", lambda: {})          # not on any wire
+    monkeypatch.setattr(ws, "adb_usb_paths", lambda d: {})
+    monkeypatch.setattr(ws, "_fastboot_list", lambda: {})
+    monkeypatch.setattr(ws, "_sysfs_hub_scan", lambda c: [
+        {"location": "1-2", "ports": [1, 2], "power": {}, "connect": {}}])
+    monkeypatch.setattr(ws, "_soft_remap", lambda cfg, online: None)
+    monkeypatch.setattr(ws, "port_device_info", lambda loc, port: None)
+    monkeypatch.setattr(ws, "_geometry_view", lambda state, serial: None)
+    monkeypatch.setattr(ws, "_battery_view",
+                        lambda state, serial, bat, forced, os_: (61, 1234.0))
+    monkeypatch.setattr(ws, "battery_and_screen", lambda serial, shell=None: (None, False, None))
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda p: {"adb": False, "ncm": False,
+                                   "mass_storage_only": False, "interfaces": []})
+    monkeypatch.setattr(ws, "orbit_members", lambda cfg: {"SKIP1": {"ip": "skipjack.lan"}})
+    monkeypatch.setattr(ws.orbit, "is_reachable_cached", lambda s: True)
+
+    seen_orbit = {}
+    def orbit_view(cfg, connected):
+        seen_orbit["connected"] = set(connected)
+        return {"location": "orbit", "ports": []}
+    monkeypatch.setattr(ws, "_orbit_hub_view", orbit_view)
+    monkeypatch.setattr(ws, "_direct_hub_view", lambda *a, **k: None)
+
+    row = next(r for r in ws._web_status_data(cfg)[0]["ports"] if r["port"] == 1)
+
+    assert row["empty"] is False, (
+        "the port was emptied for a watch that is reachable over the air")
+    assert row["codename"] == "skipjack", "the port lost its watch's identity"
+    assert row["adb"] == "orbit", (
+        "the row does not report the orbit state, so the UI can only show it "
+        "as disconnected")
+    assert row["in_orbit"] is True
+    assert "SKIP1" not in seen_orbit["connected"], (
+        "the watch was marked as connected here, which would drop it from the "
+        "Orbit section -- the mirroring is the point")
