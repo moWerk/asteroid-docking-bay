@@ -1405,7 +1405,10 @@ def _orbit_hub_view(cfg: dict, on_rig_serials: set) -> dict:
         })
     rows.sort(key=lambda r: (r["codename"] or "").lower())
     return {"location": "orbit",
-            "description": "watches in vicinity of the dock",
+            # Names the LINKS this section covers, not a vague proximity:
+            # a watch is here because something answered it, and BT debug mode
+            # is the second such link (see the BT-as-an-Orbit-link decision).
+            "description": "watches on WiFi or BT debug mode",
             "ports": rows, "virtual": True, "hidden": False}
 
 
