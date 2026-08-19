@@ -115,6 +115,7 @@ def test_workbench_end_powers_down_gracefully(monkeypatch):
 
 # ── charge_to_target: explicit target (drain-recharge-to-rest) ────────────────
 
+import json
 import asteroid_docking_bay.ops as opsmod
 from asteroid_docking_bay.config import ChargeConfig
 
@@ -904,3 +905,125 @@ def test_a_watch_on_adb_is_never_treated_as_an_ssh_stray(monkeypatch):
         "the watch answering ADB was offered to the peeler -- on an NCM gadget "
         "that is a working setup, not a stray")
     assert switched, "the genuinely stuck watch was not peeled"
+
+
+def test_a_docked_wifi_watch_is_mirrored_into_orbit(monkeypatch):
+    """A watch on WiFi stays reachable when its cable does not, so mirror it
+    into Orbit while it is still docked: the row then says "in orbit" instead
+    of "not enumerating", and everything that does not need a cable keeps
+    working after USB drops.
+
+    Three gates, each of which would otherwise produce a mirror that lies:
+
+    1. It must have a MAPPED PORT. A mirror is a claim about a watch that
+       belongs to this rig and is coming back to its cradle; without the gate
+       the Orbit section fills with whatever else answers on the network.
+    2. The address must answer FROM HERE. A watch reporting a WiFi address is
+       not the same as this host reaching it -- different subnet, AP isolation,
+       a stale lease -- and an unreachable mirror is worse than none, because
+       the row claims reachability it does not have.
+    3. One watch per pass. Each attempt costs an ADB read and a TCP probe, and
+       a docked watch will still be docked in five seconds.
+    """
+    import asteroid_docking_bay.ops as ops
+
+    cfg = {"hubs": [{"location": "1-2", "ports": {"1": "skipjack", "2": "tunny"},
+                     "port_serials": {"1": "SKIP1", "2": "TUN1"}}],
+           "serials": {"SKIP1": "skipjack", "TUN1": "tunny"}, "orbit": {}}
+    saved = {}
+    monkeypatch.setattr(ops, "adb_devices",
+                        lambda: {"SKIP1": {"status": "device"},
+                                 "TUN1": {"status": "device"},
+                                 "STRANGER": {"status": "device"}})
+    monkeypatch.setattr(ops, "_watch_wifi_ip",
+                        lambda s: {"SKIP1": "10.0.0.5", "TUN1": "10.0.0.6"}.get(s))
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: ip == "10.0.0.5")
+    monkeypatch.setattr(ops.orbit, "probe",
+                        lambda ip: {"serial": "SKIP-WIFI", "ip": ip, "codename": "skipjack"})
+    monkeypatch.setattr(ops, "load_config", lambda: json.loads(json.dumps(cfg)))
+    monkeypatch.setattr(ops, "save_config", lambda c: saved.update(c))
+    ops._orbit_mirror_tried.clear()
+
+    ops._maybe_mirror_to_orbit(cfg)
+    assert list(saved.get("orbit", {})) == ["SKIP-WIFI"], (
+        f"expected exactly the reachable, mapped watch to be mirrored: {saved.get('orbit')}")
+    assert saved["orbit"]["SKIP-WIFI"]["auto"] is True, (
+        "not marked auto -- a hand-launched watch and a learned one must be "
+        "told apart, because only the learned one may be dropped automatically")
+
+    # The first candidate being UNREACHABLE is the discriminating case: the
+    # pass must end having mirrored nothing. With the reachability gate gone,
+    # this watch would be written down as reachable when it is not.
+    saved.clear(); ops._orbit_mirror_tried.clear()
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: False)
+    ops._maybe_mirror_to_orbit(cfg)
+    assert saved == {}, (
+        "mirrored a watch this host cannot reach -- the row would claim a "
+        "reachability it does not have")
+
+    # STRANGER is docked, reachable, and known by serial -- but sits on no
+    # mapped port. Hold the two mapped watches back with the rate limit so it
+    # is the ONLY fresh candidate: an enrolment driven by "what is on adb"
+    # rather than "what this rig has a port for" would mirror it here.
+    saved.clear(); ops._orbit_mirror_tried.clear()
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(ops, "_watch_wifi_ip", lambda s: "10.0.0.8")
+    ops._orbit_mirror_tried["SKIP1"] = ops.time.time()
+    ops._orbit_mirror_tried["TUN1"] = ops.time.time()
+    ops._maybe_mirror_to_orbit(cfg)
+    assert saved == {}, (
+        "mirrored a watch that has no port on this rig -- Orbit would fill "
+        "with whatever else answers on the network")
+
+    # a watch on no mapped port is never mirrored, however reachable it is
+    saved.clear(); ops._orbit_mirror_tried.clear()
+    bare = {"hubs": [], "serials": {"STRANGER": "hoki"}, "orbit": {}}
+    monkeypatch.setattr(ops, "load_config", lambda: json.loads(json.dumps(bare)))
+    monkeypatch.setattr(ops.orbit, "reachable", lambda ip, **k: True)
+    monkeypatch.setattr(ops, "_watch_wifi_ip", lambda s: "10.0.0.7")
+    ops._maybe_mirror_to_orbit(bare)
+    assert saved == {}, (
+        "mirrored a watch that has no port on this rig -- STRANGER is docked, "
+        "reachable and known by serial, and still must not appear in Orbit")
+
+
+def test_only_an_auto_mirror_is_dropped_and_only_after_several_passes(monkeypatch):
+    """An address that stops answering should stop being claimed -- but not on
+    the first miss, and never for a watch somebody launched by hand.
+
+    A hand-launched member is a deliberate statement; going quiet for one pass
+    is not a reason to forget it. The Fleet Registry keeps the durable record
+    either way; what is dropped is only the claim that this address works now.
+    """
+    import asteroid_docking_bay.ops as ops
+    saved = {}
+    cfg = {"orbit": {"AUTO": {"serial": "AUTO", "ip": "10.0.0.5", "auto": True},
+                     "HAND": {"serial": "HAND", "ip": "10.0.0.9"}}}
+    monkeypatch.setattr(ops, "load_config", lambda: json.loads(json.dumps(cfg)))
+    monkeypatch.setattr(ops, "save_config", lambda c: saved.update(c))
+    ops._orbit_miss.clear()
+
+    for _ in range(ops._ORBIT_DROP_AFTER - 1):
+        ops._maybe_unmirror(cfg, "AUTO", cfg["orbit"]["AUTO"], ok=False)
+    assert saved == {}, "dropped a mirror before it had missed enough passes"
+
+    ops._maybe_unmirror(cfg, "AUTO", cfg["orbit"]["AUTO"], ok=False)
+    assert "AUTO" not in saved.get("orbit", {}), "the dead mirror was not dropped"
+
+    # a hand-launched member survives any number of misses
+    saved.clear(); ops._orbit_miss.clear()
+    for _ in range(ops._ORBIT_DROP_AFTER + 2):
+        ops._maybe_unmirror(cfg, "HAND", cfg["orbit"]["HAND"], ok=False)
+    assert saved == {}, "forgot a watch somebody launched deliberately"
+
+    # answering again clears the count, so misses must be CONSECUTIVE
+    ops._orbit_miss.clear()
+    for _ in range(ops._ORBIT_DROP_AFTER - 1):      # right up to the threshold
+        ops._maybe_unmirror(cfg, "AUTO", cfg["orbit"]["AUTO"], ok=False)
+    ops._maybe_unmirror(cfg, "AUTO", cfg["orbit"]["AUTO"], ok=True)   # answered
+    saved.clear()
+    ops._maybe_unmirror(cfg, "AUTO", cfg["orbit"]["AUTO"], ok=False)
+    assert saved == {}, (
+        "one miss after a successful pass dropped the mirror -- the count did "
+        "not reset, so old misses accumulate forever and any watch eventually "
+        "falls out of Orbit")

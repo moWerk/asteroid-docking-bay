@@ -6,16 +6,19 @@
 from __future__ import annotations
 
 import threading
+import re
 import time
 from pathlib import Path
 
 from .util import _run, log, onboarding_active
-from .adb import (adb_devices, adb_devices_checked, battery_and_screen, get_battery_level,
+from .adb import (adb_devices, adb_devices_checked, adb_shell, battery_and_screen,
+                  get_battery_level,
                   maybe_heal_wedged_adb, wait_serial_online)
 from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for_loc_port,
                      find_port_for_codename, find_serial_for_loc_port,
                      is_port_smart, is_slot_smart, load_config, orbit_members,
-                     usb_mode_preference)
+                     orbit_add, orbit_forget, orbit_member_for, save_config,
+                     _config_lock, usb_mode_preference)
 from . import fastboot, oplock, orbit, usb
 from .registry import registry
 from .usb import (_SYSFS_USB, _port_device_present, _sysfs_get_power,
@@ -219,6 +222,97 @@ _last_ssh_realign = 0.0
 _SSH_REALIGN_COOLDOWN = 60.0
 
 
+# ── Auto-mirroring a docked watch into Orbit ────────────────────────────────
+# A watch on WiFi stays reachable when its cable does not. Mirroring it into
+# Orbit while it is still docked means a-d-b keeps knowing the watch after USB
+# drops: the row says "in orbit" instead of "not enumerating", and the Control
+# Center, readings and settings keep working.
+#
+# Gated on having a MAPPED PORT, deliberately: a mirror is a statement about a
+# watch that belongs to this rig and is expected back in its cradle. Without
+# that gate the Orbit section fills with whatever else answers on the network.
+#
+# Proven from HERE before it is written down. The watch reporting a WiFi
+# address is not the same as this host being able to reach it -- different
+# subnet, AP isolation, a stale lease -- and a mirror nobody can reach is worse
+# than none, because the row would claim reachability it does not have.
+_ORBIT_MIRROR_EVERY = 300.0     # per watch; enrollment is not urgent
+_ORBIT_DROP_AFTER = 3           # consecutive failed passes before un-mirroring
+_orbit_mirror_tried: "dict[str, float]" = {}
+_orbit_miss: "dict[str, int]" = {}
+_IPV4_IN_IP_OUTPUT = re.compile(r"inet (\d+\.\d+\.\d+\.\d+)")
+
+
+def _watch_wifi_ip(serial: str) -> "str | None":
+    """The watch's own WiFi address, read over whatever reaches it now."""
+    rc, out, _ = adb_shell(serial, '"ip -o -4 addr show wlan0"', timeout=6)
+    if rc != 0:
+        return None
+    m = _IPV4_IN_IP_OUTPUT.search(out or "")
+    return m.group(1) if m else None
+
+
+def _maybe_mirror_to_orbit(cfg: dict) -> None:
+    """Mirror ONE docked, WiFi-reachable watch into Orbit per pass.
+
+    One per pass on purpose: each attempt costs an ADB read plus a TCP probe,
+    and there is no hurry -- a watch that is docked now will still be docked in
+    five seconds. Bounding it keeps the warmer's cost flat whether the rig
+    holds two watches or twenty.
+    """
+    devices = adb_devices()
+    now = time.time()
+    for hub in cfg.get("hubs", []):
+        for port_str, serial in (hub.get("port_serials") or {}).items():
+            if not serial or serial not in devices:
+                continue                       # not docked and talking
+            if orbit_member_for(cfg, serial):
+                continue                       # already mirrored, or launched by hand
+            if now - _orbit_mirror_tried.get(serial, 0) < _ORBIT_MIRROR_EVERY:
+                continue
+            _orbit_mirror_tried[serial] = now
+            ip = _watch_wifi_ip(serial)
+            if not ip or not orbit.reachable(ip):
+                return                         # attempted one watch; try again later
+            member = orbit.probe(ip)
+            if not member:
+                return
+            member["auto"] = True              # only auto entries are auto-dropped
+            with _config_lock:
+                fresh = load_config()
+                orbit_add(fresh, member)
+                save_config(fresh)
+            log.info("%s mirrored into orbit at %s (docked on %s:%s)",
+                     member.get("codename") or member["serial"], ip,
+                     hub.get("location"), port_str)
+            return
+
+
+def _maybe_unmirror(cfg: dict, serial: str, member: dict, ok: bool) -> None:
+    """Drop an AUTO mirror that has stopped answering, after several passes.
+
+    Only auto entries: a watch launched by hand is somebody's deliberate
+    statement, and going quiet for a minute is not a reason to forget it. The
+    Fleet Registry keeps the durable record either way -- what is dropped is
+    the claim that this address works right now.
+    """
+    if ok:
+        _orbit_miss.pop(serial, None)
+        return
+    if not member.get("auto"):
+        return
+    misses = _orbit_miss.get(serial, 0) + 1
+    _orbit_miss[serial] = misses
+    if misses < _ORBIT_DROP_AFTER:
+        return
+    _orbit_miss.pop(serial, None)
+    with _config_lock:
+        fresh = load_config()
+        orbit_forget(fresh, serial)
+        save_config(fresh)
+    log.info("%s un-mirrored: unreachable for %d passes", serial, misses)
+
+
 def _maybe_realign_stray_ssh(cfg: dict) -> None:
     """Peel ONE stray SSH watch off the shared default address per call.
 
@@ -305,6 +399,7 @@ def _background_warmer() -> None:
             if not bus_busy:
                 _maybe_realign_stray_ssh(cfg)
                 _warm_port_power(cfg)
+                _maybe_mirror_to_orbit(cfg)
             # NOTE: the warmer no longer polls EMPTY ports. Reading an empty
             # port's `disable` attr is slow (hangs for seconds on a powered-down
             # port) AND renegotiates these flaky A16/USB3 hubs — which knocks the
@@ -321,6 +416,7 @@ def _background_warmer() -> None:
                 ip = member.get("ip")
                 ok = orbit.reachable(ip) if ip else False
                 orbit.note_reachable(serial, ok)
+                _maybe_unmirror(cfg, serial, member, ok)
                 if ok:
                     try:
                         bat, screen, _ = battery_and_screen(
