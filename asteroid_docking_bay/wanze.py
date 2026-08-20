@@ -209,6 +209,7 @@ def analyse(rows: "list[dict]", host_epoch: "float | None" = None) -> dict:
     # Sensor + discharge direction, from the module that already knows how.
     out["battery"] = classify(rows)
     out.update(screen_summary(rows))
+    out.update(display_summary(rows))
     out.update(suspend_summary(segs))
     # The trace can say WHY it stopped, when the sampler managed a last word.
     out["ended_reason"] = next(
@@ -247,6 +248,72 @@ def screen_summary(rows: "list[dict]") -> dict:
     if states:
         out["panel_states"] = states
     return out
+
+
+def panel_is_on(state: "str | None") -> "bool | None":
+    """Is the panel drawing power? None when the watch did not say.
+
+    Anything that is not OFF costs: LP is a SELF-REFRESHING low-power mode, so
+    the panel is powered and clocking even when nothing is rendered into it.
+    That is exactly sol's failure — meta-sol stubs the offload service, so the
+    panel parks in LP@30Hz showing black while still paying for AoD, and
+    brightness cannot see the difference because LP and ON both report
+    non-zero.
+    """
+    if not state:
+        return None
+    return state.split("@", 1)[0].strip().upper() != "OFF"
+
+
+def display_summary(rows: "list[dict]", interval_s: int = INTERVAL_S) -> dict:
+    """How long the panel was actually powered, and in which mode.
+
+    Paired with `asleep_fraction` this is the whole diagnosis, and neither
+    number says much alone. The timer never wakes the watch, so a watch whose
+    display never turns off is also never asleep: it produces regular samples
+    and NO gaps. Read on its own, `asleep_fraction ≈ 0` looks like a busy
+    watch; `display_on_fraction ≈ 1` beside it says the screen never went off,
+    and there is the runtime.
+
+    Time is attributed the way gaps() already reasons: each interval belongs to
+    the EARLIER sample's state, and an interval that IS a gap is attributed to
+    nobody. A gap means the watch was not awake, so no sample can speak for it
+    — extrapolating a display state across one would invent the very thing the
+    trace exists to measure. The denominator is therefore attributable time,
+    reported alongside so the fraction can be checked. Pure — see tests.
+    """
+    counts: "dict[str, int]" = {}
+    for r in rows:
+        st = r.get("panel_power_state")
+        if st:
+            counts[st] = counts.get(st, 0) + 1
+    if not counts:
+        return {"display_data": "unavailable", "display_on_fraction": None,
+                "display_on_seconds": None, "panel_state_counts": None}
+
+    seconds: "dict[str, float]" = {}
+    attributed = 0.0
+    for seg in segments(rows):
+        srows = seg["rows"]
+        for a, b in zip(srows, srows[1:]):
+            delta = b["uptime"] - a["uptime"]
+            if delta > interval_s * GAP_FACTOR:
+                continue                        # a gap speaks for nobody
+            st = a.get("panel_power_state")
+            if not st:
+                continue                        # nor does a sample that did not say
+            seconds[st] = seconds.get(st, 0.0) + delta
+            attributed += delta
+
+    on_s = sum(v for k, v in seconds.items() if panel_is_on(k))
+    return {
+        "display_data": "ok",
+        "panel_state_counts": counts,
+        "display_seconds": {k: round(v) for k, v in seconds.items()},
+        "display_attributed_s": round(attributed),
+        "display_on_seconds": round(on_s),
+        "display_on_fraction": round(on_s / attributed, 3) if attributed else None,
+    }
 
 
 def suspend_summary(segs: "list[dict]") -> dict:

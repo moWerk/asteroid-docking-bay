@@ -220,3 +220,78 @@ def test_mce_enabled_is_reported_as_aod_running():
 
     feats = watchctl.Watch.standby_features(w)
     assert feats["aod"] is True and feats["aod_toggle"] is True
+
+
+# --- the third layer: what the panel is ACTUALLY doing ---------------------
+
+from asteroid_docking_bay.aodcheck import consistency  # noqa: E402
+
+PANEL_PATH = ("/sys/devices/platform/soc/5e00000.qcom,mdss_mdp/drm/card0/"
+              "sde-conn-0-DSI-1/panel_power_state")
+
+
+def _cap(dconf_aod, mce_lpm, panel=None):
+    text = ("@@@MCE@@@\n"
+            f"Use low power mode: {mce_lpm}\n"
+            "@@@DCONF@@@\n"
+            "[org/asteroidos/settings]\n"
+            f"always-on-display={dconf_aod}\n")
+    if panel is not None:
+        text += f"@@@PANEL@@@\n{PANEL_PATH}={panel}\n"
+    text += "@@@UPTIME@@@\n1234.5\n"
+    return parse(text)
+
+
+def test_the_panel_section_is_captured_with_its_connector():
+    """Keep WHICH connector answered, not just the value: a watch with two
+    would otherwise report one at random and nobody would know which."""
+    cap = _cap("false", "disabled", panel="LP@30Hz")
+    assert cap["panel_state"] == "LP@30Hz"
+    assert cap["panel"][PANEL_PATH] == "LP@30Hz"
+
+
+def test_a_panel_stuck_in_lp_is_caught_though_both_layers_agree():
+    """sol's failure, and the reason the third source exists.
+
+    dconf says AoD is off. MCE agrees it is off. Both layers are consistent,
+    and the old check would have returned `consistent: True` and moved on —
+    while the panel sat at LP@30Hz, powered and self-refreshing with nothing
+    drawing into it, costing like an always-on screen and showing black.
+
+    This is not a settings mismatch at all, which is exactly why neither
+    existing source could see it.
+    """
+    out = consistency(_cap("false", "disabled", panel="LP@30Hz"))
+    assert out["known"] and out["panel_state"] == "LP@30Hz"
+    assert out["panel_powered"] is True
+    assert out["consistent"] is False, (
+        "both config layers agreed, so the check passed — while the hardware "
+        "never turned the display off")
+    assert "never reaches OFF" in out["note"]
+
+
+def test_a_watch_whose_panel_reaches_off_is_not_flagged():
+    """aurora's shape: the same two config layers, and a panel that genuinely
+    reaches OFF. Nothing to report — otherwise the check cries wolf on every
+    healthy watch."""
+    out = consistency(_cap("false", "disabled", panel="OFF"))
+    assert out["consistent"] is True
+    assert out["panel_powered"] is False
+    assert "note" not in out
+
+
+def test_aod_on_everywhere_but_a_dark_panel_names_the_other_bug():
+    """The mirror image: the setting arrived, MCE agrees, and the panel is
+    OFF. The consumer was never instantiated — a different bug from a config
+    that never arrived, and the two are indistinguishable without this."""
+    out = consistency(_cap("true", "enabled", panel="OFF"))
+    assert "never instantiated" in out["note"]
+
+
+def test_a_watch_without_the_connector_behaves_as_before():
+    """Not every watch exposes a DRM connector. Its absence must leave the
+    original two-layer verdict untouched rather than inventing a third."""
+    out = consistency(_cap("true", "disabled"))
+    assert out["known"] and out["consistent"] is False
+    assert "panel_state" not in out
+    assert "never reached the thing" in out["note"] or "never reached" in out["note"]

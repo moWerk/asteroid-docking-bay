@@ -437,3 +437,68 @@ def test_panel_state_separates_always_on_from_a_lit_screen():
     assert out["panel_states"] == {"LP@30Hz": 2, "ON@60Hz": 1}, (
         "brightness said three lit samples; only the panel state distinguishes "
         "two cheap always-on frames from one genuinely lit screen")
+
+
+# --- the display, which is the pairing that diagnosed sol ------------------
+
+def test_a_display_that_never_slept_reads_as_one_line():
+    """The pairing is the diagnosis, and neither number says much alone.
+
+    Because the timer never wakes the watch, a watch whose display never turns
+    off is also never asleep: it stays awake, so it produces regular samples
+    and NO gaps. `asleep_fraction ~ 0` on its own looks like a merely busy
+    watch. Beside `display_on_fraction ~ 1` it says the screen never went off,
+    and there is the runtime -- which is exactly sol's 9 hours.
+    """
+    out = analyse(parse(csv2(
+        row2(1000, 100, panel="ON@60Hz"),
+        row2(1300, 400, panel="ON@60Hz"),
+        row2(1600, 700, panel="ON@60Hz"))))
+    assert out["display_on_fraction"] == 1.0
+    assert out["asleep_fraction"] == 0.0, (
+        "a watch that never slept must not read as having slept")
+    assert out["display_data"] == "ok"
+
+
+def test_a_panel_parked_in_lp_still_counts_as_on():
+    """LP is a SELF-REFRESHING mode: the panel is powered and clocking even
+    when nothing is rendered into it. sol parks there showing black and pays
+    AoD's cost anyway, and brightness cannot see it because LP and ON both
+    report non-zero. Only OFF is off."""
+    lp = analyse(parse(csv2(row2(1000, 100, back="10", panel="LP@30Hz"),
+                            row2(1300, 400, back="10", panel="LP@30Hz"))))
+    assert lp["display_on_fraction"] == 1.0, (
+        "LP was treated as off -- the exact mistake that hides sol's drain")
+
+    off = analyse(parse(csv2(row2(1000, 100, back="0", panel="OFF"),
+                             row2(1300, 400, back="0", panel="OFF"))))
+    assert off["display_on_fraction"] == 0.0
+
+
+def test_a_gap_is_attributed_to_no_display_state():
+    """A gap means the watch was not awake, so no sample can speak for it.
+    Extrapolating the last known state across one would invent the very thing
+    the trace exists to measure -- here it would claim the display was OFF for
+    four hours it cannot account for."""
+    rows = parse(csv2(
+        row2(1000, 100, panel="OFF"),
+        row2(1300, 400, panel="OFF"),        # 300s, attributable
+        row2(9000, 15000, panel="OFF"),      # ~4h gap, attributable to nobody
+        row2(9300, 15300, panel="OFF")))     # 300s, attributable
+    out = analyse(rows)
+    assert out["display_attributed_s"] == 600, (
+        f"the gap was folded into the display accounting: "
+        f"{out['display_attributed_s']}s")
+    assert out["asleep_s"] > 14000, "the gap stopped being counted as sleep"
+    assert out["display_on_fraction"] == 0.0
+
+
+def test_an_absent_panel_column_is_unavailable_not_off():
+    """A watch that does not expose the DRM connector says nothing about its
+    panel. Reporting that as `display_on_fraction: 0` would read as "the
+    display was off the whole time" -- a conclusion, and a flattering one,
+    from no data at all. Same reasoning as the backlight and the counters."""
+    out = analyse(parse(csv2(row2(1000, 100), row2(1300, 400))))
+    assert out["display_data"] == "unavailable"
+    assert out["display_on_fraction"] is None
+    assert out["panel_state_counts"] is None

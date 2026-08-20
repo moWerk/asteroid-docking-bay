@@ -40,11 +40,25 @@ CAPTURE_CMD = (
     "su ceres -c 'XDG_RUNTIME_DIR=/run/user/1000 "
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
     "HOME=/home/ceres dconf dump /' 2>/dev/null; "
+    # The THIRD layer, and the only one that is ground truth. dconf is what the
+    # user asked for and MCE is what was told; neither can see what the panel
+    # is actually doing. sol settles it: MCE had blanked the display and the
+    # hardware sat at LP@30Hz regardless, because meta-sol stubs the offload
+    # service — so the panel pays for a low-power mode while rendering nothing.
+    # Globbed, not hardcoded: sol's connector is 5e00000.qcom,mdss_mdp /
+    # sde-conn-0-DSI-1 and there is no reason that holds fleet-wide. The whole
+    # command is shlex.quote'd before it is sent, so the WATCH expands this,
+    # not the host.
+    "echo '@@@PANEL@@@'; "
+    "for f in /sys/devices/platform/soc/*mdss_mdp/drm/card0/sde-conn-*/panel_power_state "
+    "/sys/class/drm/card0-*/panel_power_state; do "
+    "[ -r \"$f\" ] && { printf '%s=%s\\n' \"$f\" \"$(cat \"$f\")\"; break; }; done 2>/dev/null; "
     "echo '@@@UPTIME@@@'; cut -d' ' -f1 /proc/uptime"
 )
 
 
-_FENCES = {"@@@MCE@@@": "mce", "@@@DCONF@@@": "dconf", "@@@UPTIME@@@": "uptime"}
+_FENCES = {"@@@MCE@@@": "mce", "@@@DCONF@@@": "dconf",
+           "@@@PANEL@@@": "panel", "@@@UPTIME@@@": "uptime"}
 
 
 def parse(text: str) -> dict:
@@ -58,6 +72,7 @@ def parse(text: str) -> dict:
     section = None
     mce: dict[str, str] = {}
     dconf: dict[str, str] = {}
+    panel: dict[str, str] = {}
     path = ""
     uptime = None
     for raw in (text or "").splitlines():
@@ -81,12 +96,20 @@ def parse(text: str) -> dict:
             elif "=" in line:
                 k, _, v = line.partition("=")
                 dconf[f"{path}/{k.strip()}"] = v.strip()
+        elif section == "panel" and "=" in line:
+            k, _, v = line.partition("=")
+            panel[k.strip()] = v.strip()
         elif section == "uptime" and line.strip():
             try:
                 uptime = float(line.split()[0])
             except ValueError:
                 uptime = None
-    return {"mce": mce, "dconf": dconf, "uptime": uptime}
+    # panel_state is the single value the verdict turns on; the full map keeps
+    # WHICH connector answered, because a watch with two would otherwise report
+    # one at random and nobody would know which.
+    state = next(iter(panel.values()), None)
+    return {"mce": mce, "dconf": dconf, "panel": panel,
+            "panel_state": state, "uptime": uptime}
 
 
 def diff(before: dict, after: dict) -> dict:
@@ -151,6 +174,35 @@ def consistency(cap: dict) -> dict:
     doing = got.strip().lower().startswith("enabled")
     out = {"known": True, "aod_requested": asked, "mce_lpm_enabled": doing,
            "consistent": asked == doing}
+
+    # The panel is the third layer and the only ground truth: dconf is what was
+    # asked for, MCE is what was told, and neither can see what the hardware is
+    # doing. It decides the case the other two render identically.
+    state = cap.get("panel_state")
+    if state:
+        out["panel_state"] = state
+        powered = state.split("@", 1)[0].strip().upper() != "OFF"
+        out["panel_powered"] = powered
+        if powered and not asked and not doing:
+            # sol exactly: everything says AoD is off, and the panel is parked
+            # in a self-refreshing low-power mode anyway, rendering nothing.
+            # Both other layers are consistent and both are irrelevant.
+            out["consistent"] = False
+            out["note"] = (
+                f"Both layers agree AoD is OFF, and the panel is {state} "
+                "anyway — powered and self-refreshing with nothing drawing "
+                "into it. This is not a settings mismatch: the display never "
+                "reaches OFF, so it costs like an always-on screen while "
+                "showing black. Compare a watch that reaches OFF.")
+            return out
+        if asked and doing and not powered:
+            out["note"] = (
+                "AoD is on and MCE agrees, but the panel is OFF — the setting "
+                "arrived and nothing is drawing. The consumer was never "
+                "instantiated, which is a different bug from a config that "
+                "did not arrive.")
+            return out
+
     if asked and not doing:
         out["note"] = ("AoD is switched ON in userland but MCE's low power "
                        "mode is DISABLED — the setting never reached the thing "
