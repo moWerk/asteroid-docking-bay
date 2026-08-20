@@ -34,7 +34,7 @@ from .util import log
 REMOTE_LOG = "/var/log/wanze.csv"
 REMOTE_BIN = "/usr/bin/wanze-sample"
 UNIT = "wanze.timer"
-SCHEMA = 1
+SCHEMA = 2
 
 # The timer's nominal period. Only used to decide what counts as a gap; the
 # real interval is whatever the watch's wakefulness allowed.
@@ -71,6 +71,15 @@ def parse(csv_text: str) -> "list[dict]":
     rows = []
     for ln in lines[1:]:
         parts = ln.split(",")
+        # A SECOND header inside the file. The sampler truncates on a schema
+        # change, so one file never holds two — but harvested traces get
+        # concatenated, and then the later rows would be read under the earlier
+        # header's names. That is not a missing column, it is a silent SHIFT:
+        # every field after the insertion point lands under the wrong name and
+        # still looks like a number. Re-latch instead.
+        if parts[0].strip() == "epoch":
+            cols = [c.strip() for c in parts]
+            continue
         if len(parts) < len(cols):
             continue                            # torn row, e.g. power lost mid-write
         rec = dict(zip(cols, parts))
@@ -86,9 +95,17 @@ def parse(csv_text: str) -> "list[dict]":
             "temp": num(rec.get("temp"), int),
             "charger": num(rec.get("charger"), int),
             "backlight": num(rec.get("backlight"), int),
+            # Schema 2. Absent from a schema-1 row, which is exactly why parse()
+            # is header-driven: a trace spanning the upgrade still reads, and
+            # the older rows simply carry None here rather than shifting.
+            "panel_power_state": (rec.get("panel_power_state") or "").strip() or None,
             "cpu_online": num(rec.get("cpu_online"), int),
             "cpu_freq": num(rec.get("cpu_freq"), int),
             "load1": num(rec.get("load1"), float),
+            "suspend_success": num(rec.get("suspend_success"), int),
+            "suspend_fail": num(rec.get("suspend_fail"), int),
+            "wakeup_source": (rec.get("wakeup_source") or "").strip() or None,
+            "reason": (rec.get("reason") or "").strip() or None,
             "gauge": (rec.get("gauge") or "").strip(),
         }
         if row["uptime"] is None:
@@ -191,11 +208,88 @@ def analyse(rows: "list[dict]", host_epoch: "float | None" = None) -> dict:
         out["clock_skew_days"] = round(skew / 86400, 1)
     # Sensor + discharge direction, from the module that already knows how.
     out["battery"] = classify(rows)
-    # Screen-on time is what makes a drain figure attributable rather than
-    # merely true; a watch that drained while lit is a different story.
-    lit = [r for r in rows if r["backlight"]]
-    out["samples_screen_on"] = len(lit)
+    out.update(screen_summary(rows))
+    out.update(suspend_summary(segs))
+    # The trace can say WHY it stopped, when the sampler managed a last word.
+    out["ended_reason"] = next(
+        (r["reason"] for r in reversed(rows) if r.get("reason")), None)
     return out
+
+
+def screen_summary(rows: "list[dict]") -> dict:
+    """Screen-on samples, and whether the question could be answered at all.
+
+    Screen time is what makes a drain figure attributable rather than merely
+    true: a watch that drained while lit is a different story from one that
+    drained dark. But the backlight node differs per watch, and on sol the
+    configured path did not exist — so the column was empty for every row and
+    this reported `samples_screen_on: 0`, which reads as "the screen was never
+    on" and meant "we could not see". A silent zero is worse than an obvious
+    hole, which is the same reasoning the module already applies to `epoch`.
+
+    So: no readable column anywhere in the trace -> null and "unavailable",
+    never 0. A column that is present and all zeros keeps reporting 0, because
+    that IS an answer. Pure — see tests.
+    """
+    known = [r for r in rows if r.get("backlight") is not None]
+    if not known:
+        return {"samples_screen_on": None, "screen_data": "unavailable"}
+    states = {}
+    for r in rows:
+        st = r.get("panel_power_state")
+        if st:
+            states[st] = states.get(st, 0) + 1
+    out = {"samples_screen_on": sum(1 for r in known if r["backlight"]),
+           "screen_data": "ok"}
+    # Brightness alone cannot tell an always-on watchface (LP) from a lit
+    # screen (ON/HBM) — both are non-zero — so report the states when the
+    # watch offers them.
+    if states:
+        out["panel_states"] = states
+    return out
+
+
+def suspend_summary(segs: "list[dict]") -> dict:
+    """What the kernel's own suspend counters say, per boot.
+
+    Gap analysis can only ever say "the probe did not fire, so the watch was
+    PROBABLY asleep". These counters separate three cases that otherwise look
+    identical in a trace:
+
+        entered_delta > 0                  -> it really slept
+        entered_delta == 0, fail_delta > 0  -> it tried and something aborted it
+        attempted is False                 -> suspend was never even ATTEMPTED
+
+    The last one is the diagnosis a wrist run needed and could not get, because
+    the live counters die with the battery.
+
+    Counted PER SEGMENT and summed: the counters are cumulative since boot, so
+    a delta taken across a reboot is meaningless in exactly the way an uptime
+    delta is. `attempted` looks at where each boot ENDED, since these only ever
+    rise. Pure — see tests.
+    """
+    entered = fail = 0
+    attempted = False
+    seen = False
+    for seg in segs:
+        rows = seg["rows"]
+        oks = [r["suspend_success"] for r in rows if r.get("suspend_success") is not None]
+        bad = [r["suspend_fail"] for r in rows if r.get("suspend_fail") is not None]
+        if oks:
+            seen = True
+            entered += max(0, oks[-1] - oks[0])
+            attempted = attempted or oks[-1] > 0
+        if bad:
+            seen = True
+            fail += max(0, bad[-1] - bad[0])
+            attempted = attempted or bad[-1] > 0
+    if not seen:                      # schema-1 trace: the columns do not exist
+        return {"suspend_attempted": None, "suspend_entered_delta": None,
+                "suspend_data": "unavailable"}
+    return {"suspend_attempted": attempted,
+            "suspend_entered_delta": entered,
+            "suspend_fail_delta": fail,
+            "suspend_data": "ok"}
 
 
 # --- watch-side control ---------------------------------------------------

@@ -286,3 +286,154 @@ def test_uninstall_reports_a_probe_that_is_still_there():
     w = _FakeWatch(leftover="/usr/bin/wanze-sample")
     err = wanze.uninstall(w)
     assert err and "still on the watch" in err
+
+
+# --- schema 2: the columns added after the sol wrist run -------------------
+
+HEADER2 = ("epoch,uptime,current_ua,capacity,status,voltage_uv,temp,charger,"
+           "backlight,panel_power_state,cpu_online,cpu_freq,load1,"
+           "suspend_success,suspend_fail,wakeup_source,reason,gauge,schema")
+
+
+def row2(epoch, uptime, cap=100, back="", panel="", ok="", fail="",
+         reason="", cur=-5000):
+    return (f"{epoch},{uptime},{cur},{cap},Discharging,4400000,319,0,{back},"
+            f"{panel},4,1094400,0.5,{ok},{fail},,{reason},"
+            f"nanohub_fuelgauge-0,2")
+
+
+def csv2(*rows):
+    return "\n".join([HEADER2, *rows]) + "\n"
+
+
+def test_an_unreadable_backlight_reports_unavailable_never_zero():
+    """sol has no /sys/class/leds/lcd-backlight, so the column was empty for
+    every row — and this reported `samples_screen_on: 0`, which reads as "the
+    screen was never on" and meant "we could not see".
+
+    A silent zero is worse than an obvious hole: it is a number somebody will
+    put in a drain conclusion. The module already applies that reasoning to
+    `epoch`, and it applies here.
+    """
+    out = analyse(parse(csv2(row2(1000, 100), row2(1300, 400), row2(1600, 700))))
+    assert out["samples_screen_on"] is None, (
+        "an unreadable backlight was reported as a count, which cannot be "
+        "told apart from a screen that was genuinely never lit")
+    assert out["screen_data"] == "unavailable"
+
+
+def test_a_readable_backlight_that_is_always_off_still_reports_zero():
+    """The counterpart, and the reason `unavailable` cannot simply mean "no
+    lit samples": a column that IS readable and is all zeros is an answer —
+    the screen really was never on. Reporting that as unavailable would throw
+    away a genuine measurement."""
+    out = analyse(parse(csv2(row2(1000, 100, back="0"),
+                             row2(1300, 400, back="0"))))
+    assert out["samples_screen_on"] == 0
+    assert out["screen_data"] == "ok"
+
+    lit = analyse(parse(csv2(row2(1000, 100, back="0"),
+                             row2(1300, 400, back="120"))))
+    assert lit["samples_screen_on"] == 1
+
+
+def test_the_three_suspend_cases_are_distinguishable():
+    """Gap analysis can only say "the probe did not fire, so the watch was
+    PROBABLY asleep". The kernel's own counters separate three states that a
+    trace otherwise renders identically — and the third is the one a wrist run
+    needed and could not get, because the live counters die with the battery.
+    """
+    slept = analyse(parse(csv2(row2(1000, 100, ok="10", fail="0"),
+                               row2(1300, 400, ok="14", fail="0"))))
+    assert slept["suspend_attempted"] is True
+    assert slept["suspend_entered_delta"] == 4, "a watch that slept looks idle"
+
+    aborted = analyse(parse(csv2(row2(1000, 100, ok="10", fail="2"),
+                                 row2(1300, 400, ok="10", fail="9"))))
+    assert aborted["suspend_attempted"] is True
+    assert aborted["suspend_entered_delta"] == 0, (
+        "it entered suspend zero times and that must read as zero")
+    assert aborted["suspend_fail_delta"] == 7, (
+        "the aborts are the whole diagnosis: it TRIED and something stopped it")
+
+    never = analyse(parse(csv2(row2(1000, 100, ok="0", fail="0"),
+                               row2(1300, 400, ok="0", fail="0"))))
+    assert never["suspend_attempted"] is False, (
+        "suspend was never even attempted — the case that looks identical to "
+        "'tried and failed' unless the counters are recorded")
+    assert never["suspend_entered_delta"] == 0
+
+
+def test_suspend_counters_are_not_differenced_across_a_reboot():
+    """The counters are cumulative SINCE BOOT, so a delta taken across a
+    reboot is meaningless in exactly the way an uptime delta is — and it would
+    read as a huge negative, or silently swallow a boot's worth of sleep.
+
+    Two boots that each slept twice is four, not the difference between the
+    last number and the first.
+    """
+    rows = parse(csv2(
+        row2(1000, 500, ok="10", fail="0"),
+        row2(1300, 800, ok="12", fail="0"),
+        row2(1600, 20, ok="0", fail="0"),      # uptime drops: rebooted
+        row2(1900, 320, ok="2", fail="0"),
+    ))
+    out = analyse(rows)
+    assert out["boots"] == 2
+    assert out["suspend_entered_delta"] == 4, (
+        f"expected 2+2 across two boots, got {out['suspend_entered_delta']}")
+
+
+def test_a_schema_1_trace_says_the_counters_are_unavailable():
+    """An old trace has no such columns at all. That must read as "we do not
+    know", not as "suspend was never attempted" — which is a real diagnosis
+    and would be a fabricated one here."""
+    out = analyse(parse(csv(row(1000, 100), row(1300, 400))))
+    assert out["suspend_attempted"] is None
+    assert out["suspend_data"] == "unavailable"
+
+
+def test_a_trace_spanning_the_upgrade_reads_as_one_trace():
+    """A harvest can span the schema bump, so both shapes appear in one file.
+    parse() is header-driven precisely so the older rows lose a column rather
+    than shifting every later field — the failure that would silently move
+    `capacity` into `status` and be believed."""
+    text = csv(row(1000, 100, cap=90)) + csv2(row2(1300, 400, cap=80, ok="3"))
+    rows = parse(text)
+    # The second header line is not a row; it parses to nothing and is skipped.
+    caps = [r["capacity"] for r in rows if r["capacity"] is not None]
+    assert 90 in caps and 80 in caps, f"lost a row across the upgrade: {caps}"
+    old = [r for r in rows if r["capacity"] == 90][0]
+    new = [r for r in rows if r["capacity"] == 80][0]
+    assert old["suspend_success"] is None, "an old row invented a new column"
+    assert new["suspend_success"] == 3
+    assert old["status"] == "Discharging" and new["status"] == "Discharging", (
+        "a column shifted: the old row's fields moved when the header grew")
+
+
+def test_the_low_battery_marker_says_why_a_trace_ended():
+    """A trace that ends because the battery died and one that ends because
+    the watch slept and never woke are both just a trailing gap. The sampler
+    writes one marker row on the way down; reading it back is what turns
+    "no more rows" into "it died"."""
+    out = analyse(parse(csv2(row2(1000, 100, cap=40),
+                             row2(1300, 400, cap=14, reason="lowbat"))))
+    assert out["ended_reason"] == "lowbat"
+
+    quiet = analyse(parse(csv2(row2(1000, 100, cap=40), row2(1300, 400, cap=35))))
+    assert quiet["ended_reason"] is None, (
+        "invented a reason for a trace that simply stopped")
+
+
+def test_panel_state_separates_always_on_from_a_lit_screen():
+    """Brightness alone cannot tell a cheap always-on watchface from an
+    expensive lit screen — both report non-zero — and that is exactly the
+    distinction a drain trace turns on."""
+    out = analyse(parse(csv2(
+        row2(1000, 100, back="10", panel="LP@30Hz"),
+        row2(1300, 400, back="10", panel="LP@30Hz"),
+        row2(1600, 700, back="200", panel="ON@60Hz"))))
+    assert out["samples_screen_on"] == 3          # all three are "lit" by brightness
+    assert out["panel_states"] == {"LP@30Hz": 2, "ON@60Hz": 1}, (
+        "brightness said three lit samples; only the panel state distinguishes "
+        "two cheap always-on frames from one genuinely lit screen")
