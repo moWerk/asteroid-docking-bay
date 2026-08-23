@@ -315,38 +315,68 @@ def charge_flow(serial, shell=None) -> "tuple[int | None, int | None]":
     """(current into the BATTERY, current drawn from USB), both in µA.
 
     The pair is the point. Either number alone is ambiguous, and the watch's
-    own `status` cannot be trusted here: aurora reported "Charging" for a day
-    while putting nothing into its pack.
+    own `status` cannot settle it on its own: aurora reports "Charging" for a
+    day while putting nothing into its pack.
 
-        battery 0 µA + usb ~60 mA   -> docked, drawing idle housekeeping only,
-                                       charging nothing. The stall.
-        battery 60 mA + usb ~200 mA -> actually charging.
+        battery 0 µA + usb drawing   -> docked, taking nothing. The stall
+                                        (unless the watch is Full, which is
+                                        the same reading for a good reason).
+        battery >0 µA + usb drawing  -> actually charging.
 
-    One round trip, glob ESCAPED so the watch expands it rather than the host
-    shell — an unescaped `*` here ships the laptop's own supply names to the
-    watch, which is silent and looks exactly like a watch with no such nodes.
+    Read by SUPPLY NAME, not by position. Every supply exposes `type`, but
+    only some expose `current_now` — sol and aurora both list five supplies
+    and four currents, because `bms` has no `current_now` at all. Reading the
+    two lists in parallel therefore slides by one partway down and attributes
+    the USB current to the wrong supply. `grep . /dev/null` prefixes every
+    line with its path (the /dev/null argument forces that prefix even when
+    the glob matches a single file), so each value arrives already tied to the
+    supply it came from and misalignment is not expressible.
+
+    GLOB QUOTING, which has now bitten this function once: unquoted, the HOST
+    shell expands it against the laptop's own /sys; quoted, it reaches the
+    watch and the WATCH expands it — which is what we want; quoted AND
+    backslash-escaped, NOBODY expands it and the watch looks for a directory
+    literally named `*`, which is what this function did, returning
+    (None, None) on every watch on every call.
     """
     run = shell or (lambda c: adb_shell(serial, c))
-    rc, out, _ = run(r'"cat /sys/class/power_supply/\*/current_now 2>/dev/null; '
-                     r'echo ---; cat /sys/class/power_supply/\*/type 2>/dev/null"')
-    if rc != 0 or "---" not in out:
+    rc, out, _ = run('"grep . /dev/null /sys/class/power_supply/*/type '
+                     '/sys/class/power_supply/*/current_now 2>/dev/null"')
+    if rc != 0:
         return None, None
-    cur_part, _, type_part = out.partition("---")
-    currents = [c.strip() for c in cur_part.splitlines() if c.strip()]
-    types = [t.strip() for t in type_part.splitlines() if t.strip()]
-    bat = usb = None
-    for value, kind in zip(currents, types):
-        try:
-            n = int(value)
-        except ValueError:
+    supplies: dict[str, dict[str, str]] = {}
+    for line in out.splitlines():
+        path, sep, value = line.partition(":")
+        if not sep or "/power_supply/" not in path:
             continue
-        # Take the FIRST of each kind, in the order the class enumerates them,
-        # rather than assuming a node name: the supplies differ per watch and
-        # this is the same reason the gauge is resolved by preference order.
-        if kind.lower() == "battery" and bat is None:
-            bat = n
-        elif kind.lower() in ("usb", "usb_type_c", "mains") and usb is None:
-            usb = n
+        parts = path.strip().split("/")
+        name, field = parts[-2], parts[-1]
+        supplies.setdefault(name, {})[field] = value.strip()
+
+    def _current(name) -> "int | None":
+        raw = supplies.get(name, {}).get("current_now", "")
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    bat = None
+    for name, fields in supplies.items():
+        if fields.get("type", "").strip().lower() == "battery" and bat is None:
+            bat = _current(name)
+    # USB by type PREFIX: these watches report USB_CDP, and USB_DCP/USB_PD are
+    # the same input by another negotiation. Prefer the supply actually named
+    # `usb` when several match — sol and aurora expose both `usb` and
+    # `qcom_usb` as USB_CDP with different currents, and which of those is the
+    # real input draw is a watch-side question, not one this function may
+    # answer by enumeration order.
+    usb = None
+    usb_names = [n for n, f in supplies.items()
+                 if f.get("type", "").strip().lower().startswith("usb")]
+    for name in sorted(usb_names, key=lambda n: (n != "usb", n)):
+        usb = _current(name)
+        if usb is not None:
+            break
     return bat, usb
 
 

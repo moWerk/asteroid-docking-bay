@@ -381,31 +381,84 @@ def test_external_power_reads_the_kernel_not_dumpsys(monkeypatch):
 
 # --- the stalled-charge pair ----------------------------------------------
 
-def test_charge_flow_reads_battery_and_usb_current_as_a_pair(monkeypatch):
+def _supplies(currents=None, types=None) -> str:
+    """The power-supply readout as sol and aurora actually answer it.
+
+    Note the shape, which is the whole point: FIVE supplies report a type and
+    only FOUR report a current — `bms` has no `current_now` — so the two lists
+    are different lengths and slide out of step partway down. A fixture with
+    tidy matching lists is what let a positional reader pass its tests while
+    misattributing every value below the first on real hardware.
+    """
+    types = types if types is not None else [
+        ("battery", "Battery"), ("bms", "Mains"), ("qcom_usb", "USB_CDP"),
+        ("sw5100_bms", "Unknown"), ("usb", "USB_CDP")]
+    currents = currents if currents is not None else [
+        ("battery", "0"), ("qcom_usb", "177443"),
+        ("sw5100_bms", "0"), ("usb", "174956")]
+    lines = [f"/sys/class/power_supply/{n}/type:{v}" for n, v in types]
+    lines += [f"/sys/class/power_supply/{n}/current_now:{v}" for n, v in currents]
+    return "\n".join(lines) + "\n"
+
+
+def test_charge_flow_ties_each_current_to_the_supply_it_came_from(monkeypatch):
     """Either number alone is ambiguous, and the watch's own `status` cannot
     settle it: aurora reported "Charging" for a day while putting nothing into
     its pack.
 
-    The supplies are matched to their TYPE rather than to a node name, for the
-    same reason the gauge is resolved by preference order -- the names differ
-    per watch, and reading position-by-position would attribute one watch's usb
-    current to another's battery.
+    Values must be keyed by supply NAME. Reading the type list and the current
+    list in parallel is wrong on every watch on the rig, because not every
+    supply exposes `current_now`.
     """
     import asteroid_docking_bay.adb as a
     captured = {}
 
     def shell(serial, cmd, timeout=8):
         captured["cmd"] = cmd
-        # battery, bms, usb — in class-enumeration order, as a watch reports it
-        return 0, "0\n0\n65960\n---\nBattery\nBattery\nUSB\n", ""
+        return 0, _supplies(), ""
 
     monkeypatch.setattr(a, "adb_shell", shell)
-    assert a.charge_flow("S") == (0, 65960), (
-        "the pair was not resolved by supply type")
-    assert r"\*" in captured["cmd"], (
-        "the glob is unescaped, so the HOST shell expands it and ships this "
-        "laptop's supply names to the watch — silent, and indistinguishable "
-        "from a watch that has no such nodes")
+    bat, usb = a.charge_flow("S")
+    assert bat == 0, "the battery current was not found by supply type"
+    # The battery is first in both lists, so a positional reader gets it right
+    # by luck — the slide only shows on the supplies below it. That is why the
+    # USB assertion below, not this one, is the guard that matters.
+    assert usb == 174956, (
+        "expected the current of the supply named `usb`; 177443 means the "
+        "reader slid onto qcom_usb, and any other value means it paired the "
+        "two lists positionally across a supply that has no current_now")
+
+
+def test_charge_flow_lets_the_watch_expand_the_glob_not_the_host(monkeypatch):
+    """Three states, and only the middle one works:
+
+        unquoted            -> the HOST shell expands it against this laptop's
+                               /sys and ships our supply names to the watch
+        quoted              -> reaches the watch intact, the WATCH expands it
+        quoted + backslash  -> nobody expands it; the watch looks for a
+                               directory literally named `*` and finds none
+
+    The third is not hypothetical: charge_flow shipped that way and returned
+    (None, None) on every watch. So this asserts what the WATCH receives after
+    the host shell has had its turn, rather than what the source looks like —
+    an assertion on the source text is what blessed the broken version.
+    """
+    import subprocess
+    import asteroid_docking_bay.adb as a
+    captured = {}
+    monkeypatch.setattr(a, "adb_shell",
+                        lambda s, c, timeout=8: (captured.setdefault("cmd", c),
+                                                 0, _supplies(), "")[1:])
+    a.charge_flow("S")
+    # Push it through a real shell exactly as _run(shell=True) would.
+    delivered = subprocess.run(f"printf '%s' {captured['cmd']}", shell=True,
+                               capture_output=True, text=True).stdout
+    assert "/power_supply/*/type" in delivered, (
+        f"the watch would receive {delivered!r} — the glob must arrive as a "
+        "bare `*` for the watch's own shell to expand it")
+    assert "\\*" not in delivered, (
+        "the glob reaches the watch backslash-escaped, so the watch expands "
+        "nothing and looks for a directory literally named `*`")
 
 
 def test_charge_flow_survives_a_watch_that_answers_nothing(monkeypatch):
@@ -416,7 +469,21 @@ def test_charge_flow_survives_a_watch_that_answers_nothing(monkeypatch):
     assert a.charge_flow("S") == (None, None)
     monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8: (1, "boom", ""))
     assert a.charge_flow("S") == (None, None)
-    # non-numeric values are skipped rather than crashing the read
-    monkeypatch.setattr(a, "adb_shell",
-                        lambda s, c, timeout=8: (0, "n/a\n7\n---\nBattery\nUSB\n", ""))
+    # A FAILED read that still printed plausible lines before dying must be
+    # discarded, not parsed. Garbage happens to parse to (None, None) on its
+    # own, so only this case makes the rc check load-bearing: half an answer
+    # from a broken round trip would otherwise be reported as a measurement.
+    monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8:
+                        (1, _supplies(), ""))
+    assert a.charge_flow("S") == (None, None), (
+        "a non-zero rc was parsed anyway — a partial answer from a failed "
+        "read is being reported as if it were measured")
+    # A supply that reports a type but no current costs only that supply.
+    monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8:
+                        (0, _supplies(currents=[("usb", "7")]), ""))
+    assert a.charge_flow("S") == (None, 7)
+    # A non-numeric value is skipped rather than crashing the read.
+    monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8:
+                        (0, _supplies(currents=[("battery", "n/a"),
+                                                ("usb", "7")]), ""))
     assert a.charge_flow("S") == (None, 7)
