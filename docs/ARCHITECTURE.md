@@ -89,7 +89,8 @@ asteroid_docking_bay/
                    watch's weather dconf
     stockrom.py    full-disk dump and the restore-to-stock path
     wanze.py       host side of the on-watch probe that records while the
-                   watch is away
+                   watch is away; the probe itself is a separate repo,
+                   moWerk/a-d-b-wanze, and is searched for, not bundled
     bench.py       driving the benchymark FPS benchmark app
     boottime.py    boot-time measurement: VBUS-on to usable
     diag.py        the a-d-b-doctor dataset — kernel diagnostics no watch

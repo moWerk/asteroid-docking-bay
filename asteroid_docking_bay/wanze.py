@@ -361,12 +361,13 @@ def suspend_summary(segs: "list[dict]") -> dict:
 
 # --- watch-side control ---------------------------------------------------
 
-# wanze lives in its own repo, so a-d-b has to FIND its files rather than own
-# them. Duplicating the sampler here would give the fleet two sources of truth
-# for the thing that produces every number, which is worse than a search path.
+# wanze lives in its own repo — github.com/moWerk/a-d-b-wanze — so a-d-b has to
+# FIND its files rather than own them. Duplicating the sampler here would give
+# the fleet two sources of truth for the thing that produces every number, which
+# is worse than a search path.
 SRC_CANDIDATES = (
     Path(__file__).resolve().parent / "wanze-probe",   # a bundled copy, if built with one
-    Path.home() / "Git/wanze/src",                     # a developer checkout
+    Path.home() / "Git/a-d-b-wanze/src",               # a developer checkout
     Path("/usr/share/wanze"),                          # installed from the ipk
 )
 SRC_FILES = ("wanze-sample", "wanze.service", "wanze.timer")

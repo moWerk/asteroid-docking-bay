@@ -120,7 +120,10 @@ hands.
 
 ## wanze
 
-The on-watch probe gained schema 2: the screen source resolved per watch, the
+The on-watch probe now has **its own repository**,
+[a-d-b-wanze](https://github.com/moWerk/a-d-b-wanze) — a-d-b searches for its
+sources rather than carrying a second copy of the thing that produces every
+number. It gained schema 2: the screen source resolved per watch, the
 panel's own power state, the kernel's suspend counters, a low-battery flush and
 marker, and an opt-in upload. Host side pairs **`display_on_fraction` with
 `asleep_fraction`** — together they say in one line whether a watch drained
