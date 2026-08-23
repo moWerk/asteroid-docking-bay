@@ -361,3 +361,115 @@ def test_comparing_reports_a_truncated_dump_rather_than_calling_it_different(tmp
     assert r["ok"]
     assert "boot" in r["truncated"], "a short dump was not reported as truncated"
     assert r["same_count"] == 0
+
+
+# --- families: the classes belong to the PORT, not to every watch ----------
+
+def _parts(*names):
+    return [sr.Partition(n, i * 100, i * 100 + 99) for i, n in enumerate(names, 1)]
+
+
+def test_the_family_proven_twice_can_finally_be_planned():
+    """sol's restore writes boot, vendor_kernel_boot and init_boot. Only `boot`
+    is in the OPPO manifest this module was built from, so the one family
+    proven TWICE could not be planned at all — safe, because the allow-list
+    fails closed, and useless.
+    """
+    parts = _parts("boot", "vendor_kernel_boot", "init_boot", "userdata")
+    names = ("boot", "vendor_kernel_boot", "init_boot")
+
+    with pytest.raises(ValueError, match="not firmware"):
+        sr.restore_plan(parts, names)          # OPPO family: correctly refuses
+
+    plan = sr.restore_plan(parts, names, family="w5100-bootchain")
+    flashes = [(s["partition"], s.get("slot")) for s in plan
+               if s["action"] == "flash"]
+    assert flashes == [("boot", "a"), ("boot", "b"),
+                       ("vendor_kernel_boot", "a"), ("vendor_kernel_boot", "b"),
+                       ("init_boot", "a"), ("init_boot", "b")], (
+        "each partition must go to BOTH slots: the port writes whichever was "
+        "active and stock takes OTAs across them")
+
+    tail = [(s["action"], s.get("partition") or s.get("slot")) for s in plan[6:]]
+    assert tail == [("erase", "userdata"), ("set_active", "a"), ("continue", None)], (
+        f"the finish sequence is wrong: {tail}. It must erase userdata, select "
+        f"slot a, and CONTINUE — reboot landed in recovery three times on sol")
+
+
+def test_a_family_never_writes_another_familys_userdata_recipe():
+    """beluga writes an EMPTY userdata from the factory image; sol erases it.
+    Getting that backwards is the failure that left a beluga in the vendor
+    spinner for years."""
+    parts = _parts("boot", "system", "vendor", "recovery", "cache", "userdata")
+    oppo = sr.restore_plan(parts, sr.BELUGA_STAGE1)
+    assert oppo[-1] == {"action": "flash_empty", "partition": "userdata"}
+
+    sol = sr.restore_plan(_parts("boot", "userdata"), ("boot",),
+                          family="w5100-bootchain")
+    assert {"action": "flash_empty", "partition": "userdata"} not in sol
+
+
+def test_per_device_state_is_refused_in_every_family():
+    """The hard stop has to survive the families becoming configurable — it is
+    the one rule with no opt-in, because the damage is silent and permanent."""
+    parts = _parts("persist", "sensorstore", "userdata")
+    with pytest.raises(ValueError, match="per-device"):
+        sr.restore_plan(parts, ("persist",))
+    with pytest.raises(ValueError, match="per-device"):
+        sr.restore_plan(parts, ("sensorstore",), family="w5100-bootchain")
+
+
+def test_an_unclassified_partition_is_refused_and_says_so():
+    """sol's own dump manifest reports 69 of 81 partitions as unclassified.
+    That is survivable ONLY because unknown is refused: the message has to say
+    that unclassified is not the same as safe, or somebody will add it to the
+    firmware list to make the error go away."""
+    parts = _parts("mysterypart", "userdata")
+    with pytest.raises(ValueError, match="Unclassified is not the same as safe"):
+        sr.restore_plan(parts, ("mysterypart",), family="w5100-bootchain")
+
+
+# --- the whitelist ---------------------------------------------------------
+
+def test_an_unlisted_watch_is_refused_rather_than_guessed_at():
+    out = sr.restore_method("triggerfish")
+    assert not out["ok"] and "not whitelisted" in out["error"]
+
+
+def test_a_watch_with_no_dump_of_its_own_is_blocked_even_when_the_recipe_is_known():
+    """aurora is sol's near-identical sibling, so the RECIPE is expected to
+    hold — but boot_b and init_boot_b on these watches are the only stock
+    copies in existence, and per-device state cannot come from another unit.
+    A known recipe and a restorable watch are different claims."""
+    blocked = sr.restore_method("aurora", has_own_dump=False)
+    assert not blocked["ok"] and "no verified dump" in blocked["error"]
+
+    known = sr.restore_method("aurora")
+    assert known["ok"] and known["family"] == "w5100-bootchain"
+    assert known["unproven"] is True, (
+        "aurora is marked proven though nobody has run it there")
+
+    sol = sr.restore_method("sol")
+    assert sol["ok"] and sol["unproven"] is False and "twice" in sol["proven"]
+
+
+# --- dump availability is a different axis entirely ------------------------
+
+def test_dump_methods_follow_the_bootloader_not_the_restore_family():
+    """The initramfs-clean method works by flashing init_boot to the UNUSED
+    SLOT, so it is available exactly when there is a spare slot — never asking
+    the bootloader to boot an unsigned image, which is what makes it work where
+    the ramdisk method does not."""
+    assert sr.dump_methods_for(True, False, False) == ["initramfs_clean"]
+    assert sr.dump_methods_for(False, True, True) == ["ramdisk_clean",
+                                                      "runtime_unclean"]
+    assert sr.DUMP_METHODS["initramfs_clean"]["clean"] is True
+    assert sr.DUMP_METHODS["runtime_unclean"]["clean"] is False, (
+        "a live-disk dump was marked byte-reproducible")
+
+
+def test_an_unestablished_capability_makes_no_claim():
+    """An unknown capability must yield no offer rather than an optimistic one.
+    The optimistic version costs a user a 741 MB push and then a bootloader
+    that refuses — which is exactly how the nemo attempt ended."""
+    assert sr.dump_methods_for(None, None, None) == []

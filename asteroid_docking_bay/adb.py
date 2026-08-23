@@ -311,6 +311,45 @@ def get_battery_level(serial: str) -> int | None:
     return None
 
 
+def charge_flow(serial, shell=None) -> "tuple[int | None, int | None]":
+    """(current into the BATTERY, current drawn from USB), both in µA.
+
+    The pair is the point. Either number alone is ambiguous, and the watch's
+    own `status` cannot be trusted here: aurora reported "Charging" for a day
+    while putting nothing into its pack.
+
+        battery 0 µA + usb ~60 mA   -> docked, drawing idle housekeeping only,
+                                       charging nothing. The stall.
+        battery 60 mA + usb ~200 mA -> actually charging.
+
+    One round trip, glob ESCAPED so the watch expands it rather than the host
+    shell — an unescaped `*` here ships the laptop's own supply names to the
+    watch, which is silent and looks exactly like a watch with no such nodes.
+    """
+    run = shell or (lambda c: adb_shell(serial, c))
+    rc, out, _ = run(r'"cat /sys/class/power_supply/\*/current_now 2>/dev/null; '
+                     r'echo ---; cat /sys/class/power_supply/\*/type 2>/dev/null"')
+    if rc != 0 or "---" not in out:
+        return None, None
+    cur_part, _, type_part = out.partition("---")
+    currents = [c.strip() for c in cur_part.splitlines() if c.strip()]
+    types = [t.strip() for t in type_part.splitlines() if t.strip()]
+    bat = usb = None
+    for value, kind in zip(currents, types):
+        try:
+            n = int(value)
+        except ValueError:
+            continue
+        # Take the FIRST of each kind, in the order the class enumerates them,
+        # rather than assuming a node name: the supplies differ per watch and
+        # this is the same reason the gauge is resolved by preference order.
+        if kind.lower() == "battery" and bat is None:
+            bat = n
+        elif kind.lower() in ("usb", "usb_type_c", "mains") and usb is None:
+            usb = n
+    return bat, usb
+
+
 def battery_and_screen(serial, shell=None) -> "tuple[int | None, bool, str | None]":
     """One adb round-trip for the status path: (battery_pct, screen_forced,
     charge_status).

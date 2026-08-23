@@ -377,3 +377,46 @@ def test_external_power_reads_the_kernel_not_dumpsys(monkeypatch):
         return 0, "  AC powered: false\n  USB powered: true\n", ""
     monkeypatch.setattr(a, "adb_shell", wear)
     assert a.adb_external_power("S1") is True
+
+
+# --- the stalled-charge pair ----------------------------------------------
+
+def test_charge_flow_reads_battery_and_usb_current_as_a_pair(monkeypatch):
+    """Either number alone is ambiguous, and the watch's own `status` cannot
+    settle it: aurora reported "Charging" for a day while putting nothing into
+    its pack.
+
+    The supplies are matched to their TYPE rather than to a node name, for the
+    same reason the gauge is resolved by preference order -- the names differ
+    per watch, and reading position-by-position would attribute one watch's usb
+    current to another's battery.
+    """
+    import asteroid_docking_bay.adb as a
+    captured = {}
+
+    def shell(serial, cmd, timeout=8):
+        captured["cmd"] = cmd
+        # battery, bms, usb — in class-enumeration order, as a watch reports it
+        return 0, "0\n0\n65960\n---\nBattery\nBattery\nUSB\n", ""
+
+    monkeypatch.setattr(a, "adb_shell", shell)
+    assert a.charge_flow("S") == (0, 65960), (
+        "the pair was not resolved by supply type")
+    assert r"\*" in captured["cmd"], (
+        "the glob is unescaped, so the HOST shell expands it and ships this "
+        "laptop's supply names to the watch — silent, and indistinguishable "
+        "from a watch that has no such nodes")
+
+
+def test_charge_flow_survives_a_watch_that_answers_nothing(monkeypatch):
+    """A missing field must cost the field, never the read — the same rule the
+    probe itself follows."""
+    import asteroid_docking_bay.adb as a
+    monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8: (0, "", ""))
+    assert a.charge_flow("S") == (None, None)
+    monkeypatch.setattr(a, "adb_shell", lambda s, c, timeout=8: (1, "boom", ""))
+    assert a.charge_flow("S") == (None, None)
+    # non-numeric values are skipped rather than crashing the read
+    monkeypatch.setattr(a, "adb_shell",
+                        lambda s, c, timeout=8: (0, "n/a\n7\n---\nBattery\nUSB\n", ""))
+    assert a.charge_flow("S") == (None, 7)

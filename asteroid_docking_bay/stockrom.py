@@ -121,14 +121,104 @@ USERDATA = "userdata"
 BELUGA_STAGE1 = ("boot", "system", "vendor", "recovery", "cache")
 
 
-def classify(name: str) -> str:
+# --- families: the classes are per PORT, not universal ----------------------
+#
+# The lists above are the OPPO beluga rawprogram manifest, and the module used
+# to apply them to every watch. That is wrong in a way that only showed up when
+# a second family was proven: sol's restore writes `boot`,
+# `vendor_kernel_boot`, `init_boot`, and only `boot` is in FIRMWARE — so a plan
+# for the one family proven TWICE could not be built at all. Safe, since the
+# allow-list fails closed, and useless.
+#
+# What actually decides the method is not A/B and not dynamic partitions, but
+# WHAT THE ASTEROIDOS PORT WROTE (the porting session's finding, 2026-08-22).
+# sol needs three partitions back because its port confined itself to the boot
+# chain; beluga needed vendor and keystore because its port wrote them. A/B only
+# changes how many copies get flashed, which is why `slots` is a separate axis
+# from the class lists rather than the thing families are keyed on.
+
+class Family:
+    """One restore recipe: which partitions may be written, and how to finish.
+
+    `per_device` is authoritative for what must NEVER be written. It is also
+    knowingly INCOMPLETE outside the OPPO family — sol's own dump manifest
+    reports 69 of 81 partitions as unclassified. That is safe only because
+    classification is an allow-list: anything unrecognised is refused, so an
+    incomplete list costs a refusal, never a silent write.
+    """
+
+    __slots__ = ("name", "firmware", "safe_erase", "per_device", "slots",
+                 "finish", "note")
+
+    def __init__(self, name, firmware, per_device, safe_erase=(), slots=(),
+                 finish=(), note=""):
+        self.name, self.firmware, self.per_device = name, firmware, per_device
+        self.safe_erase, self.slots, self.finish, self.note = (
+            safe_erase, slots, finish, note)
+
+
+OPPO_BELUGA = Family(
+    name="oppo-beluga",
+    firmware=FIRMWARE, safe_erase=SAFE_ERASE, per_device=PER_DEVICE,
+    finish=({"action": "flash_empty", "partition": USERDATA},),
+    note=("Full restore: the port wrote system and vendor, so they must go "
+          "back. userdata is written EMPTY from the factory image, never from "
+          "the capture."))
+
+W5100_BOOTCHAIN = Family(
+    name="w5100-bootchain",
+    # Exactly what sol's port writes, and nothing else. `super` is never
+    # touched: this is not a firmware reinstall — put the boot chain back and
+    # stock re-provisions itself.
+    firmware=("boot", "vendor_kernel_boot", "init_boot"),
+    # Known-incomplete on purpose; `sensorstore` is here because sol's dump
+    # manifest identified it as per-device state that classify() did not know.
+    per_device=("sensorstore", "persist", "modemst1", "modemst2", "devinfo"),
+    # Both slots: the port writes whichever was active, and stock takes OTAs
+    # across slots. A/B changes the COUNT of writes, not which partitions.
+    slots=("a", "b"),
+    finish=({"action": "erase", "partition": USERDATA},
+            {"action": "set_active", "slot": "a"},
+            # `continue`, never `reboot` — reboot landed in recovery three
+            # times on sol. And never `fastboot -w`: it host-builds a
+            # filesystem with mke2fs and erases metadata, leaving it raw, which
+            # plain `erase userdata` does not undo.
+            {"action": "continue"}),
+    note=("First stock boot sits ambiguous for 30-40 minutes with adb silent. "
+          "That is normal. adb staying silent afterwards is also correct — "
+          "fresh Wear OS ships with developer options off."))
+
+CLASSIC_BOOT = Family(
+    name="classic",
+    firmware=("boot",),
+    per_device=PER_DEVICE,
+    finish=({"action": "erase", "partition": USERDATA},),
+    note=("Minimal method: stock boot plus a wiped userdata. Proven on sparrow "
+          "and mooneye. Do NOT apply to a watch that already has a fuller "
+          "recipe — beluga's sequence is canon and must not be shortened."))
+
+FAMILIES = {
+    OPPO_BELUGA.name: OPPO_BELUGA,
+    W5100_BOOTCHAIN.name: W5100_BOOTCHAIN,
+    CLASSIC_BOOT.name: CLASSIC_BOOT,
+}
+
+
+def classify(name: str, family: "Family | None" = None) -> str:
+    """Which class a partition falls in, for THIS family.
+
+    Defaults to the OPPO family so existing callers are unchanged. Anything
+    unrecognised is `unknown`, and unknown is refused — unclassified is not
+    the same as safe.
+    """
+    fam = family or OPPO_BELUGA
     if name == USERDATA:
         return "userdata"
-    if name in PER_DEVICE:
+    if name in fam.per_device:
         return "per_device"
-    if name in FIRMWARE:
+    if name in fam.firmware:
         return "firmware"
-    if name in SAFE_ERASE:
+    if name in fam.safe_erase:
         return "safe_erase"
     return "unknown"
 
@@ -198,30 +288,163 @@ def fingerprint_gate(dump_blob: bytes, expect_device: str) -> tuple[bool, str]:
 
 
 def restore_plan(parts: list[Partition], names: "tuple[str, ...]",
-                 erase_safe: bool = False) -> list[dict]:
+                 erase_safe: bool = False,
+                 family: "Family | str | None" = None) -> list[dict]:
     """The ordered list of actions, with every one justified by its class.
 
     Refuses to build a plan that touches per-device state at all. That is a hard
     stop rather than a warning: the caller cannot opt in, because the damage is
     silent and unrecoverable and no UI affordance should exist for it.
+
+    The family decides both the classes and how the run ends, because those
+    differ per port rather than per watch: beluga finishes by writing an EMPTY
+    userdata from the factory image, sol by erasing userdata, selecting slot a
+    and issuing `continue`. A family with slots flashes every partition to each
+    of them, since the port writes whichever slot was active and stock takes
+    OTAs across both.
     """
+    fam = FAMILIES[family] if isinstance(family, str) else (family or OPPO_BELUGA)
     by_name = {p.name: p for p in parts}
     plan: list[dict] = []
     for n in names:
-        cls = classify(n)
+        cls = classify(n, fam)
         if cls == "per_device":
             raise ValueError(f"refusing to restore per-device partition {n!r}")
         if cls != "firmware":
-            raise ValueError(f"{n!r} is {cls}, not firmware — not restorable")
+            raise ValueError(
+                f"{n!r} is {cls} for family {fam.name!r}, not firmware — not "
+                f"restorable. Unclassified is not the same as safe.")
         if n not in by_name:
             raise ValueError(f"{n!r} is not in this disk layout")
-        plan.append({"action": "flash", "partition": n, "part": by_name[n]})
+        if fam.slots:
+            for slot in fam.slots:
+                plan.append({"action": "flash", "partition": n,
+                             "slot": slot, "part": by_name[n]})
+        else:
+            plan.append({"action": "flash", "partition": n, "part": by_name[n]})
     if erase_safe:
-        for n in SAFE_ERASE:
+        for n in fam.safe_erase:
             if n in by_name:
                 plan.append({"action": "erase", "partition": n})
-    plan.append({"action": "flash_empty", "partition": USERDATA})
+    plan.extend(dict(step) for step in fam.finish)
     return plan
+
+
+# --- how a dump may be taken, which is a DIFFERENT axis ---------------------
+#
+# The restore family is decided by what the port wrote. Dump availability is
+# decided by what the bootloader will let you do, and the two do not line up.
+#
+# `initramfs_clean` is the one that needed writing down: it boots AsteroidOS's
+# own initramfs from an init_boot FLASHED TO THE UNUSED SLOT, rather than via
+# `fastboot boot`. That is why it works where the ramdisk method does not — it
+# never asks the bootloader to boot an unsigned image — and it is structurally
+# available exactly when the watch has a spare slot to flash into. Proven on
+# sol 2026-08-08: two dumps of 31,406,948,352 bytes with IDENTICAL whole-image
+# sha256, 81/81 partitions matching, userdata included, size checked against
+# /sys/class/block/mmcblk0/size before the copy.
+DUMP_METHODS = {
+    "initramfs_clean": {
+        "clean": True,
+        "requires": ("unlocked bootloader", "A/B slots (a spare slot to flash "
+                     "init_boot into)", "an AsteroidOS init_boot for this watch"),
+        "note": ("userdata is never mounted, so the capture is byte-reproducible. "
+                 "Does NOT need `fastboot boot`, which many bootloaders refuse "
+                 "even when unlocked."),
+    },
+    "ramdisk_clean": {
+        "clean": True,
+        "requires": ("unlocked bootloader",
+                     "`fastboot boot` of an unsigned image, at dump time"),
+        "note": ("Crippled on many watches even after unlocking — it failed on "
+                 "a locked nemo with 'not supported in locked device'."),
+    },
+    "runtime_unclean": {
+        "clean": False,
+        "requires": ("AsteroidOS installed and rooted",),
+        "note": ("Taken from a live disk, so never byte-reproducible: on nemo "
+                 "two runtime dumps matched on 33 of 34 partitions, differing "
+                 "only in userdata. Trustworthy PER PARTITION, and two dumps "
+                 "are what tell you which."),
+    },
+}
+
+
+# --- the whitelist ----------------------------------------------------------
+#
+# A restore recipe is offered for a watch only when somebody has run it on that
+# family and written down what happened. An entry is EVIDENCE, not an opinion,
+# which is why each carries the date and unit it was proven on.
+#
+# Absence means refused, not "probably fine": a wrong recipe here costs a watch
+# that cannot be re-provisioned, and the fleet has exactly one stock copy of
+# some of these partitions in existence.
+RESTORE_WHITELIST = {
+    "beluga":   {"family": "oppo-beluga",
+                 "proven": "2026-08-03, beluga 22979c8c, first attempt"},
+    "belugaxl": {"family": "oppo-beluga",
+                 "proven": "shares beluga's stock image and a byte-identical GPT"},
+    "sparrow":  {"family": "classic", "proven": "2026-08-16, minimal method"},
+    "mooneye":  {"family": "classic", "proven": "earlier, minimal method"},
+    "sol":      {"family": "w5100-bootchain",
+                 "proven": "twice: ~2026-08-09 and 2026-08-21, serial 4C111JEAYW00RJ"},
+    # aurora is the same silicon and layout as sol, so the RECIPE is expected to
+    # hold — but it has no dump of its own, and on these watches boot_b and
+    # init_boot_b are the only stock copies that exist anywhere. The gate below
+    # blocks it until one is taken, which is a precondition rather than a doubt
+    # about the method.
+    "aurora":   {"family": "w5100-bootchain",
+                 "proven": None,
+                 "note": "same layout as sol; needs its own verified dump first"},
+}
+
+
+def restore_method(codename: str, has_own_dump: "bool | None" = None) -> dict:
+    """May this watch be restored, and how?
+
+    Two preconditions, both learned the expensive way:
+
+    * the family must be whitelisted — an unlisted watch is refused rather
+      than guessed at;
+    * a verified dump OF THIS UNIT must exist. Per-device state is not
+      recoverable from another unit, and for the W5100 watches the stock boot
+      chain exists nowhere else at all.
+    """
+    entry = RESTORE_WHITELIST.get((codename or "").lower())
+    if not entry:
+        return {"ok": False,
+                "error": (f"{codename!r} is not whitelisted for restore. No "
+                          f"recipe has been proven on its family, and guessing "
+                          f"one risks a watch that cannot be re-provisioned.")}
+    fam = FAMILIES[entry["family"]]
+    if has_own_dump is False:
+        return {"ok": False, "family": fam.name,
+                "error": (f"{codename} has no verified dump of its own. Its "
+                          f"stock partitions cannot be taken from another unit.")}
+    return {"ok": True, "family": fam.name, "firmware": fam.firmware,
+            "slots": fam.slots, "proven": entry.get("proven"),
+            "note": entry.get("note") or fam.note,
+            "unproven": entry.get("proven") is None}
+
+
+def dump_methods_for(has_ab_slots: "bool | None",
+                     can_fastboot_boot: "bool | None",
+                     asteroid_installed: "bool | None") -> "list[str]":
+    """Which dump methods this watch can actually offer, best first.
+
+    Every input may be None, meaning "not established" — and an unknown
+    capability yields no claim rather than an optimistic one, because the cost
+    of being wrong is a user pushing a 741 MB rootfs and then discovering the
+    bootloader refuses (which is exactly how the nemo attempt ended).
+    """
+    out = []
+    if has_ab_slots:
+        out.append("initramfs_clean")
+    if can_fastboot_boot:
+        out.append("ramdisk_clean")
+    if asteroid_installed:
+        out.append("runtime_unclean")
+    return out
 
 
 # --- host-side execution ----------------------------------------------------
