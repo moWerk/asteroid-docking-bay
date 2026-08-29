@@ -100,6 +100,11 @@ Release channels (`--channel`), image names read from the release's own
 `SHA512SUMS`, flashing a watch **with no hub seat**, and watches whose
 bootloader reports a non-Google vendor are no longer invisible.
 
+**Exercised on hardware**, in both directions and on two channels: rover to
+the nightly, beluga to 2.1 — with the fleet registry independently logging
+both as Qt version changes it was never told about. Record in
+`docs/audits/2026-08-29-flash-validation.md`.
+
 ## Safety, after two audits
 
 - **operation locks honoured everywhere** — CLI power commands, charge, drain,
