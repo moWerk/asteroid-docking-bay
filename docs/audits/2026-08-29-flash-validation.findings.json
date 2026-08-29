@@ -1,0 +1,72 @@
+{
+  "audit": "2026-08-29-flash-validation",
+  "scope": "a-d-b flash path, exercised on real hardware for the first time",
+  "outcome": "pass \u2014 no defects in a-d-b",
+  "flashes": [
+    {
+      "watch": "rover",
+      "serial": "A103X16100826",
+      "slot": "1-3:1",
+      "from": "2.1-era (Qt 5.15.16)",
+      "to": "2.2-nightly (Qt 6.11.3)",
+      "channel": "nightly (default)",
+      "image_codename": "rubyfish",
+      "note": "shared-image variant: no rover image exists upstream (404); rubyfish is 200"
+    },
+    {
+      "watch": "beluga",
+      "serial": "225791c5",
+      "slot": "1-3.3.4:1",
+      "from": "2.2-nightly (Qt 6.11.2)",
+      "to": "2.1 (Qt 5.15.16)",
+      "channel": "2.1",
+      "image_codename": "beluga"
+    }
+  ],
+  "claims_confirmed": [
+    "release channels (--channel) resolve and flash",
+    "image names are read from the release's own SHA512SUMS, not hardcoded",
+    "SHA512 verification runs and passes before flashing",
+    "shared-image variants flash their base image, via the port's hostname-derived codename",
+    "flashing works in both directions, older and newer"
+  ],
+  "independent_corroboration": {
+    "source": "fleet registry change-log, not informed by the flasher",
+    "beluga": {
+      "ts_local": "2026-08-29 20:37",
+      "changes": {
+        "qt": [
+          "6.11.2",
+          "5.15.16"
+        ]
+      }
+    },
+    "rover": {
+      "ts_local": "2026-08-29 12:39",
+      "changes": {
+        "qt": [
+          "5.15.16",
+          "6.11.3"
+        ]
+      }
+    }
+  },
+  "defects": [
+    {
+      "in": "caller (session script), not a-d-b",
+      "severity": "low",
+      "detail": "a-d-b reports flash progress via log.info; a script that does not configure the root logger sees no output and the flash appears stalled"
+    }
+  ],
+  "corrections": [
+    {
+      "claim": "the flash path does not map a shared-image variant to its base image",
+      "verdict": "WRONG",
+      "why": "inferred from _download_nightly(codename) being verbatim without checking callers; both flash paths resolve via find_codename_for_loc_port(), which returns the hostname-derived name"
+    }
+  ],
+  "facts_established": [
+    "2.1 ships Qt 5.15.16; 2.2-nightly ships Qt 6.11.x",
+    "benchymark is Qt6-only and cannot run on 2.0 or 2.1, so it cannot measure a pre-Qt6 build"
+  ]
+}
