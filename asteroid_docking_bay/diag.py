@@ -45,7 +45,11 @@ DIAG_SCRIPT = "; ".join([
     _M % "failed",
     "systemctl --failed --no-legend --plain 2>/dev/null",
     _M % "errors",
-    "journalctl -p 3 -b --no-pager 2>/dev/null | tail -12",
+    # stderr is KEPT here, unlike every other source. journalctl refuses on
+    # stdout-silence when the login lacks the journal group, so discarding it
+    # left an empty list that the UI renders as "no errors this boot" --
+    # a clean bill of health from a check that never got to look.
+    "journalctl -p 3 -b --no-pager 2>&1 | tail -12",
     _M % "boots",
     "journalctl --list-boots 2>/dev/null | wc -l",
     _M % "psi",
@@ -176,9 +180,22 @@ def parse_diag(out: str) -> dict:
 
     d["failed_units"] = [l.split()[0] for l in sec.get("failed", "").splitlines()
                          if l.strip() and not l.startswith("0 loaded")]
-    errs = [l for l in sec.get("errors", "").splitlines()
-            if l.strip() and "-- No entries --" not in l]
-    d["errors"] = errs[-12:]
+    # journalctl says so in words when it is not allowed to read: "No journal
+    # files were opened due to insufficient permissions". SailfishOS hits this
+    # on every device, because a-d-b logs in as the session user and cannot
+    # escalate. Reporting that as an empty error list would be the dumpsys
+    # mistake again: a check that answers "all clear" without having looked is
+    # indistinguishable from one that works, until somebody trusts it.
+    raw = sec.get("errors", "")
+    denied = ("insufficient permissions" in raw
+              or "No journal files were opened" in raw)
+    if denied:
+        d["errors"] = None
+        d.setdefault("unavailable", {})["errors"] = "denied"
+    else:
+        errs = [l for l in raw.splitlines()
+                if l.strip() and "-- No entries --" not in l]
+        d["errors"] = errs[-12:]
 
     b = sec.get("boots", "").strip()
     if b.isdigit() and int(b) > 1:          # minus the header line

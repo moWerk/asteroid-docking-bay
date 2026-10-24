@@ -808,3 +808,53 @@ def test_adb_usb_paths_extracts_only_real_paths():
                "C": "device"}
     assert adb_usb_paths(devices) == {"A": "1-9.2"}
     assert adb_usb_paths({}) == {}
+
+
+def test_a_refused_journal_is_not_an_empty_journal():
+    """journalctl says so in words when the login lacks the journal group.
+    Reporting that as an empty error list is the dumpsys mistake again: a
+    check that answers "all clear" without having looked reads as caution and
+    is indistinguishable from one that works. SailfishOS hits this on every
+    device, because a-d-b logs in as the session user and cannot escalate.
+    """
+    import asteroid_docking_bay.diag as dg
+    out = ("---errors---\n"
+           "Hint: You are currently not seeing messages from other users.\n"
+           "      Users in groups 'adm', 'systemd-journal' can see all.\n"
+           "No journal files were opened due to insufficient permissions.\n"
+           "---boots---\n1\n")
+    d = dg.parse_diag(out)
+    assert d["errors"] is None, "a refused journal must not look like an empty one"
+    assert d.get("unavailable", {}).get("errors") == "denied"
+
+
+def test_a_genuinely_empty_journal_still_reports_empty():
+    """The honest all-clear must survive: a readable journal with nothing at
+    priority 3 is a real finding, and must not be downgraded to unavailable."""
+    import asteroid_docking_bay.diag as dg
+    d = dg.parse_diag("---errors---\n-- No entries --\n---boots---\n1\n")
+    assert d["errors"] == []
+    assert "errors" not in d.get("unavailable", {})
+
+
+def test_real_journal_lines_are_still_collected():
+    import asteroid_docking_bay.diag as dg
+    d = dg.parse_diag("---errors---\nkernel: i2c timeout\nmce: oops\n---boots---\n1\n")
+    assert d["errors"] == ["kernel: i2c timeout", "mce: oops"]
+    assert d.get("unavailable", {}) == {} or "errors" not in d["unavailable"]
+
+
+def test_the_journal_line_keeps_its_stderr():
+    """Every other source in DIAG_SCRIPT discards stderr, and should: an
+    absent file is a normal answer. The journal is the exception, because
+    journalctl announces a REFUSAL on stderr and succeeds with empty stdout.
+    Discard it and the refusal becomes an empty error list, which renders as
+    "no errors this boot".
+
+    parse_diag cannot catch this -- it is handed text and never sees how the
+    text was obtained -- so the guard has to sit on the script.
+    """
+    import asteroid_docking_bay.diag as dg
+    line = next(l for l in dg.DIAG_SCRIPT.split("; ") if "journalctl -p 3" in l)
+    assert "2>&1" in line, f"the journal refusal is being discarded: {line}"
+    assert "2>/dev/null" not in line, f"stderr suppressed on the journal: {line}"

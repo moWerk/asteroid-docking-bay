@@ -2064,7 +2064,13 @@ function dgHtml(d){
   const cap=d.bat_capacity_pct!=null?_kv('True capacity',d.bat_capacity_pct+'% of design'):'';
   let fails=(d.failed_units||[]).length?'<div class="err">'+d.failed_units.map(esc).join('<br>')+'</div>':'<span class="dim">none</span>';
   let irq='';(d.top_irqs||[]).forEach(i=>{irq+='<div class="bc-row"><span class="bc-n">irq '+esc(i.irq)+'</span><span class="dim" style="flex:1">'+esc(i.desc)+'</span><span class="bc-t">'+(i.count>1e6?(i.count/1e6).toFixed(1)+'M':i.count)+'</span></div>';});
-  let errs=(d.errors||[]).length?'<div class="dim" style="font-size:10px;white-space:pre-wrap;word-break:break-all">'+d.errors.map(esc).join('\\n')+'</div>':'<span class="dim">no errors this boot</span>';
+  // d.errors===null means the journal REFUSED us, which is not the same
+  // finding as an empty journal and must never render as one. SailfishOS hits
+  // it on every device: a-d-b logs in as the session user there and cannot
+  // escalate, so the fix is on the device, not here.
+  let errs=d.errors===null
+    ?'<span class="dim">journal not readable by this login &mdash; needs the journal group on this device</span>'
+    :((d.errors||[]).length?'<div class="dim" style="font-size:10px;white-space:pre-wrap;word-break:break-all">'+d.errors.map(esc).join('\\n')+'</div>':'<span class="dim">no errors this boot</span>');
   return S('Sleep &middot; '+sus,wk||'<span class="dim">no wakeup accounting</span>')+
     S('CPU residency',fr||'<span class="dim">no cpufreq stats</span>')+
     S('Failed units',fails)+
