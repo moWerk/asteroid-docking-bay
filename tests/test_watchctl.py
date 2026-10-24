@@ -258,3 +258,83 @@ def test_is_android_watch_covers_both_brands_but_not_asteroidos():
     assert is_android_watch("WearOS") and is_android_watch("AndroidWear")
     assert not is_android_watch("asteroidos")
     assert not is_android_watch("unknown") and not is_android_watch(None)
+
+
+# --- SailfishOS: same daemons, missing tools, non-root login ---------------
+
+class _Spy:
+    """A transport that records the command instead of running it."""
+    def __init__(self, rc=0):
+        self.calls = []
+        self.rc = rc
+    def shell(self, cmd, timeout=8, check=False):
+        self.calls.append(cmd)
+        return self.rc, "", ""
+
+
+def _sfos_watch(monkeypatch, os_name="Sailfish OS 5.1.0.11 (Pispala)"):
+    import asteroid_docking_bay.watchctl as wc
+    monkeypatch.setattr(wc, "_watch_os_for", lambda s: os_name)
+    w = wc.Watch.__new__(wc.Watch)
+    w.serial = "XA2"
+    w.t = _Spy()
+    return w, w.t
+
+
+def test_is_sailfish_matches_the_release_string_not_an_exact_name():
+    """os-release carries the version and a codename that changes every
+    release, so an equality test would go stale on the next update."""
+    import asteroid_docking_bay.watchctl as wc
+    assert wc.is_sailfish("Sailfish OS 5.1.0.11 (Pispala)")
+    assert wc.is_sailfish("sailfishos")
+    assert not wc.is_sailfish("asteroidos")
+    assert not wc.is_sailfish("")
+    assert not wc.is_sailfish(None)
+
+
+def test_user_cmd_does_not_wrap_su_on_sailfish(monkeypatch):
+    """a-d-b is already logged in AS the session user there: sshd refuses root
+    outright, there is no su to drop into, and the session bus address is
+    already in the environment. Wrapping in `su ceres` would be wrong twice."""
+    w, spy = _sfos_watch(monkeypatch)
+    w.user_cmd("dconf dump /")
+    assert "su ceres" not in spy.calls[0], spy.calls[0]
+    assert "dconf dump /" in spy.calls[0]
+
+
+def test_user_cmd_still_drops_into_ceres_on_asteroidos(monkeypatch):
+    w, spy = _sfos_watch(monkeypatch, os_name="asteroidos")
+    w.user_cmd("dconf dump /")
+    assert "su ceres" in spy.calls[0], spy.calls[0]
+    assert "XDG_RUNTIME_DIR=/run/user/1000" in spy.calls[0]
+
+
+def test_screen_on_sailfish_also_holds_the_display(monkeypatch):
+    """mcetool's demo mode is one action; on SailfishOS turning the display on
+    and keeping it on are two separate mce requests. Asking only for
+    req_display_state_on gives a screen that blanks again on the usual
+    timeout, which is not what the toggle promises."""
+    w, spy = _sfos_watch(monkeypatch)
+    assert w.screen(True) is True
+    joined = " ".join(spy.calls)
+    assert "req_display_state_on" in joined
+    assert "req_display_blanking_pause" in joined
+    assert "mcetool" not in joined
+
+
+def test_screen_off_on_sailfish_releases_the_hold_first(monkeypatch):
+    """Turning the display off without cancelling the pause leaves mce still
+    asked to keep it awake, so it can come straight back on."""
+    w, spy = _sfos_watch(monkeypatch)
+    w.screen(False)
+    joined = " ".join(spy.calls)
+    assert "req_display_cancel_blanking_pause" in joined
+    assert "req_display_state_off" in joined
+    assert spy.calls.index([c for c in spy.calls if "cancel" in c][0]) < \
+           spy.calls.index([c for c in spy.calls if "state_off" in c][0])
+
+
+def test_screen_still_uses_mcetool_on_asteroidos(monkeypatch):
+    w, spy = _sfos_watch(monkeypatch, os_name="asteroidos")
+    w.screen(True)
+    assert spy.calls[0] == "mcetool -D on", spy.calls[0]

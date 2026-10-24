@@ -241,6 +241,23 @@ WEAR_SHORT = {"WearOS": "WO", "AndroidWear": "AW"}
 _WEAR_OS_APP_MIN = (2, 20)   # com.google.android.wearable.app at the rebrand
 
 
+def is_sailfish(os_name: "str | None") -> bool:
+    """Whether this device runs SailfishOS.
+
+    Matched on the substring rather than an exact name because os-release
+    carries the release with it ("Sailfish OS 5.1.0.11 (Pispala)") and the
+    codename changes every release, so an equality test would go stale on the
+    next update.
+
+    SailfishOS shares AsteroidOS's whole lower half -- mce, usb-moded,
+    lipstick, dconf, systemd and the sysfs layout are the same furniture from
+    the Mer/Nemo lineage -- so almost nothing branches on this. What it is for
+    is the handful of places where the TOOL is missing rather than the
+    capability: mcetool is not installed, and the login is not root.
+    """
+    return "sailfish" in (os_name or "").lower()
+
+
 def is_android_watch(os_name: "str | None") -> bool:
     """Whether this watch runs the stock Android-based OS it shipped with,
     under either of its brand names."""
@@ -515,9 +532,28 @@ class Watch:
         return rc == 0
 
     def user_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
-        """Run a command in the watch's ceres user session (not as root)."""
+        """Run a command in the device's own user session (not as root).
+
+        On AsteroidOS a-d-b is logged in as root, so it drops into the ceres
+        session and carries the session environment in by hand. On SailfishOS
+        it is already logged in AS the session user -- sshd there refuses root
+        outright -- and sshd hands it a session bus address of its own, so
+        wrapping the command in `su` would be wrong twice over: there is no su
+        to use, and the environment is already correct.
+        """
+        if is_sailfish(_watch_os_for(self.serial)):
+            return self.t.shell(shlex.quote(cmd), timeout=timeout)
         inner = "su ceres -c " + shlex.quote(_CERES_ENV + " " + cmd)
         return self.t.shell(shlex.quote(inner), timeout=timeout)
+
+    def _mce_request(self, method: str, timeout: int = 10) -> bool:
+        """Ask mce for something over D-Bus, for a device running the daemon
+        without shipping mcetool. Same daemon, same requests, no binary."""
+        rc, _, _ = self.t.shell(shlex.quote(
+            "dbus-send --system --type=method_call --dest=com.nokia.mce "
+            f"/com/nokia/mce/request com.nokia.mce.request.{method}"),
+            timeout=timeout)
+        return rc == 0
 
     def settings_read(self) -> "dict | None":
         """The mirrored settings with their current values, read with one dconf
@@ -841,7 +877,28 @@ class Watch:
         return rc == 0
 
     def screen(self, on: bool) -> bool:
-        """Force the screen on (mce demo mode) or release it."""
+        """Force the screen on (mce demo mode) or release it.
+
+        SailfishOS runs the same mce and takes the same requests, but ships no
+        mcetool, so the requests go over D-Bus instead. Turning the display on
+        and holding it on are two separate requests there, where mcetool's
+        demo mode is one: req_display_state_on turns it on once and blanking
+        resumes on the usual timeout, so the hold needs the blanking pause
+        alongside it.
+
+        CAVEAT, and it is the same one AsteroidOS has: the blanking pause is a
+        renewable pause, not a latch, so a long hold must re-issue it. Its
+        effect is also UNVERIFIED here -- mce exposes no readable state for
+        it (get_display_blanking_inhibit answers "active" regardless), and
+        confirming it needs somebody watching the screen. The state change
+        itself IS verified: off and on round-trip on an XA2.
+        """
+        if is_sailfish(_watch_os_for(self.serial)):
+            if on:
+                return (self._mce_request("req_display_state_on")
+                        and self._mce_request("req_display_blanking_pause"))
+            self._mce_request("req_display_cancel_blanking_pause")
+            return self._mce_request("req_display_state_off")
         rc, _, _ = self.t.shell(f"mcetool -D {'on' if on else 'off'}", timeout=10)
         return rc == 0
 
