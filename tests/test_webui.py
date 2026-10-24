@@ -503,6 +503,8 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
                  "\nconsole.log(JSON.stringify({"
                  "adb: mkadb('device','', 'asteroidos','S9'),"
                  "ssh: mkadb('ssh','', null,'S9'),"
+                 "sfosAdb: mkadb('device','', 'Sailfish OS 5.1.0.11 (Pispala)','S9'),"
+                 "sfosSsh: mkadb('ssh','', 'Sailfish OS 5.1.0.11 (Pispala)','S9','192.168.2.16'),"
                  "wear: mkadb('device','', 'WearOS','S9')}));"
                  "\nprocess.exit(0);\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
@@ -515,6 +517,21 @@ def test_adb_and_ssh_badges_are_consistent_two_way_toggles(tmp_path):
         assert "cbadge" in out[k], f"{k} badge is not the pill style: {out[k]}"
         assert "<button" in out[k], f"{k} clickable badge is not a real button: {out[k]}"
         assert "<svg" in out[k], f"{k} badge is missing the AsteroidOS logo"
+    # The ssh pill keeps the asteroid logo when the OS is UNKNOWN, which is the
+    # normal case there: detection runs over adb and a watch in developer mode
+    # offers ssh INSTEAD of adb. A positively-identified SailfishOS device gets
+    # Jolla's mark instead, and must not get the asteroid one — that would read
+    # as an affiliation between two separate systems.
+    assert "<svg" not in out["sfosSsh"], \
+        f"a Jolla phone is wearing the AsteroidOS logo: {out['sfosSsh']}"
+    assert "data:image/png;base64," in out["sfosSsh"], \
+        f"SailfishOS ssh badge carries no mark at all: {out['sfosSsh']}"
+    # SailfishOS is supported, not merely observed, so its badge stays a real
+    # button with a Network Center — unlike a foreign OS such as Wear OS.
+    assert "<button" in out["sfosAdb"], \
+        f"SailfishOS badge is not clickable: {out['sfosAdb']}"
+    assert "openNC(" in out["sfosAdb"], \
+        f"SailfishOS badge does not open Network Center: {out['sfosAdb']}"
     # Clicking a badge opens the Network Center (not an inline mode toggle,
     # which was too easy to misclick).
     assert "openNC(" in out["adb"], f"ADB pill does not open Network Center: {out['adb']}"

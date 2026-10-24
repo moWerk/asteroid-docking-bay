@@ -1034,6 +1034,33 @@ function doSetSocket(slot,cur){
 }
 const AOSLOGO='<svg viewBox="0 0 2000 2000" width="13" height="13" style="vertical-align:-2px;margin-right:5px" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><defs><rect id="T" width="2" height="2"/></defs><g transform="matrix(100 100 -100 100 1000 0)"><g><use href="#T" style="fill:#be3729"/><use href="#T" id="b" x="2" style="fill:#dc2919"/><use href="#T" id="c" x="4" style="fill:#e54b3a"/><use href="#T" id="d" x="6" style="fill:#e56934"/><use href="#T" id="e" x="8" style="fill:#e57c21"/></g><g transform="translate(-2,2)"><use href="#b"/><use href="#c"/><use href="#T" id="f" x="10" style="fill:#e58a21"/></g><g transform="translate(-4,4)"><use href="#c"/><use href="#e"/><use href="#T" id="g" x="12" style="fill:#f19a11"/></g><g transform="translate(-6,6)"><use href="#d"/><use href="#e"/><use href="#f"/><use href="#T" id="h" x="14" style="fill:#f0ae0e"/></g><g transform="translate(-8,8)"><use href="#e"/><use href="#f"/><use href="#g"/><use href="#h"/><use href="#T" x="16" style="fill:#f0c30e"/></g></g></svg>';
 const USB_SSH_IP='192.168.2.15';
+// Jolla's mark, for SailfishOS devices. Inlined as a data URI rather than
+// fetched: the rig is frequently offline and the UI must never depend on a
+// remote host to render a row. 26px for a 13px slot, so it stays sharp.
+//
+// This is the exception to the no-vendor-logos note in mkadb, and it is an
+// exception about the VENDOR, not about the rule. That note is right that a
+// trademarked mark beside the AsteroidOS one can read as an affiliation, and
+// Google's marks stay out for exactly that reason. Jolla's posture is the
+// opposite: the community uses the mark freely and Jolla encourages it
+// (moWerk, who is in that community and asked for it here). Permission is a
+// fact about the holder, not something this file can reason its way to.
+const JOLLALOGO='<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAFl0lEQVR42oWWS2xdVxWGv7X2Pue+7/UjduLgoDYiEAQIIRplQCGkDzGAARJyRSvohBRKVQEDGICESgCJlxAIyoAJSAShKgYmSAUpKVZ5VqJKqqatAKWkpHabGL9i33t97zln78XgOonj2M2e7se311r/v/YWthtmMjWNTt8nAeAjc6u7ev38vUi8XUKcNJGUCKrggADEbY4RNLpKRfPO2l9l6+RjZnpcJALc8/LlO8WnDwN3qciEJCmiigAC5BjdaJRFSEWwrfeNEd+s0L80/6TfPDFl5o6LhCMvXNhTbox8H6cPuHKZotMhZplZnkeH0YuwbsYer3yoVmI+BP7eySkp2GaaSDDMiUnXb4ZMi4QPvvjq4bTZesJVq7dly0sx9LoGoioiAu5KgNtSx8eHKxwsJbSc8sjsMokIwkaoVyMCRMRFQf2mdIW7//naIVern1KnjWxpsRBVD4ICBdCPxoMjVT4xXOVnSx2yCK9kBRfzwJhXgrHjUB4zBbj3/OvjWq78Rp02Qre7ARlcMDMjAb490eKzozW+Nb/KieUu+1LHmfWclt4IUQYi2SwAnXoHclwkWpQfJc3mvqLTKRC5ltIIeBG+ON7g7WXP4wttfrfaY1/iCAavFYGA4WVwOEAnGsshktt1mADc+6/XD2u98UzsrQeur8cByyHy6K46VRUaqvxgoU03Ro6N1DhaL/HfLPCTxTb/7hc4gaYqB0qeo/USL67nYca8q/S6v/UApvoFVyoRB4XnespgMnHsTz2/Wuky1arQVOG7E0O81Cv4zOwK7yp7Ht1VZyVEyiKMemU5RJ5bzznXyymVE6IZ/u6XZkcRuafodMBwV2MVBhK+s5JyqQic7xfsSx1fHm/wi6Uup9t9vMClQulH462pZ6bT5+dLfS5kgdyMiioVGQjJo3rIpemumGWGyA0Gjma0VDHgQhaYyyNzeeDXV9Z5ZyXh2EiNvYljeqXLXzoZhRkVFWoqCELYkDiAF3W3S5JieR431RMDEhEuZAWHqgktJ3xvfo2v72lybLTG4WrKpTzw+fk1ABoqiAjRrrejzWpXUd4kutXSg0U1Fc6u55jBx1oVLuaBr11e5f6hCh745uU1Wk5oqBCBYLCTldRE0p1MNogKfrjQ5qOtCu+vpczlgU/PrlBR4f7hCitv5NJBbwCzQrnFsrII80XkO/NrHN/T5N3lhJUQeXyhzYebZeob0ex0gAgYOveGIDaegLoK57OCuTzw1d1NJhLHK1kgGOz1jswM2X67WDSE+PwtQVdhQ6q8mgee7vR5YKhKjqECXTN0B4yoaljvZhCfvSVIgNyM8UQZUuXJ1R4jTnhPJWUtGHN5IJWbRWBYcNWaWQhnT71l4oVbgpxAOxrvq5Y428sRGfS+B4er/GGtt1PKEMM0ScTMfny10e4MAbrR2J967qgmnFzp8tBIjQ/USvytk/HnTnZN2lte1uDrDZ8tLp4ZObD7CczUb5cqlYFi2nFQ5EdGa/x+tceXxhrcUU35xuVVTrX7NHXg/hu/GxY1SSQUeV8SPjUtEqZOnnR+K6RvRjcYqQhvK3m+srvBmFO8CAtF4JMXl/hfEWltB4kxqPfqKhXJl5cfOn1w73NTJ81N3yfB3wiBAyXPXfUS496xL3H8Jys40ck4t54zmwfqqlshZmYmEH2j6S0UvWxl8eGnDk6eODJjfvqoFAAeMMOCiAQzQ4ErIfKndp/zWWA1RJwMjDvslAgUXOs1IqrqazXRJNWi030mdNufe+rg5D+OzMz4pzcgGyArJ7Wyy/LC1bzjZYNzfaPkSpRrwtiGriKGXXsVZeD4GAn9Xj/2+88W3c5PT+8f+yVgGx+dYnNavUX7Y762PhmyXox9U4cwJIMGGbCb6jDoXRTiZdYked5Uzpx68/C5Lf/Cm7b9H8HFqTN06kKoAAAAAElFTkSuQmCC" width="13" height="13" alt="" style="vertical-align:-2px;margin-right:5px">';
+// SailfishOS reports its release in the name ("Sailfish OS 5.1.0.11
+// (Pispala)"), so match the substring — mirrors watchctl.is_sailfish.
+function isSfos(os){return /sailfish/i.test(os||'');}
+// Which mark belongs to this OS, if any.
+function osLogo(os){return os==='asteroidos'?AOSLOGO:(isSfos(os)?JOLLALOGO:'');}
+// The SSH pill is a special case, because the OS is usually UNKNOWN there:
+// detection runs over adb, and a watch in developer mode is offering ssh
+// INSTEAD of adb. Until SailfishOS arrived that did not matter, since
+// usb_moded is AsteroidOS-only and ssh mode therefore implied an AsteroidOS
+// watch — which is why this badge hardcoded the asteroid logo and was right
+// to. Now ssh is also how a Jolla phone connects, so the mark follows a
+// POSITIVE identification and otherwise falls back to the old assumption.
+// Guessing wrong here is cheap and guessing nothing is not: a pill with no
+// mark reads as an unsupported device.
+function sshLogo(os){return isSfos(os)?JOLLALOGO:AOSLOGO;}
 // Text, not logos — see the note in mkadb. Keys match watchctl.WEAR_BRANDS.
 const WEAR_SHORT={'WearOS':'WO','AndroidWear':'AW'};
 const WEAR_LONG={'WearOS':'Wear OS','AndroidWear':'Android Wear'};
@@ -1072,8 +1099,11 @@ function mkadb(adb,fbprod,os,serial,sshIp,name,ncm){
     // was too easy to misclick. A real <button> for the pointer cursor; a
     // known non-AsteroidOS watch (e.g. WearOS) stays a plain status span.
     // Shows the serial — the ADB address — mirroring the SSH pill's IP.
-    const known=os&&os!=='asteroidos'&&os!=='unknown';
-    const logo=os==='asteroidos'?AOSLOGO:'';
+    // `known` means a FOREIGN os we only read — it drops the row to a plain
+    // span with no Network Center. SailfishOS is supported, so it is not
+    // foreign: it keeps the button, like AsteroidOS.
+    const known=os&&os!=='asteroidos'&&!isSfos(os)&&os!=='unknown';
+    const logo=osLogo(os);
     const ser=serial?` <span class="dim">${esc(serial)}</span>`:'';
     // Stock-Android watches get a two-letter brand prefix instead of a vendor
     // logo. Google's marks are trademarked and their logos are copyrighted, so
@@ -1081,7 +1111,7 @@ function mkadb(adb,fbprod,os,serial,sshIp,name,ncm){
     // would read as an affiliation between the two systems — needs permission
     // we do not have. Naming the OS in text is referential use and needs none.
     const brand=WEAR_SHORT[os]||'';
-    const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(known?' — '+esc(WEAR_LONG[os]||os):'')}`;
+    const ttl=`ADB mode${os==='asteroidos'?' — AsteroidOS':(isSfos(os)?' — '+esc(os):(known?' — '+esc(WEAR_LONG[os]||os):''))}`;
     if(!known&&serial)
       return `<button class="cbadge adb" onclick="openNC('${jsq(serial)}','${nm}',event,'${jsq(sshIp||'')}','device')" title="${ttl} — click for network details">${logo}${ux('ADB','connected')}${ncmTag(ncm)}${ser}</button>`;
     return `<span class="cbadge adb" title="${ttl}">${logo}${brand?brand+' ':''}${ux('ADB','connected')}${ncmTag(ncm)}${ser}</span>`;
@@ -1094,8 +1124,8 @@ function mkadb(adb,fbprod,os,serial,sshIp,name,ncm){
     // is rendered as what it is — an error — and the guess stays in the
     // tooltip where it is labelled as a guess.
     if(sshIp)
-      return `<button class="cbadge ssh" onclick="openNC('${jsq(serial||'')}','${nm}',event,'${jsq(sshIp)}','ssh')" title="SSH/developer USB mode at ${esc(sshIp)} (its own address) — click for network details">${AOSLOGO}${ux('SSH','connected')}${isDev()?` <span class="dim">${esc(sshIp)}</span>`:''}</button>`;
-    return `<button class="cbadge ssh noaddr" onclick="openNC('${jsq(serial||'')}','${nm}',event,'','ssh')" title="Enumerated in SSH/developer mode but a-d-b has NO usable address for it, so no command can reach it. It was never given an address of its own, so it should be on the shared default ${USB_SSH_IP} — but that is unverified, and it has not answered there. Typically the host has not completed DHCP on this link (check that the interface got an IPv4 address), or another watch is shadowing the shared address.">${AOSLOGO}${ux('SSH','connected')} <b>${ux('no address','not reachable')}</b></button>`;
+      return `<button class="cbadge ssh" onclick="openNC('${jsq(serial||'')}','${nm}',event,'${jsq(sshIp)}','ssh')" title="SSH/developer USB mode at ${esc(sshIp)} (its own address)${isSfos(os)?' — '+esc(os):''} — click for network details">${sshLogo(os)}${ux('SSH','connected')}${isDev()?` <span class="dim">${esc(sshIp)}</span>`:''}</button>`;
+    return `<button class="cbadge ssh noaddr" onclick="openNC('${jsq(serial||'')}','${nm}',event,'','ssh')" title="Enumerated in SSH/developer mode but a-d-b has NO usable address for it, so no command can reach it. It was never given an address of its own, so it should be on the shared default ${USB_SSH_IP} — but that is unverified, and it has not answered there. Typically the host has not completed DHCP on this link (check that the interface got an IPv4 address), or another watch is shadowing the shared address.">${sshLogo(os)}${ux('SSH','connected')} <b>${ux('no address','not reachable')}</b></button>`;
   }
   if(adb==='fastboot'){const l=fbprod?`${ux('fastboot','update mode')}: ${esc(fbprod)}`:ux('fastboot','update mode');return `<span class="cbadge fb" title="watch is in the bootloader (fastboot) — flash/backup only, no ADB or watch functions">${l}</span>`;}
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
