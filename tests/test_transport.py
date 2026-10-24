@@ -52,3 +52,29 @@ def test_quoting_is_preserved_verbatim(monkeypatch):
     tp.SshTransport().shell(q)
     assert calls[0][0] == f"adb -s S shell {q}"
     assert calls[1][0].endswith(f"root@192.168.2.15 {q}")
+
+
+def test_scp_honours_the_transports_user_over_ipv4(monkeypatch):
+    """`shell` always used self.user, but pull/push hardcoded root@ on the v4
+    path while the v6 path did not. So a transport built for a NON-root login
+    ran its commands as that user and then tried to copy files as root.
+
+    Both logins that need this are real: `ceres` on the NCM watches, where
+    root cannot reach the wayland socket, and `nemo` on SailfishOS, where
+    sshd refuses root outright. Neither is reachable over IPv6, so the branch
+    that was wrong is the only branch they use.
+    """
+    calls = _spy(monkeypatch)
+    t = tp.SshTransport("192.168.2.16", over="usb", user="nemo")
+    t.pull("/remote/f", "/local/f")
+    t.push("/local/f", "/remote/f")
+    assert "nemo@192.168.2.16:/remote/f /local/f" in calls[0][0], calls[0][0]
+    assert "/local/f nemo@192.168.2.16:/remote/f" in calls[1][0], calls[1][0]
+    assert "root@" not in calls[0][0] and "root@" not in calls[1][0]
+
+
+def test_scp_still_uses_root_when_that_is_the_user(monkeypatch):
+    """The default login is root, and the fix must not quietly change it."""
+    calls = _spy(monkeypatch)
+    tp.SshTransport("192.168.2.15").pull("/a", "/b")
+    assert "root@192.168.2.15:/a /b" in calls[0][0], calls[0][0]

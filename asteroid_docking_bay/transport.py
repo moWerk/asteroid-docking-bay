@@ -105,12 +105,12 @@ class SshTransport(Transport):
         if ":" in self.ip:
             return _run(f"scp -6 {_SSH_OPTS} -r {self.user}@[{self.ip}]:{remote} {local}",
                         check=False, timeout=timeout)
-        return _run(f"scp {_SSH_OPTS} -r root@{self.ip}:{remote} {local}",
+        return _run(f"scp {_SSH_OPTS} -r {self._target}:{remote} {local}",
                     check=False, timeout=timeout)
 
     def push(self, local, remote, timeout=15):
         if ":" in self.ip:
             return _run(f"scp -6 {_SSH_OPTS} -r {local} {self.user}@[{self.ip}]:{remote}",
                         check=False, timeout=timeout)
-        return _run(f"scp {_SSH_OPTS} -r {local} root@{self.ip}:{remote}",
+        return _run(f"scp {_SSH_OPTS} -r {local} {self._target}:{remote}",
                     check=False, timeout=timeout)
