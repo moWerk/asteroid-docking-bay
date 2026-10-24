@@ -142,7 +142,7 @@ echo "membuffers=$(grep -m1 Buffers /proc/meminfo | tr -dc 0-9)"
 echo "memcached=$(grep -m1 "^Cached" /proc/meminfo | tr -dc 0-9)"
 echo "wlanmac=$(cat /sys/class/net/wlan0/address 2>/dev/null)"
 echo "btmac_self=$(cat /sys/class/bluetooth/hci0/address 2>/dev/null)"
-echo "tz=$(readlink /etc/localtime 2>/dev/null | sed "s,.*/zoneinfo/,,")"
+echo "tz=$(readlink -f /etc/localtime 2>/dev/null | sed "s,.*/zoneinfo/,,")"
 echo "datetime=$(date "+%Y-%m-%d %H:%M:%S")"
 echo "soc=$(grep -m1 Hardware /proc/cpuinfo | cut -d: -f2)"
 echo "cpufreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)"
@@ -173,6 +173,12 @@ echo "bt_flags=$(hciconfig hci0 2>/dev/null | grep -o "UP\|DOWN\|PSCAN\|ISCAN" |
 echo "wifi_ssid=$(connmanctl services 2>/dev/null | grep "^\*" | head -1 | sed "s/^\*[A-Za-z]* *//;s/  *wifi_.*//")"
 echo "wifi_signal=$(grep wlan0 /proc/net/wireless 2>/dev/null | sed "s/^ *//" | tr -s " " | cut -d" " -f4 | tr -d ".")"
 echo "usb_ifip=$(ip -o -4 addr show 2>/dev/null | grep -E "usb0|rndis0" | grep -o "inet [0-9.]*" | cut -d" " -f2 | head -1)"
+# Empty on anything without mcetool, which includes every SailfishOS device:
+# mce is running there and answers over D-Bus, but its
+# get_display_blanking_inhibit returns "active" unchanged whether blanking is
+# paused, cancelled or untouched -- measured on an XA2. It reports a policy,
+# not the pause. Feeding it in here would set screen_forced on every Sailfish
+# device forever, so the field stays empty, which already means "unknown".
 echo "blank_inhibit=$(mcetool 2>/dev/null | grep "^Blank inhibit" | cut -d: -f2 | tr -d " ")"
 echo "--connman--"
 connmanctl technologies 2>/dev/null'''

@@ -220,13 +220,27 @@ def get_watch_codename(serial: str, shell=None) -> str | None:
     same signature as this default, so every read below is unchanged.
     """
     run = shell or (lambda c: adb_shell(serial, c))
-    rc, out, _ = run("cat /etc/asteroid-release 2>/dev/null")
-    if rc == 0:
+    # The PORT's own identity file, whichever OS wrote it. AsteroidOS ships
+    # /etc/asteroid-release; SailfishOS ships /etc/hw-release, which is the
+    # same idea by another name ("analogous to os-release", says its own first
+    # line) and carries the porting codename: ID=h4113 on the Xperia XA2.
+    # Both are tried before getprop deliberately. A hybris device answers
+    # `getprop ro.product.device` with the VENDOR codename, which is a
+    # different name for the same hardware -- pioneer, where Sailfish, ssu and
+    # the whole porting community say h4113. Letting getprop win would file
+    # the device under a name nothing else on the rig uses.
+    for path, keys in (("/etc/asteroid-release", ("MACHINE=", "IMAGE_CODENAME=")),
+                       ("/etc/hw-release", ("ID=", "MER_HA_DEVICE="))):
+        rc, out, _ = run(f"cat {path} 2>/dev/null")
+        if rc != 0:
+            continue
         for line in out.splitlines():
             line = line.strip()
-            for key in ("MACHINE=", "IMAGE_CODENAME="):
+            for key in keys:
                 if line.startswith(key):
-                    return line.split("=", 1)[1].strip("\"'")
+                    value = line.split("=", 1)[1].strip("\"'")
+                    if is_a_codename(value):
+                        return value
 
     rc, out, _ = run("cat /etc/os-release 2>/dev/null")
     if rc == 0:

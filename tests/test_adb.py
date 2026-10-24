@@ -487,3 +487,65 @@ def test_charge_flow_survives_a_watch_that_answers_nothing(monkeypatch):
                         (0, _supplies(currents=[("battery", "n/a"),
                                                 ("usb", "7")]), ""))
     assert a.charge_flow("S") == (None, 7)
+
+
+# --- the port's identity file, whichever OS wrote it -----------------------
+
+def _codename_shell(files, getprop="", hostname=""):
+    """A fake transport answering `cat <path>` from a dict, plus the two
+    fallbacks at the end of the chain."""
+    def shell(cmd, timeout=8):
+        for path, body in files.items():
+            if f"cat {path} " in cmd or cmd.endswith(f"cat {path}"):
+                return 0, body, ""
+        if "getprop" in cmd:
+            return (0, getprop, "") if getprop else (1, "", "")
+        if "hostname" in cmd:
+            return (0, hostname, "") if hostname else (1, "", "")
+        return 1, "", ""
+    return shell
+
+
+def test_codename_prefers_hw_release_over_the_vendor_name(monkeypatch):
+    """A hybris device answers getprop with the VENDOR codename, which is a
+    different name for the same hardware: `pioneer` where SailfishOS, ssu and
+    the porting community all say `h4113`. The port's own file must win, or
+    the device is filed under a name nothing else on the rig uses.
+    """
+    import asteroid_docking_bay.adb as a
+    shell = _codename_shell(
+        {"/etc/hw-release": '# analogous to os-release\n'
+                            'NAME="Sony Xperia XA2 - Dual SIM"\n'
+                            'ID=h4113\nMER_HA_DEVICE=h4113\n'
+                            'VERSION_ID=1.0.0.7\n'},
+        getprop="pioneer", hostname="mosen-xa2")
+    assert a.get_watch_codename("S", shell=shell) == "h4113"
+
+
+def test_codename_does_not_take_version_id_for_the_id(monkeypatch):
+    """`VERSION_ID=` must not satisfy a prefix test for `ID=`, and the NAME
+    line must not be mistaken for it either."""
+    import asteroid_docking_bay.adb as a
+    shell = _codename_shell(
+        {"/etc/hw-release": 'VERSION_ID=1.0.0.7\nNAME="Xperia"\nID=h4113\n'})
+    assert a.get_watch_codename("S", shell=shell) == "h4113"
+
+
+def test_asteroid_release_still_wins_where_it_exists(monkeypatch):
+    """Adding a second identity file must not disturb the first."""
+    import asteroid_docking_bay.adb as a
+    shell = _codename_shell(
+        {"/etc/asteroid-release": "MACHINE=sturgeon\n",
+         "/etc/hw-release": "ID=h4113\n"},
+        getprop="pioneer")
+    assert a.get_watch_codename("S", shell=shell) == "sturgeon"
+
+
+def test_an_identity_file_holding_a_non_codename_is_refused(monkeypatch):
+    """A half-ported device can leave `(none)` or `localhost` in these files.
+    Returning it would freeze the device under that name, which is exactly how
+    a watch once got stuck being called "(none)"."""
+    import asteroid_docking_bay.adb as a
+    shell = _codename_shell({"/etc/hw-release": "ID=(none)\n"},
+                            getprop="pioneer")
+    assert a.get_watch_codename("S", shell=shell) == "pioneer"
