@@ -5,6 +5,7 @@ The web routes and the op table are two sides of one contract; these tests
 pin them together so a renamed op or a route calling a nonexistent one
 fails here instead of returning ok:false to a browser."""
 
+import inspect
 import re
 from pathlib import Path
 
@@ -1945,3 +1946,32 @@ def test_an_ncm_watch_is_reached_over_its_own_link_local(monkeypatch):
                         lambda p: {"adb": True, "ncm": False,
                                    "mass_storage_only": False, "interfaces": []})
     assert ro._reachable_transport("S1") is None
+
+
+def test_onboarding_accepts_a_device_that_offers_no_adb(monkeypatch):
+    """Onboarding waited for a serial to appear on ADB. A SailfishOS phone
+    never does -- it offers ssh INSTEAD -- so the wait ran its full window,
+    power-cycled the port, and waited again, for ever. The cycling is what
+    made the phone reconnect in a loop while onboarding (moWerk), and it was
+    answering the whole time.
+    """
+    import asteroid_docking_bay.rpcops as rp
+    src = inspect.getsource(rp._onboard_stream)
+    assert "port_device_info" in src, \
+        "onboarding cannot see a device that is not on adb"
+    assert "ssh_reach_ip" in src, \
+        "onboarding never tries to reach a device over its own link"
+    # The codename read must use the transport that found it, or it falls back
+    # to the raw USB serial and the port is named CQ30017HVF.
+    assert "shell=found_shell" in src, \
+        "the codename is read over adb even when the device was found by ssh"
+
+
+def test_onboarding_does_not_open_an_ssh_session_every_second(monkeypatch):
+    """The probe opens a real ssh session and the device announces each one --
+    that is the notification moWerk heard once a minute. Polling it on every
+    pass of a one-second loop would announce once a second."""
+    import asteroid_docking_bay.rpcops as rp
+    src = inspect.getsource(rp._onboard_stream)
+    assert "el >= nxt_ssh" in src, "the ssh probe is not rate-limited"
+    assert "nxt_ssh = el +" in src, "the rate limit never advances"

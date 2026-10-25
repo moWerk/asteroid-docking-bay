@@ -2421,25 +2421,47 @@ def _onboard_stream(loc: str, port: int):
                 # again — this is what made the manual "Refresh twice" work.
                 wait_each = charge_config(load_config()).onboard_wait_seconds
 
+                # How the device was found, so the codename read below uses
+                # the transport that actually reaches it. None = adb.
+                found_shell = {"shell": None}
+
                 def _wait_for_watch(secs: int) -> "str | None":
                     st = time.monotonic()
-                    nxt = 15
+                    nxt, nxt_ssh = 15, 5.0
                     while time.monotonic() - st < secs:
                         devices = adb_devices()
                         path_map = _sysfs_path_to_serial_map(
                             set(devices.keys()), adb_usb_paths(devices))
                         s = path_map.get(sysfs_path)
                         if s and _adb_state(devices, s) == "device":
+                            found_shell["shell"] = None
                             return s
                         el = time.monotonic() - st
+                        # A device can offer a NETWORK link instead of adb and
+                        # be perfectly reachable. Waiting for adb on one waits
+                        # for ever, and the retry cycle below then power-cycles
+                        # a phone that was answering the whole time -- which is
+                        # the reconnect loop moWerk watched during onboarding.
+                        #
+                        # Probed every few seconds, not every second: this
+                        # opens a real ssh session, and the device announces
+                        # each one.
+                        if el >= nxt_ssh:
+                            nxt_ssh = el + 5.0
+                            dev = port_device_info(loc, port)
+                            if dev and dev["serial"] and dev["link"] == "rndis":
+                                ip = ssh_reach_ip(load_config(), dev["serial"])
+                                if ip:
+                                    found_shell["shell"] = SshTransport(ip).shell
+                                    return dev["serial"]
                         if el >= nxt:
                             _emit(f"…waiting ({int(el)} / {secs} s)")
                             nxt += 15
                         time.sleep(1.0)
                     return None
 
-                _emit(f"Waiting for the watch to boot and expose ADB "
-                      f"(up to {wait_each} s)…")
+                _emit(f"Waiting for the device to boot and answer on ADB "
+                      f"or over its own network link (up to {wait_each} s)…")
                 found_serial: "str | None" = _wait_for_watch(wait_each)
                 if found_serial and not is_a_serial(found_serial):
                     _emit(f"The watch enumerated with an unusable serial "
@@ -2449,22 +2471,24 @@ def _onboard_stream(loc: str, port: int):
                                 loc, port, found_serial)
                     found_serial = None
                 if not found_serial:
-                    _emit("No ADB yet — power-cycling the port to retry "
-                          "enumeration…")
+                    _emit("Nothing answering yet — power-cycling the port to "
+                          "retry enumeration…")
                     with _adb_lock:
                         uhubctl_cycle(loc, port)
                     _emit(f"Waiting again after the cycle (up to {wait_each} s)…")
                     found_serial = _wait_for_watch(wait_each)
 
                 if found_serial:
-                    _emit(f"ADB: {found_serial}")
+                    _emit(("SSH: " if found_shell["shell"] else "ADB: ")
+                          + found_serial)
                     with _config_lock:
                         cfg = load_config()
                         codename = cfg.get("serials", {}).get(found_serial)
 
                     if not codename:
-                        _emit("Reading codename from watch…")
-                        codename = get_watch_codename(found_serial) or found_serial
+                        _emit("Reading codename from the device…")
+                        codename = get_watch_codename(
+                            found_serial, shell=found_shell["shell"]) or found_serial
                     _emit(f"Watch: {codename}")
 
                     with _config_lock:
