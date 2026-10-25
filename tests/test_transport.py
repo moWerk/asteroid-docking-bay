@@ -111,7 +111,8 @@ def test_a_refused_login_falls_back_and_is_remembered(monkeypatch):
     tried = _auth_spy(monkeypatch, "nemo")
     rc, out, _ = tp.SshTransport("192.168.2.16").shell("hostname")
     assert rc == 0, "never found a login that works"
-    assert tried == ["root", "nemo"], tried
+    # root's command, root's probe, nemo's probe, then the command again
+    assert tried[0] == "root" and "nemo" in tried, tried
     # remembered, so the next transport to that address starts there
     tried2 = _auth_spy(monkeypatch, "nemo")
     tp.SshTransport("192.168.2.16").shell("hostname")
@@ -128,7 +129,11 @@ def test_an_unreachable_host_is_not_probed_three_times(monkeypatch):
         return 255, "", "ssh: connect to host 10.0.0.9 port 22: No route to host"
     monkeypatch.setattr(tp, "_run", run)
     tp.SshTransport("10.0.0.9").shell("hostname")
-    assert tried == ["root"], f"an unreachable host was probed repeatedly: {tried}"
+    # The command, then ONE probe that tells us it is the host and not the
+    # login -- and then it stops. The cost must not scale with the number of
+    # logins we know about, or every shelved watch pays for all of them.
+    assert tried == ["root", "root"], f"probed every login: {tried}"
+    assert "nemo" not in tried and "defaultuser" not in tried
 
 
 def test_an_explicit_login_is_never_second_guessed(monkeypatch):
@@ -148,3 +153,40 @@ def test_forgetting_a_login_lets_a_reflashed_device_be_found(monkeypatch):
     assert tp._login_for.get("192.168.2.16") == "nemo"
     tp.forget_ssh_login("192.168.2.16")
     assert "192.168.2.16" not in tp._login_for
+
+
+def test_a_caller_that_hides_stderr_does_not_hide_the_refusal(monkeypatch):
+    """Callers routinely append `2>/dev/null`, and the HOST shell applies it
+    to ssh itself -- so ssh's own "Permission denied" is thrown away and the
+    refusal arrives as a bare 255 with EMPTY stderr, indistinguishable from
+    an unreachable host.
+
+    Measured on an XA2: the os-release read carries that redirect, so the
+    fallback never fired, detection fell through to getprop (which hybris
+    devices answer) and a Jolla phone reported itself as a Wear OS watch.
+    The login question therefore has to be asked with a command of our own.
+    """
+    tp._login_for.clear()
+    tried = []
+    def run(cmd, check=True, timeout=None):
+        user = cmd.split("@")[0].split()[-1]
+        tried.append(user)
+        if cmd.rstrip().endswith("2>/dev/null"):
+            return (0, "ok", "") if user == "nemo" else (255, "", "")
+        return (0, "", "") if user == "nemo" else (255, "", "Permission denied.")
+    monkeypatch.setattr(tp, "_run", run)
+    rc, out, _ = tp.SshTransport("192.168.2.16").shell("cat /etc/f 2>/dev/null")
+    assert rc == 0 and out == "ok", f"refusal stayed hidden: rc={rc} tried={tried}"
+    assert tp._login_for.get("192.168.2.16") == "nemo"
+
+
+def test_the_probe_stops_at_an_unreachable_host(monkeypatch):
+    """A host that is simply not there must not be probed once per login."""
+    tp._login_for.clear()
+    tried = []
+    def run(cmd, check=True, timeout=None):
+        tried.append(cmd.split("@")[0].split()[-1])
+        return 255, "", "ssh: connect to host: No route to host"
+    monkeypatch.setattr(tp, "_run", run)
+    tp.SshTransport("10.0.0.9").shell("hostname 2>/dev/null")
+    assert tried == ["root", "root"], f"probed every login: {tried}"

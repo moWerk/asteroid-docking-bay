@@ -130,24 +130,37 @@ class SshTransport(Transport):
     def shell(self, cmd, timeout=8, check=False):
         rc, out, err = _run(f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
                             check=check, timeout=timeout)
-        if self.fixed_user or not _is_auth_refusal(rc, err):
-            if rc == 0:
-                _login_for[self.ip] = self.user
+        if rc == 0:
+            _login_for[self.ip] = self.user
             return rc, out, err
-        # The login was refused, not the host. Try the others once each and
-        # remember whichever answers, so this costs one round of probing per
-        # address rather than one per command.
+        if self.fixed_user or self.ip in _login_for:
+            return rc, out, err
+        # The command failed and we do not yet know which login this device
+        # takes -- and we cannot tell why from THIS result. Callers routinely
+        # append `2>/dev/null`, which the HOST shell applies to ssh itself, so
+        # ssh's own "Permission denied" is thrown away and the refusal arrives
+        # as a bare 255 with empty stderr, indistinguishable from an
+        # unreachable host. Measured on an XA2: the os-release read carries
+        # that redirect, so the fallback never fired, detection fell through
+        # to getprop -- which hybris devices answer -- and a Jolla phone
+        # reported itself as a Wear OS watch.
+        #
+        # So the question is asked with a command of OUR OWN, whose stderr no
+        # caller can redirect. It runs only while the login is unknown.
         for candidate in _SSH_LOGINS:
-            if candidate == self.user:
-                continue
-            self.user = candidate
-            rc, out, err = _run(
-                f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
-                check=check, timeout=timeout)
-            if not _is_auth_refusal(rc, err):
-                if rc == 0:
-                    _login_for[self.ip] = candidate
-                return rc, out, err
+            prc, _, perr = _run(
+                f"ssh{self._family} {_SSH_OPTS} {candidate}@{self.ip} true",
+                check=False, timeout=timeout)
+            if prc == 0:
+                _login_for[self.ip] = candidate
+                if candidate == self.user:
+                    return rc, out, err      # right login, command failed
+                self.user = candidate
+                return _run(
+                    f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
+                    check=check, timeout=timeout)
+            if not _is_auth_refusal(prc, perr):
+                break        # unreachable, not a login problem: stop probing
         return rc, out, err
 
     def pull(self, remote, local, timeout=15):

@@ -91,9 +91,16 @@ _watch_os: dict[str, str] = {}
 _watch_build: dict[str, str] = {}
 
 
-def detect_watch_os(serial: str) -> str:
-    """Best-effort OS identification for an ADB-online watch."""
-    rc, out, _ = adb_shell(serial, "cat /etc/os-release 2>/dev/null")
+def detect_watch_os(serial: str, shell=None) -> str:
+    """Best-effort OS identification for a reachable device.
+
+    `shell` runs every read over any transport, mirroring
+    get_watch_codename. It was ADB-only, which meant a device offering no adb
+    -- SailfishOS in developer mode offers ssh INSTEAD -- could not be
+    identified at all, so its port row showed a serial, a link type and
+    nothing else."""
+    run = shell or (lambda c: adb_shell(serial, c))
+    rc, out, _ = run("cat /etc/os-release 2>/dev/null")
     if rc == 0 and out.strip():
         kv = {}
         for line in out.splitlines():
@@ -107,21 +114,27 @@ def detect_watch_os(serial: str) -> str:
         if kv.get("NAME"):
             return kv["NAME"]
     # Android-based (Wear OS) watches have getprop instead of os-release.
-    rc, out, _ = adb_shell(serial, "getprop ro.build.version.release")
+    rc, out, _ = run("getprop ro.build.version.release")
     if rc == 0 and out.strip():
         # Which brand it shipped under needs the companion app version; a
         # failed read falls back to the modern name inside wear_brand().
-        _, sdk, _e = adb_shell(serial, "getprop ro.build.version.sdk")
-        _, app, _e = adb_shell(
-            serial, "dumpsys package com.google.android.wearable.app "
+        _, sdk, _e = run("getprop ro.build.version.sdk")
+        _, app, _e = run(
+            "dumpsys package com.google.android.wearable.app "
                     "2>/dev/null | sed -n 's/.*versionName=//p' | head -1")
         return wear_brand(sdk if _ == 0 else "", app)
     return "unknown"
 
 
-def _watch_os_for(serial: str) -> str:
+def _watch_os_for(serial: str, shell=None) -> str:
+    """The cached OS for a serial, detecting it once if need be.
+
+    `shell` runs the detection over any transport, exactly as
+    get_watch_codename does. Without it a device that offers no adb at all --
+    a SailfishOS phone in developer mode -- can never be identified, and its
+    row stays blank however reachable it is."""
     if serial not in _watch_os:
-        _watch_os[serial] = detect_watch_os(serial)
+        _watch_os[serial] = detect_watch_os(serial, shell=shell)
     return _watch_os[serial]
 
 
