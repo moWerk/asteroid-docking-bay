@@ -338,3 +338,18 @@ def test_screen_still_uses_mcetool_on_asteroidos(monkeypatch):
     w, spy = _sfos_watch(monkeypatch, os_name="asteroidos")
     w.screen(True)
     assert spy.calls[0] == "mcetool -D on", spy.calls[0]
+
+
+def test_the_control_centre_script_puts_sbin_on_the_path():
+    """a-d-b is root on an AsteroidOS watch, and root's PATH carries sbin. It
+    is not root everywhere: on SailfishOS it logs in as the session user,
+    whose non-interactive PATH is /usr/local/bin:/bin:/usr/bin. `ip` lives in
+    /usr/sbin there, so every address came back empty -- and an empty address
+    looks exactly like a device that has no such interface, which is how it
+    was misread on an XA2 until the PATH was checked.
+    """
+    import asteroid_docking_bay.watchctl as wc
+    assert wc._CC_SCRIPT.startswith("PATH="), wc._CC_SCRIPT[:60]
+    assert "/usr/sbin" in wc._CC_SCRIPT.split(";", 1)[0]
+    # and the script it guards is still there, not replaced by the prefix
+    assert "os=$NAME $VERSION" in wc._CC_SCRIPT

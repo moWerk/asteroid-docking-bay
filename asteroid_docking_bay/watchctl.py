@@ -129,6 +129,15 @@ def _watch_os_for(serial: str) -> str:
 # Data sources mirror asteroid-settings AboutPage.qml / QuickPanelPage.qml,
 # confirmed on AsteroidOS 1.1 / kernel 3.10. adb shell runs as root. One shell
 # batch keeps it to a single round-trip. See reference_watch_control_commands.
+# a-d-b is root on an AsteroidOS watch, and root's PATH carries the sbin
+# directories. It is NOT root everywhere: on SailfishOS it logs in as the
+# session user, whose non-interactive PATH is /usr/local/bin:/bin:/usr/bin
+# with no sbin at all. `ip` lives in /usr/sbin there, so every address this
+# script reads came back EMPTY -- and an empty address is indistinguishable
+# from a device with no such interface, which is how it was read at first.
+# Prepending costs nothing where sbin is already on the path.
+_SBIN = "PATH=$PATH:/usr/sbin:/sbin; "
+
 _CC_SCRIPT = r'''. /etc/os-release 2>/dev/null; echo "os=$NAME $VERSION"
 echo "host=$(hostname)"
 echo "kernel=$(uname -r)"
@@ -182,7 +191,7 @@ echo "usb_ifip=$(ip -o -4 addr show 2>/dev/null | grep -E "usb0|rndis0" | grep -
 echo "blank_inhibit=$(mcetool 2>/dev/null | grep "^Blank inhibit" | cut -d: -f2 | tr -d " ")"
 echo "--connman--"
 connmanctl technologies 2>/dev/null'''
-_CC_SCRIPT = _CC_SCRIPT.replace("__BATDIR__", battery_dir_snippet())
+_CC_SCRIPT = _SBIN + _CC_SCRIPT.replace("__BATDIR__", battery_dir_snippet())
 
 # The same read, for a watch running the stock Android/Wear OS it shipped with.
 # Deliberately emits the SAME KEY NAMES as _CC_SCRIPT: the parser, the UI and
