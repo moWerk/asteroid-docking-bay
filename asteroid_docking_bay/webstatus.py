@@ -35,6 +35,11 @@ from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
 from .fastboot import (_detect_rndis, _fastboot_getvar_product,
                        _fastboot_list, ssh_reach_ip)
 from .transport import SshTransport
+
+# Codenames learned over ssh from devices that offer no adb, kept so an
+# unmapped port does not re-read /etc/hw-release on every refresh. A None
+# is cached too: an unidentifiable device must not cost a probe each time.
+_ssh_codename: dict = {}
 from .events import _latest_drain_summaries
 from .lastseen import last_seen
 from .registry import registry
@@ -1106,6 +1111,26 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # of a move the hub never announced. Say so rather than hide it —
             # the node really is on the bus, and a silently missing row was the
             # bug the sysfs-first rendering exists to fix.
+            # A device that offers a NETWORK link instead of adb identifies
+            # itself over ssh or not at all. Without this the row shows a USB
+            # serial, the link type, and nothing else -- which is exactly what
+            # a SailfishOS phone looked like on the rig for an afternoon.
+            #
+            # Gated on there being no adb serial, so it costs the watches
+            # nothing, and the results are cached per serial: the OS in
+            # _watch_os, the codename here. An unidentifiable device is cached
+            # as such too, or every refresh pays its probe again.
+            dev_ssh_ip = dev_os = None
+            if (dev and dev["link"] == "rndis" and dev["serial"]
+                    and not adb_serial):
+                dev_ssh_ip = ssh_reach_ip(cfg, dev["serial"])
+                if dev_ssh_ip:
+                    shell = SshTransport(dev_ssh_ip).shell
+                    dev_os = _watch_os_for(dev["serial"], shell=shell) or None
+                    if dev["serial"] not in _ssh_codename:
+                        _ssh_codename[dev["serial"]] = get_watch_codename(
+                            dev["serial"], shell=shell)
+                    adb_codename = adb_codename or _ssh_codename[dev["serial"]]
             dev_stale = False
             if dev and dev["serial"]:
                 live = _adb_paths.get(dev["serial"])
@@ -1121,7 +1146,9 @@ def _web_status_data(cfg: dict) -> list[dict]:
                     bool(fb_serial),
                     lambda: _sysfs_usb_mode(sysfs_path) == "ssh"),
                 "os": (_watch_os_for(adb_serial)
-                       if adb_serial and _adb_state(devices, adb_serial) == "device" else None),
+                       if adb_serial and _adb_state(devices, adb_serial) == "device"
+                       else dev_os),
+                "ssh_ip": dev_ssh_ip,
                 "battery": None,
                 "flashing": remapping, "empty": True,
                 "fastboot_product": fb_product,
