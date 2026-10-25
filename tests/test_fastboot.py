@@ -247,3 +247,73 @@ def test_release_image_names_come_from_the_release_not_from_an_assumption(tmp_pa
     # No manifest at all (offline / empty file) keeps the previous behaviour.
     empty = tmp_path / "none"
     assert fb._release_filenames("sparrow", empty)[0] == "zImage-dtb-sparrow.fastboot"
+
+
+# --- finding a device a-d-b did not address itself -------------------------
+
+_LINKS = [{"iface": "usb0", "usb_path": "1-3.4", "serial": "XA2"}]
+
+
+def test_neighbour_lookup_is_the_last_resort_not_the_first():
+    """Every earlier step assumes a-d-b chose the address, which is true of
+    every AsteroidOS watch and of nothing else. The neighbour lookup is the
+    only step that can cost a probe to an address no watch ever used, so an
+    allocated address that answers must still win without it being consulted.
+    """
+    import asteroid_docking_bay.fastboot as fb
+    asked = []
+    def neigh(iface):
+        asked.append(iface)
+        return ["10.0.0.9"]
+    got = fb._pick_ssh_ip("XA2", _LINKS, "192.168.13.42", None,
+                          probe=lambda ip: ip == "192.168.13.42",
+                          neighbours=neigh)
+    assert got == "192.168.13.42"
+    assert asked == [], "the neighbour table was consulted unnecessarily"
+
+
+def test_a_device_with_its_own_addressing_is_found_on_its_link():
+    """A SailfishOS phone brings its own addressing: stock developer mode
+    hands out 172.16.42.1 and an owner can change it. a-d-b has no allocated
+    address for it and it is not on the shared default, so without this it is
+    simply never found."""
+    import asteroid_docking_bay.fastboot as fb
+    got = fb._pick_ssh_ip("XA2", _LINKS, None, None,
+                          probe=lambda ip: ip == "192.168.2.16",
+                          neighbours=lambda i: ["192.168.2.16"])
+    assert got == "192.168.2.16"
+
+
+def test_the_hosts_own_address_is_never_reported_as_the_device():
+    """The host's address sits on this interface too, and answers :22 whenever
+    the host runs sshd -- so probing it would have a-d-b report that it found
+    the device, on itself."""
+    import asteroid_docking_bay.fastboot as fb
+    got = fb._pick_ssh_ip("XA2", _LINKS, None, None,
+                          probe=lambda ip: True,
+                          neighbours=lambda i: [fb.USB_SSH_IP])
+    assert got is None, f"a-d-b pointed at the host: {got}"
+
+
+def test_no_lookup_passed_means_no_extra_probe():
+    import asteroid_docking_bay.fastboot as fb
+    assert fb._pick_ssh_ip("XA2", _LINKS, None, None,
+                           probe=lambda ip: True) is None
+
+
+def test_neighbours_drops_failed_entries():
+    """The kernel keeps a FAILED entry after an address stops answering.
+    Handing one back sends a probe somewhere already known to be dead."""
+    import asteroid_docking_bay.fastboot as fb
+    out = ("192.168.2.16 lladdr 2a:63:11:c1:25:3e STALE\n"
+           "192.168.2.99 FAILED\n")
+    got = fb.usb_net_neighbours("usb0", run=lambda c, check=False: (0, out, ""))
+    assert got == ["192.168.2.16"], got
+
+
+def test_neighbours_is_empty_when_the_device_never_spoke():
+    import asteroid_docking_bay.fastboot as fb
+    assert fb.usb_net_neighbours("usb0",
+                                 run=lambda c, check=False: (0, "", "")) == []
+    assert fb.usb_net_neighbours("usb0",
+                                 run=lambda c, check=False: (1, "", "")) == []

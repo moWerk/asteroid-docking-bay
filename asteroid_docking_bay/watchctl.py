@@ -870,9 +870,33 @@ class Watch:
         immediate capture always shows a woken screen. Waiting past the blank
         timeout lets it settle back into LPM before lipstick grabs the frame.
         """
-        remote = "/home/ceres/.dockingbay_ss.jpg"
-        self.user_cmd(f"screenshottool {remote} {int(delay)}",
-                      timeout=max(15, int(delay) + 25))
+        if is_sailfish(_watch_os_for(self.serial)):
+            # No screenshottool on SailfishOS. lipstick exposes the capture
+            # over its session bus instead, and writes the file itself. The
+            # method is PRIVILEGED: the caller must be in the `privileged`
+            # group, which the login user is not by default, and lipstick
+            # resolves that group once at ITS start -- so adding the user is
+            # not enough on its own, the compositor has to be restarted too.
+            # It answers AccessDenied until then, which is a refusal, not a
+            # capture failure.
+            #
+            # delay is honoured the same way screenshottool does it, by
+            # sleeping on the DEVICE before the grab. Issuing any command over
+            # ssh does not wake a phone the way adb wakes a watch, but the
+            # delay is still what makes it possible to photograph a screen
+            # that is settling.
+            remote = "/home/nemo/.dockingbay_ss.png"
+            self.user_cmd(
+                (f"sleep {int(delay)}; " if delay else "")
+                + "dbus-send --session --print-reply "
+                  "--dest=org.nemomobile.lipstick "
+                  "/org/nemomobile/lipstick/screenshot "
+                  f"org.nemomobile.lipstick.saveScreenshot string:{remote}",
+                timeout=max(20, int(delay) + 25))
+        else:
+            remote = "/home/ceres/.dockingbay_ss.jpg"
+            self.user_cmd(f"screenshottool {remote} {int(delay)}",
+                          timeout=max(15, int(delay) + 25))
         local = self.last_screenshot_path()
         rc, _, _ = self.t.pull(remote, shlex.quote(str(local)), timeout=15)
         self.t.shell(f"rm -f {remote}", timeout=8)

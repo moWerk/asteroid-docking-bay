@@ -271,6 +271,14 @@ class _Spy:
         self.calls.append(cmd)
         return self.rc, "", ""
 
+    def pull(self, remote, local, timeout=15):
+        self.calls.append(f"PULL {remote} {local}")
+        return self.rc, "", ""
+
+    def push(self, local, remote, timeout=15):
+        self.calls.append(f"PUSH {local} {remote}")
+        return self.rc, "", ""
+
 
 def _sfos_watch(monkeypatch, os_name="Sailfish OS 5.1.0.11 (Pispala)"):
     import asteroid_docking_bay.watchctl as wc
@@ -353,3 +361,40 @@ def test_the_control_centre_script_puts_sbin_on_the_path():
     assert "/usr/sbin" in wc._CC_SCRIPT.split(";", 1)[0]
     # and the script it guards is still there, not replaced by the prefix
     assert "os=$NAME $VERSION" in wc._CC_SCRIPT
+
+
+def test_screenshot_on_sailfish_asks_lipstick_not_screenshottool(monkeypatch):
+    """There is no screenshottool on SailfishOS. lipstick exposes the capture
+    over its session bus and writes the file itself."""
+    w, spy = _sfos_watch(monkeypatch)
+    monkeypatch.setattr(type(w), "last_screenshot_path",
+                        lambda self: __import__("pathlib").Path("/tmp/none.jpg"))
+    w.screenshot()
+    joined = " ".join(spy.calls)
+    assert "saveScreenshot" in joined, joined
+    assert "screenshottool" not in joined
+    assert "/home/nemo/" in joined, "writing outside the session user's home"
+
+
+def test_screenshot_delay_sleeps_on_the_device(monkeypatch):
+    """screenshottool takes the delay as an argument and sleeps on the watch.
+    The D-Bus call has no such argument, so the wait has to happen on the
+    device too -- sleeping on the HOST would capture at the wrong moment and
+    still report success."""
+    w, spy = _sfos_watch(monkeypatch)
+    monkeypatch.setattr(type(w), "last_screenshot_path",
+                        lambda self: __import__("pathlib").Path("/tmp/none.jpg"))
+    w.screenshot(delay=4)
+    joined = " ".join(spy.calls)
+    assert "sleep 4" in joined, joined
+    assert joined.index("sleep 4") < joined.index("saveScreenshot")
+
+
+def test_screenshot_still_uses_screenshottool_on_asteroidos(monkeypatch):
+    w, spy = _sfos_watch(monkeypatch, os_name="asteroidos")
+    monkeypatch.setattr(type(w), "last_screenshot_path",
+                        lambda self: __import__("pathlib").Path("/tmp/none.jpg"))
+    w.screenshot()
+    joined = " ".join(spy.calls)
+    assert "screenshottool" in joined
+    assert "saveScreenshot" not in joined

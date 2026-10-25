@@ -256,6 +256,35 @@ def usb_net_link_for(serial: "str | None") -> "dict | None":
     return next((l for l in rndis_links() if l.get("serial") == serial), None)
 
 
+def usb_net_neighbours(iface: str, run=None) -> "list[str]":
+    """IPv4 addresses the kernel has seen on THIS interface, newest first.
+
+    The shared default and an a-d-b-allocated address between them cover every
+    AsteroidOS watch, because a-d-b put the address there itself. They cover
+    nothing else. A SailfishOS phone brings its own addressing -- the stock
+    developer mode hands out 172.16.42.1, and an owner who changed it in
+    Settings can be anywhere -- so a-d-b cannot guess where it lives and must
+    not try: scanning a /24 per port per refresh is exactly the cost the
+    bounded probe exists to avoid.
+
+    It does not have to guess. The device is a point-to-point peer on an
+    interface of its own, so the kernel's neighbour table already names it the
+    moment either end says anything. `ip neigh` only reads.
+
+    FAILED entries are dropped: the kernel keeps them after an address stops
+    answering, and handing one back would send a probe somewhere known dead.
+    """
+    rc, out, _ = (run or _run)(f"ip -4 neigh show dev {iface}", check=False)
+    if rc != 0:
+        return []
+    found = []
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] not in found and "FAILED" not in line:
+            found.append(parts[0])
+    return found
+
+
 def _route_winner_iface(ip: str = USB_SSH_IP) -> "str | None":
     """Which host interface the kernel would route `ip` over right now. With
     several RNDIS links whose watches all sit on the shared default address,
@@ -268,12 +297,25 @@ def _route_winner_iface(ip: str = USB_SSH_IP) -> "str | None":
     return parts[parts.index("dev") + 1] if "dev" in parts else None
 
 
-def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe) -> "str | None":
-    """The address this watch actually answers on, or None. Pure — see tests.
-    Order: no live RNDIS link for the serial → None without any probe (a dead
+def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe,
+                 neighbours=None) -> "str | None":
+    """The address this device actually answers on, or None. Pure — see tests.
+
+    Order: no live link for the serial → None without any probe (a dead
     allocated address must cost nothing); its allocated address if it answers;
-    the shared default if this watch's link is the current route winner and
-    the default answers. probe is an injected reachability callable."""
+    the shared default if this link is the current route winner and the
+    default answers; finally whatever the kernel has seen on this link's own
+    interface.
+
+    That last step is what lets a device a-d-b did not address itself be found
+    at all. Every step before it assumes a-d-b chose the address, which is
+    true of every AsteroidOS watch and of nothing else. It is last because it
+    is the only one that can cost a probe to an address no watch ever used,
+    and it is skipped entirely when a caller passes no lookup.
+
+    probe and neighbours are injected so the ordering can be tested without a
+    bus.
+    """
     link = next((l for l in links if l["serial"] == serial), None)
     if link is None:
         return None
@@ -281,6 +323,12 @@ def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe) -> "str | Non
         return allocated_ip
     if link["iface"] == winner_iface and probe(USB_SSH_IP):
         return USB_SSH_IP
+    for ip in (neighbours(link["iface"]) if neighbours else []):
+        # The host's own address sits on this interface too, and answers :22
+        # whenever the host runs sshd -- which would make a-d-b report that it
+        # had found the device, on itself.
+        if ip != USB_SSH_IP and probe(ip):
+            return ip
     return None
 
 
@@ -295,7 +343,7 @@ def ssh_reach_ip(cfg: dict, serial: "str | None") -> "str | None":
         return None
     allocated = cfg.get("ssh_ips", {}).get(serial)
     return _pick_ssh_ip(serial, links, allocated, _route_winner_iface(),
-                        _detect_rndis)
+                        _detect_rndis, usb_net_neighbours)
 
 
 def _stray_ssh_to_realign(links, ssh_ips, winner_iface, probe) -> "str | None":
