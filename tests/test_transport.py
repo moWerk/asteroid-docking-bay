@@ -78,3 +78,73 @@ def test_scp_still_uses_root_when_that_is_the_user(monkeypatch):
     calls = _spy(monkeypatch)
     tp.SshTransport("192.168.2.15").pull("/a", "/b")
     assert "root@192.168.2.15:/a /b" in calls[0][0], calls[0][0]
+
+
+# --- which login answers --------------------------------------------------
+
+def _auth_spy(monkeypatch, accepts):
+    """Record attempts; refuse every login except `accepts`, the way sshd
+    does -- exit 255 with 'Permission denied' on stderr."""
+    tried = []
+    def run(cmd, check=True, timeout=None):
+        user = cmd.split("@")[0].split()[-1]
+        tried.append(user)
+        if user == accepts:
+            return 0, "ok", ""
+        return 255, "", "Permission denied (publickey,password)."
+    monkeypatch.setattr(tp, "_run", run)
+    return tried
+
+
+def test_root_is_tried_first_and_costs_nothing_extra(monkeypatch):
+    """Every AsteroidOS watch is root, so the common path must not probe."""
+    tp._login_for.clear()
+    tried = _auth_spy(monkeypatch, "root")
+    rc, out, _ = tp.SshTransport("10.0.0.1").shell("hostname")
+    assert rc == 0 and tried == ["root"], tried
+
+
+def test_a_refused_login_falls_back_and_is_remembered(monkeypatch):
+    """SailfishOS refuses root at sshd. Without this a-d-b simply cannot
+    talk to the device at all, however correct the address is."""
+    tp._login_for.clear()
+    tried = _auth_spy(monkeypatch, "nemo")
+    rc, out, _ = tp.SshTransport("192.168.2.16").shell("hostname")
+    assert rc == 0, "never found a login that works"
+    assert tried == ["root", "nemo"], tried
+    # remembered, so the next transport to that address starts there
+    tried2 = _auth_spy(monkeypatch, "nemo")
+    tp.SshTransport("192.168.2.16").shell("hostname")
+    assert tried2 == ["nemo"], f"the working login was not remembered: {tried2}"
+
+
+def test_an_unreachable_host_is_not_probed_three_times(monkeypatch):
+    """A timeout and a wrong login both exit 255, so retrying on the exit
+    code would triple the cost of every unreachable shelved watch."""
+    tp._login_for.clear()
+    tried = []
+    def run(cmd, check=True, timeout=None):
+        tried.append(cmd.split("@")[0].split()[-1])
+        return 255, "", "ssh: connect to host 10.0.0.9 port 22: No route to host"
+    monkeypatch.setattr(tp, "_run", run)
+    tp.SshTransport("10.0.0.9").shell("hostname")
+    assert tried == ["root"], f"an unreachable host was probed repeatedly: {tried}"
+
+
+def test_an_explicit_login_is_never_second_guessed(monkeypatch):
+    """The NCM watches must be ceres: probing alternatives there would log in
+    as root and then fail at the wayland socket, which reads as a broken
+    screenshot rather than a wrong login."""
+    tp._login_for.clear()
+    tried = _auth_spy(monkeypatch, "root")
+    tp.SshTransport("10.0.0.2", over="ncm", user="ceres").shell("hostname")
+    assert tried == ["ceres"], tried
+
+
+def test_forgetting_a_login_lets_a_reflashed_device_be_found(monkeypatch):
+    tp._login_for.clear()
+    _auth_spy(monkeypatch, "nemo")
+    tp.SshTransport("192.168.2.16").shell("hostname")
+    assert tp._login_for.get("192.168.2.16") == "nemo"
+    tp.forget_ssh_login("192.168.2.16")
+    assert "192.168.2.16" not in tp._login_for

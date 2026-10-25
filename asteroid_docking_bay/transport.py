@@ -19,6 +19,33 @@ from .util import _run
 
 # USB-SSH: a single watch in developer_mode is reachable here (fixed /24).
 USB_SSH_IP = "192.168.2.15"
+
+# Which login answered at a given address, once we have found out. AsteroidOS
+# is root everywhere, so it is tried first and nothing below ever runs for the
+# watches. SailfishOS refuses root outright at sshd, and its login user is
+# `nemo` on the older images and `defaultuser` from 4.x on -- a-d-b cannot
+# know which before it has spoken to the device, and cannot read /etc/passwd
+# to find out without logging in first.
+_SSH_LOGINS = ("root", "nemo", "defaultuser")
+_login_for: dict = {}
+
+
+def forget_ssh_login(ip: str) -> None:
+    """Drop a remembered login. A reflashed device at the same address may
+    answer to a different one."""
+    _login_for.pop(ip, None)
+
+
+def _is_auth_refusal(rc: int, err: str) -> bool:
+    """Whether ssh refused the LOGIN, as opposed to failing to reach the host.
+
+    The distinction matters: a wrong login is worth one retry with another
+    name, and an unreachable host is worth none. Both exit 255, so the exit
+    code alone cannot tell them apart, and retrying on it would triple the
+    cost of every timeout on a shelved watch."""
+    low = (err or "").lower()
+    return rc != 0 and ("permission denied" in low
+                        or "no supported authentication" in low)
 # Non-interactive, don't pollute/consult known_hosts (a flash rotates the key).
 _SSH_OPTS = ("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
              "-o ConnectTimeout=8 -o BatchMode=yes")
@@ -79,10 +106,15 @@ class SshTransport(Transport):
     """
 
     def __init__(self, ip: str = USB_SSH_IP, over: str = "usb",
-                 user: str = "root"):
+                 user: "str | None" = None):
         self.ip = ip
         self.over = over
-        self.user = user
+        # An explicit user is honoured and never second-guessed: the NCM
+        # watches must be ceres, and probing alternatives there would log in
+        # as root and then fail at the wayland socket, which looks like a
+        # broken screenshot rather than a wrong login.
+        self.fixed_user = user is not None
+        self.user = user or _login_for.get(ip, _SSH_LOGINS[0])
         self.kind = f"ssh ({over})"
 
     @property
@@ -96,8 +128,27 @@ class SshTransport(Transport):
         return " -6" if ":" in self.ip else ""
 
     def shell(self, cmd, timeout=8, check=False):
-        return _run(f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
-                    check=check, timeout=timeout)
+        rc, out, err = _run(f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
+                            check=check, timeout=timeout)
+        if self.fixed_user or not _is_auth_refusal(rc, err):
+            if rc == 0:
+                _login_for[self.ip] = self.user
+            return rc, out, err
+        # The login was refused, not the host. Try the others once each and
+        # remember whichever answers, so this costs one round of probing per
+        # address rather than one per command.
+        for candidate in _SSH_LOGINS:
+            if candidate == self.user:
+                continue
+            self.user = candidate
+            rc, out, err = _run(
+                f"ssh{self._family} {_SSH_OPTS} {self._target} {cmd}",
+                check=check, timeout=timeout)
+            if not _is_auth_refusal(rc, err):
+                if rc == 0:
+                    _login_for[self.ip] = candidate
+                return rc, out, err
+        return rc, out, err
 
     def pull(self, remote, local, timeout=15):
         # -r so a directory (backup: .config, connman) copies like `adb pull`.
