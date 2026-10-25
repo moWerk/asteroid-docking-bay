@@ -1231,6 +1231,17 @@ function _rowKey(html){
   return 'x:'+html.length;
 }
 function reconcileRows(tb, htmls){
+  // NEVER rebuild rows out from under a text field being typed in. The
+  // Control Center already carries this guard for the weather city input; the
+  // row table never got it, and the Orbit "add by IP/hostname" box lost focus
+  // and its text every 3s poll, after two or three characters (mo).
+  //
+  // Reusing the node is not enough to protect it: replaceChildren below
+  // detaches and re-inserts EVERY node, including the ones whose html was
+  // unchanged, and detaching a focused element blurs it. The header's html
+  // being constant -- which it is -- does not save the field inside it.
+  const a=document.activeElement;
+  if(a&&a.tagName==='INPUT'&&tb.contains&&tb.contains(a))return;
   // A watch entry is TWO rows: the visible <tr class="wr"> and its hidden
   // <tr class="lr"> log row that carries id="log-<slot>". They arrive as one
   // concatenated html string and must both reach the DOM — taking only
@@ -1533,7 +1544,16 @@ function render(data){
         if(!onb&&!p.adb&&p.dev_link)
           adbCell=p.dev_unconfigured
             ?'<span class="cbadge warn" title="enumerated but unconfigured — see the name column">unconfigured</span>'
-            :`<span class="cbadge" title="seen in sysfs only — the adb server does not list it">${esc(p.dev_link)}</span>`;
+            // A device can offer a network link INSTEAD of adb and still have
+            // told us exactly what it is -- that is how every SailfishOS phone
+            // arrives. This branch used to overwrite the connection cell with
+            // the raw link type whatever we knew, so the badge was built and
+            // then thrown away: a Jolla phone showed the word "rndis" and
+            // could never show its own mark, however completely it had been
+            // identified (moWerk, who watched it do that for an afternoon).
+            : (p.os&&p.ssh_ip)
+              ?mkadb('ssh','',p.os,p.dev_serial,p.ssh_ip,p.codename||p.dev_serial||'',false)
+              :`<span class="cbadge" title="seen in sysfs only — the adb server does not list it">${esc(p.dev_link)}</span>`;
         const pwrCls=p.power===true?'tgl tgl-on':'tgl tgl-off';
         const pwrLbl=p.power===true?'<span class="dot don"></span>ON':'<span class="dot doff"></span>OFF';
         const pwrFn=`pwrMenu(event,'${slot}',${p.power===true},${p.smart===false},'${jsq(p.codename||'')}',false)`;

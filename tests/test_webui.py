@@ -7,6 +7,7 @@ action), a menu item wired to a dead confirm-reveal instead of the action
 (14 power-off clicks did nothing), and both were found by humans clicking.
 These tests read the template the way the browser will."""
 
+import json
 import re
 import shutil
 import subprocess
@@ -3563,3 +3564,36 @@ def test_orbit_rows_say_whether_the_watch_is_also_docked(tmp_path):
     assert "Power, charging and flashing need it back in a cradle" in html
     assert html.index("orbiting") > html.index("S-STU"), (
         "the pills are not on the rows they describe")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_rows_are_not_rebuilt_while_a_field_is_being_typed_in(tmp_path):
+    """The Orbit "add by IP/hostname" box lost focus and its text every 3s
+    poll, after two or three characters (mo). Reusing the node does not save
+    it: replaceChildren detaches and re-inserts EVERY node, including the
+    unchanged ones, and detaching a focused element blurs it -- so a header
+    whose html never changes still loses the field inside it.
+
+    The Control Center already had this guard for the weather city input. The
+    row table never got it.
+    """
+    h = tmp_path / "focus.js"
+    h.write_text(_DOM_STUBS + _DOM_TREE + JS + """
+const tb=document.createElement('tbody');
+const input={tagName:'INPUT'};
+tb.contains=function(n){return n===input;};
+document.activeElement=input;
+reconcileRows(tb,['<tr id="a"></tr>']);
+const typedInto=tb.children.length;
+document.activeElement={tagName:'BODY'};
+reconcileRows(tb,['<tr id="a"></tr>']);
+console.log(JSON.stringify({whileTyping:typedInto,afterBlur:tb.children.length}));
+process.exit(0);
+""")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["whileTyping"] == 0, \
+        "the table was rebuilt while an input had focus, which blurs it"
+    assert out["afterBlur"] == 1, \
+        "the table stopped updating once the field was blurred"
