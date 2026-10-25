@@ -36,10 +36,21 @@ from .fastboot import (_detect_rndis, _fastboot_getvar_product,
                        _fastboot_list, ssh_reach_ip)
 from .transport import SshTransport
 
-# Codenames learned over ssh from devices that offer no adb, kept so an
-# unmapped port does not re-read /etc/hw-release on every refresh. A None
-# is cached too: an unidentifiable device must not cost a probe each time.
-_ssh_codename: dict = {}
+# What a device offering no adb told us about itself over ssh, keyed by its
+# USB serial: {"os", "codename", "ip", "ts"}.
+#
+# STICKY, which is the whole point. The identity was recomputed every refresh
+# and shown only if THAT refresh's probe answered, so a single missed probe
+# dropped the row back to a bare USB serial and a link type: it flipped
+# between its codename and `rndis` several times a minute on the rig
+# (moWerk). A device does not stop being a Jolla phone because one TCP
+# connect timed out.
+#
+# A failure is cached too, with a timestamp, so an unidentifiable device is
+# re-probed occasionally rather than on every render. Probing in the status
+# path is the cost that made the rig's 4.25s render.
+_ssh_ident: dict = {}
+_SSH_IDENT_RETRY = 60.0
 from .events import _latest_drain_summaries
 from .lastseen import last_seen
 from .registry import registry
@@ -1117,20 +1128,25 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # a SailfishOS phone looked like on the rig for an afternoon.
             #
             # Gated on there being no adb serial, so it costs the watches
-            # nothing, and the results are cached per serial: the OS in
-            # _watch_os, the codename here. An unidentifiable device is cached
-            # as such too, or every refresh pays its probe again.
+            # nothing, and remembered per serial once answered.
             dev_ssh_ip = dev_os = None
             if (dev and dev["link"] == "rndis" and dev["serial"]
                     and not adb_serial):
-                dev_ssh_ip = ssh_reach_ip(cfg, dev["serial"])
-                if dev_ssh_ip:
-                    shell = SshTransport(dev_ssh_ip).shell
-                    dev_os = _watch_os_for(dev["serial"], shell=shell) or None
-                    if dev["serial"] not in _ssh_codename:
-                        _ssh_codename[dev["serial"]] = get_watch_codename(
-                            dev["serial"], shell=shell)
-                    adb_codename = adb_codename or _ssh_codename[dev["serial"]]
+                ident = _ssh_ident.get(dev["serial"])
+                stale = (ident is not None and not ident["os"]
+                         and time.time() - ident["ts"] > _SSH_IDENT_RETRY)
+                if ident is None or stale:
+                    ip = ssh_reach_ip(cfg, dev["serial"])
+                    shell = SshTransport(ip).shell if ip else None
+                    ident = {"ip": ip, "ts": time.time(),
+                             "os": (_watch_os_for(dev["serial"], shell=shell)
+                                    or None) if ip else None,
+                             "codename": get_watch_codename(
+                                 dev["serial"], shell=shell) if ip else None}
+                    _ssh_ident[dev["serial"]] = ident
+                dev_os = ident["os"]
+                dev_ssh_ip = ident["ip"]
+                adb_codename = adb_codename or ident["codename"]
             dev_stale = False
             if dev and dev["serial"]:
                 live = _adb_paths.get(dev["serial"])

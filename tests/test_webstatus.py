@@ -1259,3 +1259,43 @@ def test_a_watch_that_enumerates_but_is_offline_still_counts_as_on_the_rig(monke
     assert orbit_rows == [], (
         "a watch enumerated in its cradle was listed in Orbit as an away watch "
         "gone offline -- it is right here, merely not answering adb")
+
+
+# --- a device that offers no adb keeps its identity -----------------------
+
+def test_an_ssh_identity_survives_a_missed_probe(monkeypatch):
+    """The identity used to be recomputed every refresh and shown only if THAT
+    refresh's probe answered, so one missed TCP connect dropped the row back
+    to a bare USB serial and a link type. On the rig it flipped between its
+    codename and `rndis` several times a minute.
+
+    A device does not stop being a Jolla phone because a probe timed out.
+    """
+    import asteroid_docking_bay.webstatus as ws
+    ws._ssh_ident.clear()
+    ws._ssh_ident["CQ30017HVF"] = {"ip": "192.168.2.16", "os": "Sailfish OS",
+                                   "codename": "h4113", "ts": 1.0}
+    calls = []
+    monkeypatch.setattr(ws, "ssh_reach_ip",
+                        lambda cfg, ser: calls.append(ser))
+    ident = ws._ssh_ident["CQ30017HVF"]
+    stale = (not ident["os"]
+             and __import__("time").time() - ident["ts"] > ws._SSH_IDENT_RETRY)
+    assert not stale, "a known identity went stale and will be re-probed"
+    assert calls == [], "a known device was probed again"
+
+
+def test_an_unidentifiable_device_is_retried_but_not_every_render():
+    """Caching the failure matters as much as caching the success: probing on
+    every render is the cost that made the rig's 4.25s status refresh. It
+    still has to be retried, or a device that was merely booting stays unknown
+    for ever."""
+    import asteroid_docking_bay.webstatus as ws
+    import time
+    fresh = {"ip": None, "os": None, "codename": None, "ts": time.time()}
+    old = {"ip": None, "os": None, "codename": None,
+           "ts": time.time() - ws._SSH_IDENT_RETRY - 1}
+    def is_stale(i):
+        return not i["os"] and time.time() - i["ts"] > ws._SSH_IDENT_RETRY
+    assert not is_stale(fresh), "a just-failed probe would be repeated at once"
+    assert is_stale(old), "a failed probe would never be retried"
