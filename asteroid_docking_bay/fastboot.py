@@ -256,7 +256,37 @@ def usb_net_link_for(serial: "str | None") -> "dict | None":
     return next((l for l in rndis_links() if l.get("serial") == serial), None)
 
 
-def usb_net_neighbours(iface: str, run=None) -> "list[str]":
+def usb_net_peers(iface: str, run=None) -> "list[str]":
+    """Addresses the device on THIS interface might answer at, best first.
+
+    Two sources, and the order is the point.
+
+    The DHCP server identifier comes first because it is not a guess at all:
+    a device in developer mode runs the DHCP server on its own link, so the
+    address the host was leased FROM is the device, exactly, and the host
+    learned it at link-up without anyone sending anything.
+
+    The neighbour table is the fallback, and only a fallback, because it is
+    populated by TRAFFIC. After a re-enumeration it is empty, and nothing will
+    fill it: a-d-b has no address to talk to, which is the very thing it is
+    trying to find out. Measured on the rig -- the XA2 resolved fine, went to
+    MTP and back, and resolved to nothing at all, because the table had been
+    flushed and the lease was the only thing that still knew.
+    """
+    run = run or _run
+    peers = []
+    rc, out, _ = run(f"nmcli -f DHCP4.OPTION device show {iface}", check=False)
+    if rc == 0:
+        for line in out.splitlines():
+            if "dhcp_server_identifier" in line and "=" in line:
+                ip = line.split("=", 1)[1].strip()
+                if ip:
+                    peers.append(ip)
+    peers.extend(ip for ip in _neighbours(iface, run) if ip not in peers)
+    return peers
+
+
+def _neighbours(iface: str, run=None) -> "list[str]":
     """IPv4 addresses the kernel has seen on THIS interface, newest first.
 
     The shared default and an a-d-b-allocated address between them cover every
@@ -298,7 +328,7 @@ def _route_winner_iface(ip: str = USB_SSH_IP) -> "str | None":
 
 
 def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe,
-                 neighbours=None) -> "str | None":
+                 peers=None) -> "str | None":
     """The address this device actually answers on, or None. Pure — see tests.
 
     Order: no live link for the serial → None without any probe (a dead
@@ -313,8 +343,7 @@ def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe,
     is the only one that can cost a probe to an address no watch ever used,
     and it is skipped entirely when a caller passes no lookup.
 
-    probe and neighbours are injected so the ordering can be tested without a
-    bus.
+    probe and peers are injected so the ordering can be tested without a bus.
     """
     link = next((l for l in links if l["serial"] == serial), None)
     if link is None:
@@ -323,7 +352,7 @@ def _pick_ssh_ip(serial, links, allocated_ip, winner_iface, probe,
         return allocated_ip
     if link["iface"] == winner_iface and probe(USB_SSH_IP):
         return USB_SSH_IP
-    for ip in (neighbours(link["iface"]) if neighbours else []):
+    for ip in (peers(link["iface"]) if peers else []):
         # The host's own address sits on this interface too, and answers :22
         # whenever the host runs sshd -- which would make a-d-b report that it
         # had found the device, on itself.
@@ -343,7 +372,7 @@ def ssh_reach_ip(cfg: dict, serial: "str | None") -> "str | None":
         return None
     allocated = cfg.get("ssh_ips", {}).get(serial)
     return _pick_ssh_ip(serial, links, allocated, _route_winner_iface(),
-                        _detect_rndis, usb_net_neighbours)
+                        _detect_rndis, usb_net_peers)
 
 
 def _stray_ssh_to_realign(links, ssh_ips, winner_iface, probe) -> "str | None":

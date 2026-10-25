@@ -267,7 +267,7 @@ def test_neighbour_lookup_is_the_last_resort_not_the_first():
         return ["10.0.0.9"]
     got = fb._pick_ssh_ip("XA2", _LINKS, "192.168.13.42", None,
                           probe=lambda ip: ip == "192.168.13.42",
-                          neighbours=neigh)
+                          peers=neigh)
     assert got == "192.168.13.42"
     assert asked == [], "the neighbour table was consulted unnecessarily"
 
@@ -280,7 +280,7 @@ def test_a_device_with_its_own_addressing_is_found_on_its_link():
     import asteroid_docking_bay.fastboot as fb
     got = fb._pick_ssh_ip("XA2", _LINKS, None, None,
                           probe=lambda ip: ip == "192.168.2.16",
-                          neighbours=lambda i: ["192.168.2.16"])
+                          peers=lambda i: ["192.168.2.16"])
     assert got == "192.168.2.16"
 
 
@@ -291,7 +291,7 @@ def test_the_hosts_own_address_is_never_reported_as_the_device():
     import asteroid_docking_bay.fastboot as fb
     got = fb._pick_ssh_ip("XA2", _LINKS, None, None,
                           probe=lambda ip: True,
-                          neighbours=lambda i: [fb.USB_SSH_IP])
+                          peers=lambda i: [fb.USB_SSH_IP])
     assert got is None, f"a-d-b pointed at the host: {got}"
 
 
@@ -307,13 +307,53 @@ def test_neighbours_drops_failed_entries():
     import asteroid_docking_bay.fastboot as fb
     out = ("192.168.2.16 lladdr 2a:63:11:c1:25:3e STALE\n"
            "192.168.2.99 FAILED\n")
-    got = fb.usb_net_neighbours("usb0", run=lambda c, check=False: (0, out, ""))
+    got = fb._neighbours("usb0", run=lambda c, check=False: (0, out, ""))
     assert got == ["192.168.2.16"], got
 
 
 def test_neighbours_is_empty_when_the_device_never_spoke():
     import asteroid_docking_bay.fastboot as fb
-    assert fb.usb_net_neighbours("usb0",
+    assert fb._neighbours("usb0",
                                  run=lambda c, check=False: (0, "", "")) == []
-    assert fb.usb_net_neighbours("usb0",
+    assert fb._neighbours("usb0",
                                  run=lambda c, check=False: (1, "", "")) == []
+
+
+def test_the_dhcp_lease_beats_the_neighbour_table():
+    """The lease is not a guess: a device in developer mode runs the DHCP
+    server on its own link, so the address the host was leased FROM is the
+    device. The neighbour table is populated by TRAFFIC, so after a
+    re-enumeration it is empty and nothing will fill it -- a-d-b has no
+    address to talk to, which is what it is trying to find out.
+
+    Measured on the rig: the XA2 resolved fine, was switched to MTP and back,
+    and then resolved to nothing, because the table had been flushed and the
+    lease was the only thing that still knew.
+    """
+    import asteroid_docking_bay.fastboot as fb
+    def run(cmd, check=False):
+        if cmd.startswith("nmcli"):
+            return 0, ("DHCP4.OPTION[3]: dhcp_server_identifier = 192.168.2.16\n"
+                       "DHCP4.OPTION[5]: ip_address = 192.168.2.5\n"), ""
+        return 0, "10.9.9.9 lladdr aa:bb STALE\n", ""
+    assert fb.usb_net_peers("usb0", run=run)[0] == "192.168.2.16"
+
+
+def test_peers_survives_a_flushed_neighbour_table():
+    import asteroid_docking_bay.fastboot as fb
+    def run(cmd, check=False):
+        if cmd.startswith("nmcli"):
+            return 0, "DHCP4.OPTION[3]: dhcp_server_identifier = 172.16.42.1\n", ""
+        return 0, "192.168.2.15 FAILED\n", ""   # only a-d-b's own dead probe
+    assert fb.usb_net_peers("usb0", run=run) == ["172.16.42.1"]
+
+
+def test_peers_falls_back_when_there_is_no_lease():
+    """A statically addressed device leases nothing, so the table is all
+    there is."""
+    import asteroid_docking_bay.fastboot as fb
+    def run(cmd, check=False):
+        if cmd.startswith("nmcli"):
+            return 1, "", "Error: Device not found."
+        return 0, "192.168.2.16 lladdr aa:bb STALE\n", ""
+    assert fb.usb_net_peers("usb0", run=run) == ["192.168.2.16"]
