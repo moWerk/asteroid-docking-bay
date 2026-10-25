@@ -841,6 +841,12 @@ def usb_topology_fingerprint() -> int:
         e for e in os.listdir("/sys/bus/usb/devices") if ":" not in e)))
 
 
+_LINK_BY_IFACE = {
+    ("ff", "42", "01"): "adb",
+    ("ff", "42", "03"): "fastboot",
+    ("e0", "01", "03"): "rndis",       # SSH-over-USB (developer mode)
+}
+
 def _sysfs_usb_mode(sysfs_path: str) -> "str | None":
     """Detect an AsteroidOS watch's USB gadget mode from the idProduct at a
     hub port's sysfs path: adb_mode reports 0a03, developer_mode (SSH) reports
@@ -852,9 +858,31 @@ def _sysfs_usb_mode(sysfs_path: str) -> "str | None":
         pid = (base / "idProduct").read_text().strip().lower()
     except OSError:
         return None
-    if vid != "18d1":
-        return None
-    return {"0a03": "adb", "0a02": "ssh"}.get(pid)
+    if vid == "18d1":
+        mode = {"0a03": "adb", "0a02": "ssh"}.get(pid)
+        if mode:
+            return mode
+    # Not a vendor/product pair we recognise. Ask the INTERFACE DESCRIPTOR
+    # instead, exactly as port_device_info does and for the same reason it
+    # gives: the fleet is not consistent about product IDs, and the descriptor
+    # is the same everywhere.
+    #
+    # The vendor check used to end the function, so any device that was not a
+    # Google-ID gadget reported no mode at all. A Sony phone is 0fce, so a
+    # SailfishOS device on a mapped port looked like it offered nothing --
+    # which made the row decide the watch had LEFT the cradle and show it as
+    # orbiting, with no address and no Onboard button, while it sat on the
+    # port answering over its own link (moWerk).
+    links = set()
+    for iface in base.glob(f"{base.name}:*"):
+        sig = tuple(_read_attr(iface / f"bInterface{k}").lower()
+                    for k in ("Class", "SubClass", "Protocol"))
+        if sig in _LINK_BY_IFACE:
+            links.add(_LINK_BY_IFACE[sig])
+    if "adb" in links:
+        return "adb"
+    # A network link IS how ssh reaches a device, whoever made it.
+    return "ssh" if "rndis" in links else None
 
 
 def _sysfs_path_to_serial_map(serials: set[str],
@@ -926,11 +954,6 @@ def _sysfs_serial_at(loc: str, port: int) -> "str | None":
 # product IDs — watches enumerate adb as 18d1:d001 on some images and 18d1:0a03
 # on others, and the ASUS-built ones present a 0afe vendor entirely. The
 # descriptor is the same everywhere.
-_LINK_BY_IFACE = {
-    ("ff", "42", "01"): "adb",
-    ("ff", "42", "03"): "fastboot",
-    ("e0", "01", "03"): "rndis",       # SSH-over-USB (developer mode)
-}
 
 
 def port_device_info(loc: str, port: int) -> "dict | None":

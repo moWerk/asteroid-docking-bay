@@ -302,3 +302,55 @@ def test_netdev_is_resolved_by_topology_not_by_name(monkeypatch):
     assert usb.usb_netdev_for("1-3.4.30") == "enp0s20u3u4u9i1", (
         "a longer sibling path was shadowed by its prefix")
     assert usb.usb_netdev_for("1-3.4.2") is None
+
+
+# --- usb mode is a property of the gadget, not of the vendor ---------------
+
+def _fake_port(tmp_path, monkeypatch, vid, pid, ifaces):
+    """A sysfs port node with the given ids and interface descriptors."""
+    import asteroid_docking_bay.usb as usb
+    base = tmp_path / "1-1.1"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "idVendor").write_text(vid + "\n")
+    (base / "idProduct").write_text(pid + "\n")
+    for n, (cls, sub, proto) in enumerate(ifaces):
+        d = base / f"1-1.1:1.{n}"
+        d.mkdir(exist_ok=True)
+        (d / "bInterfaceClass").write_text(cls + "\n")
+        (d / "bInterfaceSubClass").write_text(sub + "\n")
+        (d / "bInterfaceProtocol").write_text(proto + "\n")
+    monkeypatch.setattr(usb, "Path", lambda *a, **k: base
+                        if str(a[0]).endswith("1-1.1") else pathlib.Path(*a, **k))
+    return base
+
+
+def test_a_non_google_gadget_still_reports_its_mode(tmp_path, monkeypatch):
+    """The vendor check used to end the function, so anything that was not a
+    Google-ID gadget reported no mode at all. A Sony phone is 0fce, so a
+    SailfishOS device on a mapped port looked like it offered nothing -- and
+    the row then decided the watch had LEFT the cradle, showing it as orbiting
+    with no address and no Onboard button, while it sat on the port answering
+    over its own link.
+    """
+    import pathlib as _pl, asteroid_docking_bay.usb as usb
+    globals()["pathlib"] = _pl
+    _fake_port(tmp_path, monkeypatch, "0fce", "0a02", [("e0", "01", "03")])
+    assert usb._sysfs_usb_mode("1-1.1") == "ssh"
+
+
+def test_an_asteroid_gadget_is_unchanged(tmp_path, monkeypatch):
+    """The product-id path must still win for the watches it was written for,
+    whatever interfaces they happen to expose."""
+    import pathlib as _pl, asteroid_docking_bay.usb as usb
+    globals()["pathlib"] = _pl
+    _fake_port(tmp_path, monkeypatch, "18d1", "0a03", [])
+    assert usb._sysfs_usb_mode("1-1.1") == "adb"
+
+
+def test_a_gadget_offering_nothing_we_know_reports_nothing(tmp_path, monkeypatch):
+    """Guessing a mode from an unrecognised descriptor would be worse than
+    saying nothing: the row would claim a device is reachable when it is not."""
+    import pathlib as _pl, asteroid_docking_bay.usb as usb
+    globals()["pathlib"] = _pl
+    _fake_port(tmp_path, monkeypatch, "0fce", "0a07", [("06", "01", "01")])
+    assert usb._sysfs_usb_mode("1-1.1") is None

@@ -59,7 +59,7 @@ from .tasks import (_charge_tasks, _drain_tasks, _flash_tasks, _remap_tasks,
                     task_active,
                     _workbench_tasks)
 from .watchctl import (GEOMETRY_PROBE_VERSION, Watch, _watch_build,
-                       _watch_os, _watch_os_for)
+                       _watch_os, _watch_os_for, detect_watch_os)
 
 
 # Serials ADB couldn't identify YET — retried, never skipped forever. A watch
@@ -920,7 +920,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 battery, screen_forced, charge_status = _ssh_battery(cfg, serial)
             else:
                 battery, screen_forced, charge_status = None, False, None
-            watch_os  = _watch_os_for(serial) if adb_state == "device" else None
+            # Detection runs over adb for a watch, and over its own network
+            # link for a device that offers one INSTEAD of adb -- which is how
+            # every SailfishOS phone arrives. Without the second branch a
+            # mapped Jolla phone reported no OS, and the row then wore the
+            # AsteroidOS mark, because an unknown OS falls back to it.
+            watch_os = (_watch_os_for(serial) if adb_state == "device"
+                        else _ssh_os_for(cfg, serial) if adb_state == "ssh"
+                        else None)
             if watch_os:
                 # Persist the detection. The in-memory _watch_os cache is
                 # evicted for every offline watch a few lines above, so it is
@@ -1059,10 +1066,20 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "slot_loc": loc,
                 "power": power, "smart": smart, "connected": connect,
                 "adb": adb_state, "battery": battery, "os": watch_os,
-                # The watch's assigned SSH-mode address, so the row can show
-                # which watch holds which IP — most useful while it's in SSH
-                # mode, but shown whenever one has been allocated.
-                "ssh_ip": ssh_ip_for_serial(cfg, serial),
+                # The watch's SSH-mode address, so the row can show which
+                # watch holds which IP — most useful while it's in SSH mode,
+                # but shown whenever one is known.
+                #
+                # An ALLOCATED address is one a-d-b handed out, which covers
+                # every AsteroidOS watch and nothing else. A device that
+                # brought its own addressing has none, so the row showed no
+                # address for a phone that was answering on one (moWerk). The
+                # fallback asks the link itself, and only while the port is
+                # actually in ssh mode, so it costs the rest of the fleet a
+                # sysfs scan that returns at once.
+                "ssh_ip": (ssh_ip_for_serial(cfg, serial)
+                           or (ssh_reach_ip(cfg, serial)
+                               if adb_state == "ssh" else None)),
                 "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
                 "wear": bool((last_seen.get(serial) or {}).get("wear")) if serial else False,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
@@ -1232,6 +1249,33 @@ def _web_status_data(cfg: dict) -> list[dict]:
                               if v > 0.02)
         log.info("slow status refresh: %.2fs — %s", elapsed, breakdown)
     return result
+
+
+def _ssh_os_for(cfg: dict, serial: "str | None") -> "str | None":
+    """The OS of a device reached over its own network link, cached.
+
+    Reuses the same per-serial store the unmapped-port path fills, so a device
+    identified before it was onboarded keeps its identity afterwards instead
+    of being re-probed from scratch on the first mapped render.
+    """
+    if not serial:
+        return None
+    ident = _ssh_ident.get(serial)
+    if ident and ident.get("os"):
+        return ident["os"]
+    ip = ssh_reach_ip(cfg, serial)
+    if not ip:
+        return None
+    # detect_watch_os directly, not _watch_os_for: that cache is keyed per
+    # serial and returns whatever it holds, and it holds "unknown" from every
+    # render taken while the device was unreachable. A device that has since
+    # come back would keep reporting "unknown" for the life of the process.
+    os_name = detect_watch_os(serial, shell=SshTransport(ip).shell) or None
+    if os_name and os_name != "unknown":
+        _watch_os[serial] = os_name
+    _ssh_ident[serial] = {"ip": ip, "os": os_name, "ts": time.time(),
+                          "codename": (ident or {}).get("codename")}
+    return os_name
 
 
 def _port_handed_off(serial, adb_state, orbit_map, reachable,
