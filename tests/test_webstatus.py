@@ -1299,3 +1299,51 @@ def test_an_unidentifiable_device_is_retried_but_not_every_render():
         return not i["os"] and time.time() - i["ts"] > ws._SSH_IDENT_RETRY
     assert not is_stale(fresh), "a just-failed probe would be repeated at once"
     assert is_stale(old), "a failed probe would never be retried"
+
+
+def test_a_mapped_port_asks_about_the_unit_that_is_present():
+    """A port keeps its mapping when a different unit is plugged into it, and
+    two devices of one codename are normal on this rig. Every lookup keyed on
+    the MAPPED serial then asks about a device that is not there: a Pro1-X
+    (7edd4a12c9de4333) on a port mapped to another QX1050 (3bb97f00) answered
+    on ssh while its row showed no address and no OS.
+
+    The mapped identity still owns the row's name -- renaming a port because
+    something else was plugged in would be worse than reporting that the two
+    disagree -- so the mismatch is surfaced rather than resolved either way.
+    """
+    import inspect
+    import asteroid_docking_bay.webstatus as ws
+    src = inspect.getsource(ws._web_status_data)
+    assert "probe_serial" in src, \
+        "the mapped branch still asks about the mapped serial only"
+    assert "ssh_reach_ip(cfg, probe_serial)" in src, \
+        "the address is still resolved for the absent unit"
+    assert "_ssh_os_for(cfg, probe_serial)" in src, \
+        "the OS is still resolved for the absent unit"
+    assert '"serial_mismatch": serial_mismatch' in src, \
+        "the mismatch is computed but never reaches the row"
+    # and the name must NOT follow the wire
+    assert "display_codename" in src, \
+        "the row no longer carries the mapped identity"
+
+
+def test_the_live_serial_is_defined_before_it_is_used():
+    """Caught the hard way: probe_serial was introduced next to the other
+    per-port locals, which sit BELOW the OS lookup that uses it. Python
+    raised UnboundLocalError per port, the status builder swallowed it, and
+    the row came back with an address but no OS -- while every string this
+    test file asserts on was present and correct.
+
+    Asserting that source text exists says nothing about whether it runs, so
+    this checks the one property the strings cannot: order.
+    """
+    import inspect
+    import asteroid_docking_bay.webstatus as ws
+    lines = inspect.getsource(ws._web_status_data).splitlines()
+    define = next(i for i, l in enumerate(lines) if "probe_serial =" in l)
+    uses = [i for i, l in enumerate(lines)
+            if "probe_serial" in l and "probe_serial =" not in l]
+    assert uses, "probe_serial is never used"
+    assert define < min(uses), (
+        f"probe_serial defined at line {define} but first used at {min(uses)}")

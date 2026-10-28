@@ -925,8 +925,25 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # every SailfishOS phone arrives. Without the second branch a
             # mapped Jolla phone reported no OS, and the row then wore the
             # AsteroidOS mark, because an unknown OS falls back to it.
+            # What is ACTUALLY enumerated here, which need not be the unit
+            # this port is mapped to. Two watches of one codename are normal
+            # on this rig, and a port keeps its mapping when a different unit
+            # is plugged into it -- so every lookup below keyed on the mapped
+            # serial then asks about a device that is not present. A Pro1-X
+            # (7edd4a12c9de4333) on a port mapped to another QX1050
+            # (3bb97f00) answered on ssh while its row showed no address and
+            # no OS, because both were resolved for the absent unit.
+            live = port_device_info(loc, port_num)
+            live_serial = (live or {}).get("serial")
+            # The serial to ASK about is whoever is on the wire. The mapped
+            # identity still owns the row's name: renaming a port silently
+            # because something else was plugged in would be worse than
+            # saying the two disagree.
+            probe_serial = live_serial or serial
+            serial_mismatch = bool(live_serial and serial
+                                   and live_serial != serial)
             watch_os = (_watch_os_for(serial) if adb_state == "device"
-                        else _ssh_os_for(cfg, serial) if adb_state == "ssh"
+                        else _ssh_os_for(cfg, probe_serial) if adb_state == "ssh"
                         else None)
             if watch_os:
                 # Persist the detection. The in-memory _watch_os cache is
@@ -1078,8 +1095,13 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 # actually in ssh mode, so it costs the rest of the fleet a
                 # sysfs scan that returns at once.
                 "ssh_ip": (ssh_ip_for_serial(cfg, serial)
-                           or (ssh_reach_ip(cfg, serial)
+                           or (ssh_reach_ip(cfg, probe_serial)
                                if adb_state == "ssh" else None)),
+                # What sysfs sees on this port regardless of the mapping, so
+                # a mismatch is visible rather than silently mis-resolved.
+                "dev_serial": live_serial,
+                "dev_link": (live or {}).get("link"),
+                "serial_mismatch": serial_mismatch,
                 "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
                 "wear": bool((last_seen.get(serial) or {}).get("wear")) if serial else False,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
