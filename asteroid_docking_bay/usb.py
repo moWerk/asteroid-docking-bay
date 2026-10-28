@@ -845,6 +845,14 @@ _LINK_BY_IFACE = {
     ("ff", "42", "01"): "adb",
     ("ff", "42", "03"): "fastboot",
     ("e0", "01", "03"): "rndis",       # SSH-over-USB (developer mode)
+    # The SAME gadget under the other descriptor Microsoft's RNDIS is
+    # published with: Communications / Abstract Control Model / vendor
+    # protocol, paired with a CDC-Data interface. An F(x)tec Pro1-X running
+    # SailfishOS enumerates this way where a Sony XA2 running the same
+    # SailfishOS release enumerates e0/01/03, so the choice is the gadget
+    # implementation's and not the OS's -- which means neither descriptor can
+    # be treated as "the" rndis one.
+    ("02", "02", "ff"): "rndis",
 }
 
 def _sysfs_usb_mode(sysfs_path: str) -> "str | None":

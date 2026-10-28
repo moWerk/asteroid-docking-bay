@@ -354,3 +354,29 @@ def test_a_gadget_offering_nothing_we_know_reports_nothing(tmp_path, monkeypatch
     globals()["pathlib"] = _pl
     _fake_port(tmp_path, monkeypatch, "0fce", "0a07", [("06", "01", "01")])
     assert usb._sysfs_usb_mode("1-1.1") is None
+
+
+def test_both_rndis_descriptors_are_recognised(tmp_path, monkeypatch):
+    """RNDIS is published under two different descriptors and devices use
+    both. A Sony XA2 on SailfishOS enumerates e0/01/03; an F(x)tec Pro1-X on
+    the SAME SailfishOS release enumerates 02/02/ff with a CDC-Data interface
+    beside it. So the choice belongs to the gadget implementation, not the OS,
+    and knowing only one of them left the Pro1-X classified as `unknown` --
+    no mode, no connection state, and the identification cascade stalled
+    exactly as the hardcoded vendor id used to make it stall.
+    """
+    import pathlib as _pl, asteroid_docking_bay.usb as usb
+    globals()["pathlib"] = _pl
+    _fake_port(tmp_path, monkeypatch, "2931", "0a02",
+               [("02", "02", "ff"), ("0a", "00", "00")])
+    assert usb._sysfs_usb_mode("1-1.1") == "ssh"
+
+
+def test_a_plain_serial_gadget_is_not_mistaken_for_rndis(tmp_path, monkeypatch):
+    """02/02/01 is a real CDC-ACM modem, not RNDIS. Only the vendor-protocol
+    variant is the network gadget, so the match must be exact or a serial
+    port would be reported as a reachable device."""
+    import pathlib as _pl, asteroid_docking_bay.usb as usb
+    globals()["pathlib"] = _pl
+    _fake_port(tmp_path, monkeypatch, "2931", "0a05", [("02", "02", "01")])
+    assert usb._sysfs_usb_mode("1-1.1") is None
