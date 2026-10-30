@@ -1975,3 +1975,31 @@ def test_onboarding_does_not_open_an_ssh_session_every_second(monkeypatch):
     src = inspect.getsource(rp._onboard_stream)
     assert "el >= nxt_ssh" in src, "the ssh probe is not rate-limited"
     assert "nxt_ssh = el +" in src, "the rate limit never advances"
+
+
+def test_onboarding_does_not_ppps_test_a_hub_that_has_no_ppps():
+    """A hub with no per-port switching cannot be tested into having some,
+    and running the test anyway makes uhubctl fail with "permission problems
+    while accessing USB" -- which is indistinguishable from a udev allow-list
+    gap on a hub that DOES switch.
+
+    That is not hypothetical: this session read that error as a permissions
+    fault on the button-only Sabrent, told two sibling sessions port power
+    was broken there, and offered a udev rule that would have changed
+    nothing, while a-d-b's own config carried ppps False for every one of
+    that hub's entries.
+
+    Checked as an ORDERING property, not by the presence of a string: the
+    guard has to come before the test, and a guard sitting after it would
+    satisfy any substring assertion while changing nothing.
+    """
+    import inspect
+    import asteroid_docking_bay.rpcops as rp
+    lines = inspect.getsource(rp._onboard_stream).splitlines()
+    guard = next((i for i, l in enumerate(lines) if "hub_ppps is False" in l), None)
+    test  = next((i for i, l in enumerate(lines)
+                  if "Testing port switching" in l), None)
+    assert guard is not None, "no guard against testing a hub with no PPPS"
+    assert test is not None, "the PPPS test emit is gone; update this test"
+    assert guard < test, (
+        f"the guard is at line {guard} but the test runs at {test}")

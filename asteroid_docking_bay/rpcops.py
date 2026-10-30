@@ -2519,6 +2519,22 @@ def _onboard_stream(loc: str, port: int):
 
                     _emit(f"Mapped {loc}:p{port} → {codename}")
 
+                    # A hub with no per-port power switching cannot be
+                    # tested into having some. Running it anyway makes uhubctl
+                    # fail with "permission problems while accessing USB / No
+                    # compatible devices detected", which is indistinguishable
+                    # from a udev allow-list gap on a hub that DOES switch --
+                    # and this session read it as exactly that, reported a
+                    # fault to two sibling sessions and offered a udev rule
+                    # that would have changed nothing. The Sabrent is
+                    # button-only (moWerk 2026-10-30) and a-d-b already knew:
+                    # every one of its entries carries ppps False.
+                    hub_ppps = next((h.get("ppps") for h in cfg.get("hubs", [])
+                                     if h["location"] == loc), None)
+                    if hub_ppps is False:
+                        _emit("Port switching: this hub has none — physical "
+                              "buttons only, so there is nothing to test.")
+                        return
                     _emit("Testing port switching (PPPS, up to ~30 s)…")
                     try:
                         smart, msg = test_port_power_switching(loc, port, found_serial)
