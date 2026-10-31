@@ -231,11 +231,18 @@ class _FakeT:
     """A watch transport that records what it was told to run."""
     def __init__(self, leftover=""):
         self.cmds, self._leftover = [], leftover
+        self.pushed = []
 
     def shell(self, cmd, timeout=None):
         self.cmds.append(cmd)
         if "ls " in cmd:
             return 0, self._leftover, ""
+        if "is-active" in cmd:
+            return 0, "active", ""
+        return 0, "", ""
+
+    def push(self, src, dest, timeout=None):
+        self.pushed.append((src, dest))
         return 0, "", ""
 
 
@@ -502,3 +509,37 @@ def test_an_absent_panel_column_is_unavailable_not_off():
     assert out["display_data"] == "unavailable"
     assert out["display_on_fraction"] is None
     assert out["panel_state_counts"] is None
+
+
+def test_install_enables_both_units(tmp_path):
+    """wanze has TWO enabled units since 2026-10-31 and install must arm both.
+
+    The timer carries the 5-minute cadence; the service is enabled in its own
+    right for the boot row, which on a watch that sleeps through every calendar
+    slot of a short session is the only sample guaranteed to exist. Enabling
+    only the timer silently loses it.
+    """
+    from asteroid_docking_bay import wanze
+    for f in wanze.SRC_FILES:
+        (tmp_path / f).write_text("x")
+    w = _FakeWatch()
+
+    assert wanze.install(w, src_dir=tmp_path) is None
+    joined = " ".join(w.t.cmds)
+    assert f"enable {wanze.SERVICE}" in joined, \
+        f"the boot sample was never enabled: {w.t.cmds}"
+    assert f"enable --now {wanze.UNIT}" in joined, \
+        f"the timer was not armed: {w.t.cmds}"
+
+
+def test_stop_disables_both_units():
+    """Disabling the timer alone leaves wanze.service enabled in
+    multi-user.target, so the watch keeps writing a row on every boot after
+    the operator believed they had stopped it — a probe that outlives its own
+    stop is the failure this project keeps finding."""
+    from asteroid_docking_bay import wanze
+    w = _FakeWatch()
+    wanze.stop(w)
+    joined = " ".join(w.t.cmds)
+    assert wanze.UNIT in joined and wanze.SERVICE in joined, \
+        f"stop left one unit enabled: {w.t.cmds}"

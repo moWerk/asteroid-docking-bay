@@ -34,6 +34,13 @@ from .util import log
 REMOTE_LOG = "/var/log/wanze.csv"
 REMOTE_BIN = "/usr/bin/wanze-sample"
 UNIT = "wanze.timer"
+# wanze enables TWO units, and both have to be handled everywhere or the probe
+# half-runs. The timer carries the 5-minute cadence; the service is enabled in
+# its own right for the boot row, which on a watch that sleeps through every
+# calendar slot of a short session is the only sample guaranteed to exist.
+# Enabling only the timer loses that row; disabling only the timer leaves the
+# watch still sampling at every boot after a "stop".
+SERVICE = "wanze.service"
 SCHEMA = 2
 
 # The timer's nominal period. Only used to decide what counts as a gap; the
@@ -405,6 +412,7 @@ def install(watch, src_dir: "Path | None" = None) -> "str | None":
             return f"push {name} failed: {err.strip()[:80]}"
     rc, out, err = watch.t.shell(
         shlex.quote(f"chmod +x {REMOTE_BIN} && systemctl daemon-reload && "
+                    f"systemctl enable {SERVICE} && "
                     f"systemctl enable --now {UNIT}"), timeout=40)
     if rc != 0:
         return f"enable failed: {(err or out).strip()[:120]}"
@@ -417,7 +425,11 @@ def install(watch, src_dir: "Path | None" = None) -> "str | None":
 
 
 def stop(watch) -> None:
-    watch.t.shell(f"systemctl disable --now {UNIT}", timeout=25)
+    """Stop sampling for real: BOTH units. Disabling the timer alone leaves
+    wanze.service enabled in multi-user.target, so the watch keeps writing a
+    row on every boot after the operator believed they had stopped it."""
+    watch.t.shell(shlex.quote(f"systemctl disable --now {UNIT} {SERVICE}"),
+                  timeout=25)
 
 
 def uninstall(watch, clear_trace: bool = False) -> "str | None":
