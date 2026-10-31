@@ -1377,7 +1377,14 @@ def test_ssh_device_at_its_own_address_is_not_a_stray(monkeypatch):
 
     monkeypatch.setattr(ws.threading, "Thread", _T)
     monkeypatch.setattr(fastboot, "usb_net_link_for",
-                        lambda serial: {"iface": "enp0s20u1", "serial": serial})
+                        lambda serial: {"iface": "enp0s20u1",
+                                        "usb_path": "1-3.3.4.4",
+                                        "serial": serial})
+    # A plain rndis gadget: the NCM exclusion must not be what suppresses
+    # these cases, or the address check below is never exercised at all.
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda path: {"adb": False, "ncm": False,
+                                      "mass_storage_only": False})
     cfg = {"ssh_ips": {}, "usb_mode_preference": "ssh"}
 
     # Its own address, discovered passively: hands off entirely.
@@ -1420,7 +1427,12 @@ def test_not_a_stray_is_logged_once_per_episode(monkeypatch, caplog):
     monkeypatch.setattr(ws.threading, "Thread",
                         lambda *a, **k: type("N", (), {"start": lambda s: None})())
     monkeypatch.setattr(fastboot, "usb_net_link_for",
-                        lambda serial: {"iface": "enp0s20u1", "serial": serial})
+                        lambda serial: {"iface": "enp0s20u1",
+                                        "usb_path": "1-3.3.4.4",
+                                        "serial": serial})
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda path: {"adb": False, "ncm": False,
+                                      "mass_storage_only": False})
     monkeypatch.setattr(fastboot, "usb_net_peers",
                         lambda iface, run=None: ["192.168.2.19"])
     cfg = {"ssh_ips": {}, "usb_mode_preference": "ssh"}
@@ -1437,3 +1449,61 @@ def test_not_a_stray_is_logged_once_per_episode(monkeypatch, caplog):
     # Leaving SSH mode ends the episode.
     ws._maybe_align_usb_mode("SFOS2", "device", cfg)
     assert "SFOS2" not in ws._ssh_align_elsewhere
+
+
+def test_ncm_gadget_is_never_mode_switched_or_cycled(monkeypatch):
+    """A CDC-NCM watch must never reach the mode aligner.
+
+    a-d-b has always held that switching these gadgets' USB mode is
+    destructive — no rndis in these kernels, so the switch lands in a
+    charging-only fallback — but the rule lived in the UI and in the
+    operations a person triggers, never in the automatic path.
+
+    It is worse than a bad switch. adb and ncm share ONE gadget, so a port
+    whose adb has dropped reads as SSH mode, and these watches have no IPv4
+    address at either end (ssh reaches them at an IPv6 link-local). The
+    address-based guard therefore finds no peer, concludes "no DHCP lease",
+    and escalates to cutting the port's power. Measured on sol 2026-10-31:
+    ncm gadget, zero IPv4 peers.
+    """
+    from asteroid_docking_bay import fastboot
+
+    spawned = []
+
+    class _T:
+        def __init__(self, target=None, args=(), daemon=None, **kw):
+            spawned.append((getattr(target, "__name__", target), args))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(ws.threading, "Thread", _T)
+    monkeypatch.setattr(fastboot, "usb_net_link_for",
+                        lambda serial: {"iface": "enp0s20u3u4u3i1",
+                                        "usb_path": "1-3.4.3",
+                                        "serial": serial})
+    # sol's real shape: adb and ncm on one gadget, and NO IPv4 peer at all —
+    # which is precisely what makes the address-based guard fall through.
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda path: {"adb": True, "ncm": True,
+                                      "mass_storage_only": False})
+    monkeypatch.setattr(fastboot, "usb_net_peers", lambda iface, run=None: [])
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+
+    ws._maybe_align_usb_mode("0123456789ABCDEF", "ssh",
+                             {"ssh_ips": {}, "usb_mode_preference": "ssh"})
+    assert spawned == [], \
+        f"an NCM watch was routed to the USB-mode aligner: {spawned}"
+
+    # A plain rndis watch with no peer is still the genuine no-lease stray and
+    # keeps its recovery — the NCM guard must not swallow that case too.
+    monkeypatch.setattr(ws, "gadget_composition",
+                        lambda path: {"adb": False, "ncm": False,
+                                      "mass_storage_only": False})
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+    ws._maybe_align_usb_mode("RNDIS1", "ssh",
+                             {"ssh_ips": {}, "usb_mode_preference": "ssh"})
+    assert [n for n, _ in spawned] == ["_align_usb_mode_worker"], \
+        f"a no-lease rndis stray lost its recovery: {spawned}"

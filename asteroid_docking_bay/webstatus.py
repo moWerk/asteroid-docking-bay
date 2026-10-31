@@ -250,9 +250,10 @@ _SSH_ALIGN_BACKOFF_SEC = 90
 _ssh_align_fail: dict[str, int] = {}
 _ssh_align_cycled: set[str] = set()
 _SSH_ALIGN_FAILS_BEFORE_CYCLE = 2
-# Serials found in SSH mode at an address that is not the default one: not
-# strays at all. Tracked only so the "leaving it alone" line is logged once per
-# episode instead of every backoff for as long as the device stays plugged in.
+# Serials the aligner has decided to leave alone, for whatever reason, and has
+# already said so about. Tracked only so the "leaving it alone" line is logged
+# once per episode rather than on every backoff for as long as the device stays
+# plugged in.
 _ssh_align_elsewhere: set[str] = set()
 
 
@@ -319,6 +320,33 @@ def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
     # that case on any device a-d-b has no record for.
     from .fastboot import usb_net_link_for, usb_net_peers
     link = usb_net_link_for(serial)
+
+    # A CDC-NCM gadget must never be mode-switched, and this function exists to
+    # mode-switch things. a-d-b has known that since the configfs watches
+    # arrived -- these kernels carry no rndis, so the switch lands in a
+    # charging-only fallback; it is destructive, not merely pointless -- but
+    # the rule was only ever stated in the UI and enforced in the operations a
+    # person triggers. The automatic path never learned it.
+    #
+    # It bites harder here than a bad switch would. These watches run adb and
+    # ncm on ONE gadget, so rndis_links() lists them (it globs any USB
+    # interface exposing a net device) and a port whose adb has dropped reads
+    # as SSH mode. They also have no IPv4 address at either end -- ssh reaches
+    # them at an IPv6 link-local -- so the peer check below finds nothing,
+    # reads "no DHCP lease", and escalates to cutting the port's power. sol
+    # measured exactly that shape on 2026-10-31: ncm gadget, zero IPv4 peers,
+    # and the porting session fighting unexplained VBUS behaviour on it.
+    #
+    # Keyed on the gadget's own interface descriptors, which is a passive sysfs
+    # read and true regardless of addressing, rather than on an address that
+    # these watches do not have.
+    if link and gadget_composition(link["usb_path"]).get("ncm"):
+        if serial not in _ssh_align_elsewhere:
+            _ssh_align_elsewhere.add(serial)
+            log.info("%s: CDC-NCM gadget — its USB mode must not be switched, "
+                     "leaving its mode and its power alone", serial)
+        return
+
     if link:
         # Bounded runner: _run defaults to no timeout and this is on the poll
         # path, where a wedged nmcli would stall every row, not just this one.
