@@ -51,6 +51,12 @@ INTERVAL_S = 300
 # awake in between. Generous, because a loaded watch legitimately runs late and
 # calling that "asleep" would inflate every standby figure.
 GAP_FACTOR = 3
+# Two rows closer together than this are one observation written twice, not two
+# observations. Far above the 0.3 s duplicate systemd 238 produces and far
+# below the 300 s cadence, so it cannot swallow a real sample. A pair this
+# close carries no information either way: the point of the probe is a
+# five-minute picture, not two readings of the same instant.
+DUP_WINDOW_S = 30
 
 
 def parse(csv_text: str) -> "list[dict]":
@@ -162,6 +168,41 @@ def gaps(rows: "list[dict]", interval_s: int = INTERVAL_S) -> "list[dict]":
     return out
 
 
+def dedupe(rows: "list[dict]", window_s: float = DUP_WINDOW_S) -> "list[dict]":
+    """Drop rows that are the same observation written twice.
+
+    systemd 238 fires the sampler TWICE on the wake after a long sleep, about
+    0.3 s apart (measured on an F(x)tec Pro1-X, 2026-10-31). The sampler now
+    refuses the second write, but traces collected before that fix already
+    contain the pairs and cannot be collected again, so the reading side has
+    to cope rather than assume a clean file.
+
+    It matters only for COUNTS. Every time-weighted figure here attributes
+    `b.uptime - a.uptime`, so a 0.3 s pair contributes 0.3 s and changes
+    nothing; but `samples`, `samples_screen_on` and `panel_state_counts` are
+    row counts and a duplicate inflates each of them.
+
+    The first row of a pair is kept, not the last: it is the one whose
+    interval to the PREVIOUS sample spans the gap, and gaps are the
+    measurement.
+
+    Two things are never duplicates. A negative delta is a reboot -- uptime
+    restarted, so the rows belong to different boots. A different `reason` is a
+    deliberate marker row (lowbat) that says something its neighbour does not.
+    Pure -- see tests.
+    """
+    kept: "list[dict]" = []
+    for r in rows:
+        if kept:
+            prev = kept[-1]
+            delta = r["uptime"] - prev["uptime"]
+            if (0 <= delta < window_s
+                    and (r.get("reason") or "") == (prev.get("reason") or "")):
+                continue
+        kept.append(r)
+    return kept
+
+
 def clock_check(rows: "list[dict]") -> dict:
     """Does the watch's wall clock agree with its own uptime?
 
@@ -189,6 +230,11 @@ def analyse(rows: "list[dict]", host_epoch: "float | None" = None) -> dict:
     if not rows:
         return {"ok": False, "error": "no wanze rows"}
 
+    # Deduplicate before anything counts rows, and report what went: dropping
+    # data silently is how a trace stops being evidence.
+    raw_count = len(rows)
+    rows = dedupe(rows)
+
     segs = segments(rows)
     covered = sum(s["rows"][-1]["uptime"] - s["rows"][0]["uptime"] for s in segs)
     holes = gaps(rows)
@@ -197,6 +243,7 @@ def analyse(rows: "list[dict]", host_epoch: "float | None" = None) -> dict:
     out = {
         "ok": True,
         "samples": len(rows),
+        "duplicate_rows_dropped": raw_count - len(rows),
         "boots": len(segs),
         "reboots": len(segs) - 1,
         "covered_s": round(covered),

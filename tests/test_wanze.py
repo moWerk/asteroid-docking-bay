@@ -543,3 +543,97 @@ def test_stop_disables_both_units():
     joined = " ".join(w.t.cmds)
     assert wanze.UNIT in joined and wanze.SERVICE in joined, \
         f"stop left one unit enabled: {w.t.cmds}"
+
+
+# The Pro1-X window of 2026-10-31, verbatim: systemd 238 fired the sampler
+# twice on the wake after each long sleep, 0.3 s apart. Columns are
+# epoch,uptime,current_ua,capacity,status,voltage_uv then the rest.
+_PRO1X_BURSTY = """epoch,uptime,current_ua,capacity,status,voltage_uv,temp,charger,backlight,panel_power_state,cpu_online,cpu_freq,load1,suspend_success,suspend_fail,wakeup_source,reason,gauge,schema
+1793472391,752.48,-73394,91,Discharging,4198116,,,,OFF,,,,,,,,bms,2
+1793473110,1471.37,-92824,91,Discharging,4174437,,,,ON,,,,,,,,bms,2
+1793473110,1471.68,-92824,91,Discharging,4174437,,,,ON,,,,,,,,bms,2
+1793473830,2191.43,-72479,88,Discharging,4167234,,,,OFF,,,,,,,,bms,2
+1793473830,2191.78,-72479,88,Discharging,4167234,,,,OFF,,,,,,,,bms,2
+1793474340,2701.43,-79549,87,Discharging,4160552,,,,OFF,,,,,,,,bms,2
+1793474461,2822.52,-141783,86,Discharging,4156707,,,,OFF,,,,,,,,bms,2
+"""
+
+
+def test_a_doubled_wake_row_is_not_two_samples():
+    """systemd 238's second activation on a wake is an artefact, not an
+    observation, and every COUNT the host reports is inflated by it.
+
+    Real data: 7 rows written, of which 2 are duplicates 0.31 s and 0.35 s
+    behind their twins. The analysis must say 5 samples and say that 2 went,
+    because dropping rows without saying so is how a trace stops being
+    evidence.
+    """
+    from asteroid_docking_bay import wanze
+    rows = wanze.parse(_PRO1X_BURSTY)
+    assert len(rows) == 7, "parse must stay faithful to the file"
+
+    out = wanze.analyse(rows)
+    assert out["samples"] == 5, out["samples"]
+    assert out["duplicate_rows_dropped"] == 2, out
+    # One boot, not several: a 0.3 s pair must never look like a reboot.
+    assert out["boots"] == 1, out
+
+
+def test_dedupe_keeps_the_row_that_spans_the_gap():
+    """The FIRST of a pair is kept. Its interval to the previous sample is the
+    one that crosses the sleep, and the sleep is the measurement."""
+    from asteroid_docking_bay import wanze
+    rows = wanze.parse(_PRO1X_BURSTY)
+    kept = wanze.dedupe(rows)
+    assert [round(r["uptime"], 2) for r in kept] == \
+        [752.48, 1471.37, 2191.43, 2701.43, 2822.52], \
+        [r["uptime"] for r in kept]
+
+
+def _row(**over):
+    """One CSV row built from the header, so a column cannot be miscounted.
+
+    Writing these by hand cost a test: a row one field short is TORN, parse()
+    skips it by design, and the test then failed for the wrong reason.
+    """
+    cols = _PRO1X_BURSTY.splitlines()[0].split(",")
+    vals = {"epoch": "1793474461", "uptime": "2822.52", "current_ua": "-141783",
+            "capacity": "86", "status": "Discharging", "voltage_uv": "4156707",
+            "panel_power_state": "OFF", "gauge": "bms", "schema": "2"}
+    vals.update({k: str(v) for k, v in over.items()})
+    return ",".join(vals.get(c, "") for c in cols)
+
+
+def test_dedupe_never_drops_a_reboot_or_a_marker():
+    """A negative delta is a new boot; a different `reason` is a deliberate
+    marker row that says something its neighbour does not. Neither is a
+    duplicate however close it sits."""
+    from asteroid_docking_bay import wanze
+    hdr = _PRO1X_BURSTY.splitlines()[0]
+
+    reboot = wanze.parse("\n".join([hdr,
+        _row(uptime="2822.52"),
+        _row(uptime="11.40", epoch="1793474470")]) + "\n")
+    assert len(reboot) == 2, "fixture rows were not parsed"
+    assert len(wanze.dedupe(reboot)) == 2, "a reboot was eaten as a duplicate"
+
+    marker = wanze.parse("\n".join([hdr,
+        _row(uptime="2822.52", capacity="14"),
+        _row(uptime="2822.80", capacity="14", reason="lowbat")]) + "\n")
+    assert len(marker) == 2, "fixture rows were not parsed"
+    assert [r["reason"] for r in marker] == [None, "lowbat"], \
+        [r["reason"] for r in marker]
+    assert len(wanze.dedupe(marker)) == 2, "a lowbat marker was eaten"
+
+
+def test_dedupe_cannot_swallow_a_real_sample():
+    """The window sits far below the cadence. A genuine next sample, even an
+    early one, must survive -- the probe's value is the five-minute picture and
+    eating one of those would be worse than the duplicate."""
+    from asteroid_docking_bay import wanze
+    hdr = _PRO1X_BURSTY.splitlines()[0]
+    rows = wanze.parse(
+        f"{hdr}\n"
+        "1793474000,1000.00,-90000,90,Discharging,4160000,,,,OFF,,,,,,,,bms,2\n"
+        f"1793474031,{1000.0 + wanze.DUP_WINDOW_S + 1:.2f},-90000,90,Discharging,4160000,,,,OFF,,,,,,,,bms,2\n")
+    assert len(wanze.dedupe(rows)) == 2, "dropped a sample outside the window"
