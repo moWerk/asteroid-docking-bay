@@ -375,6 +375,30 @@ _DIAG_CMDS = {
 }
 
 
+def connman_powered(text: str) -> "dict[str, bool]":
+    """`connmanctl technologies` output -> {technology: is powered}.
+
+    One parser for the three callers that need it (the Control Center batch,
+    the drain-start feature snapshot, and provisioning's check that WiFi came
+    up). The blocks are `Type = wifi` followed later by `Powered = True`, so a
+    technology is only recorded once its own Type has been seen -- a Powered
+    line before any Type belongs to nothing and is dropped.
+
+    A technology absent from the output is absent from the result, never False:
+    "we did not read it" and "it is off" are different answers and the callers
+    report them differently.
+    """
+    powered: dict[str, bool] = {}
+    ctype = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("Type ="):
+            ctype = s.split("=", 1)[1].strip()
+        elif s.startswith("Powered =") and ctype:
+            powered[ctype] = s.split("=", 1)[1].strip().lower() == "true"
+    return powered
+
+
 def _host_timezone() -> "str | None":
     """Host IANA timezone (e.g. 'Europe/Berlin') to push to a watch."""
     try:
@@ -422,22 +446,17 @@ class Watch:
             return {}
         info: dict = {}
         in_conn = False
-        ctype = None
-        tech: dict = {}
+        conn_lines: list[str] = []
         for line in out.splitlines():
             if line.strip() == "--connman--":
                 in_conn = True
                 continue
-            if not in_conn:
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    info[k.strip()] = v.strip()
-            else:
-                s = line.strip()
-                if s.startswith("Type ="):
-                    ctype = s.split("=", 1)[1].strip()
-                elif s.startswith("Powered =") and ctype:
-                    tech[ctype] = (s.split("=", 1)[1].strip().lower() == "true")
+            if in_conn:
+                conn_lines.append(line)
+            elif "=" in line:
+                k, v = line.split("=", 1)
+                info[k.strip()] = v.strip()
+        tech = connman_powered("\n".join(conn_lines))
         info["serial"] = self.serial
         if wearos:
             # No connman on Android; leave the toggles unknown rather than
@@ -773,17 +792,9 @@ class Watch:
         field is None when unreadable."""
         feats = {"wifi": None, "bt": None, "aod": None, "aod_toggle": None}
         _, out, _ = self.t.shell('"connmanctl technologies 2>/dev/null"', timeout=10)
-        ctype = None
-        for line in out.splitlines():
-            s = line.strip()
-            if s.startswith("Type ="):
-                ctype = s.split("=", 1)[1].strip()
-            elif s.startswith("Powered =") and ctype:
-                on = s.split("=", 1)[1].strip().lower() == "true"
-                if ctype == "wifi":
-                    feats["wifi"] = on
-                elif ctype == "bluetooth":
-                    feats["bt"] = on
+        powered = connman_powered(out)
+        feats["wifi"] = powered.get("wifi")
+        feats["bt"] = powered.get("bluetooth")
         rc, aod, _ = self.user_cmd(
             "HOME=/home/ceres dconf read /org/asteroidos/settings/always-on-display",
             timeout=10)

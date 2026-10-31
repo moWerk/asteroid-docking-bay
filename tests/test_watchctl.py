@@ -398,3 +398,28 @@ def test_screenshot_still_uses_screenshottool_on_asteroidos(monkeypatch):
     joined = " ".join(spy.calls)
     assert "screenshottool" in joined
     assert "saveScreenshot" not in joined
+
+
+def test_connman_powered_parses_blocks_and_omits_what_it_did_not_read():
+    """One parser for the three callers that read connman technologies.
+
+    The two guarantees that matter to callers: a technology is recorded only
+    after its own `Type` line (a Powered line before any Type belongs to
+    nothing), and a technology absent from the output is ABSENT from the
+    result rather than False — "not read" and "off" are different answers and
+    the Control Center renders them differently.
+    """
+    from asteroid_docking_bay.watchctl import connman_powered
+
+    out = ("  Powered = True\n"              # orphan: no Type yet
+           "  Type = wifi\n"
+           "  Powered = False\n"
+           "  Type = bluetooth\n"
+           "  Powered = True\n")
+    got = connman_powered(out)
+    assert got == {"wifi": False, "bluetooth": True}, got
+
+    # Read but unpowered is False; never read at all is missing.
+    assert connman_powered("  Type = wifi\n") == {}
+    assert connman_powered("") == {}
+    assert "wifi" not in connman_powered("  Type = bluetooth\n  Powered = True\n")
