@@ -1347,3 +1347,93 @@ def test_the_live_serial_is_defined_before_it_is_used():
     assert uses, "probe_serial is never used"
     assert define < min(uses), (
         f"probe_serial defined at line {define} but first used at {min(uses)}")
+
+
+def test_ssh_device_at_its_own_address_is_not_a_stray(monkeypatch):
+    """A device in SSH mode at an address that is not the default is NOT a
+    stray, and must not have its USB mode rewritten or its power cut.
+
+    The regression this exists for (2026-10-31): the stray path GUESSED
+    _STRAY_SSH_IP instead of reading the address the host was already leased
+    from. A SailfishOS phone at 192.168.2.19 could therefore never answer the
+    probe, every attempt failed by construction, and the failure was read as
+    "no DHCP lease" and escalated to a power cycle — cutting VBUS on another
+    session's device mid-test.
+
+    Asserted on BEHAVIOUR (nothing is spawned), not on the guard's source: an
+    earlier bug in this module passed a string-matching test while the code
+    path was broken.
+    """
+    from asteroid_docking_bay import fastboot
+
+    spawned = []
+
+    class _T:
+        def __init__(self, target=None, args=(), daemon=None, **kw):
+            spawned.append((getattr(target, "__name__", target), args))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(ws.threading, "Thread", _T)
+    monkeypatch.setattr(fastboot, "usb_net_link_for",
+                        lambda serial: {"iface": "enp0s20u1", "serial": serial})
+    cfg = {"ssh_ips": {}, "usb_mode_preference": "ssh"}
+
+    # Its own address, discovered passively: hands off entirely.
+    monkeypatch.setattr(fastboot, "usb_net_peers",
+                        lambda iface, run=None: ["192.168.2.19"])
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+    ws._maybe_align_usb_mode("SFOS1", "ssh", cfg)
+    assert spawned == [], \
+        f"acted on a device that has its own address: {spawned}"
+
+    # No peer address at all is the genuine no-lease stray (dory/sturgeon).
+    # The guard must not swallow it — suppress on positive evidence of a
+    # DIFFERENT address only, never on absence of an expected one.
+    monkeypatch.setattr(fastboot, "usb_net_peers", lambda iface, run=None: [])
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+    ws._maybe_align_usb_mode("NOLEASE1", "ssh", cfg)
+    assert [n for n, _ in spawned] == ["_align_usb_mode_worker"], \
+        f"a watch with no lease lost its recovery: {spawned}"
+    spawned.clear()
+
+    # Answering ON the default address is a real stray: unchanged behaviour.
+    monkeypatch.setattr(fastboot, "usb_net_peers",
+                        lambda iface, run=None: [ws._STRAY_SSH_IP])
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+    ws._maybe_align_usb_mode("STRAY1", "ssh", cfg)
+    assert [n for n, _ in spawned] == ["_align_usb_mode_worker"], \
+        f"a genuine stray on the default IP was skipped: {spawned}"
+
+
+def test_not_a_stray_is_logged_once_per_episode(monkeypatch, caplog):
+    """The skip is logged once, not on every 90s backoff for as long as the
+    device stays plugged in — and it re-arms when the device leaves SSH mode,
+    so a later episode is visible rather than silently swallowed."""
+    import logging
+    from asteroid_docking_bay import fastboot
+
+    monkeypatch.setattr(ws.threading, "Thread",
+                        lambda *a, **k: type("N", (), {"start": lambda s: None})())
+    monkeypatch.setattr(fastboot, "usb_net_link_for",
+                        lambda serial: {"iface": "enp0s20u1", "serial": serial})
+    monkeypatch.setattr(fastboot, "usb_net_peers",
+                        lambda iface, run=None: ["192.168.2.19"])
+    cfg = {"ssh_ips": {}, "usb_mode_preference": "ssh"}
+    ws._ssh_align_attempt.clear()
+    ws._ssh_align_elsewhere.clear()
+
+    with caplog.at_level(logging.INFO):
+        ws._maybe_align_usb_mode("SFOS2", "ssh", cfg)
+        ws._ssh_align_attempt.clear()          # past the backoff
+        ws._maybe_align_usb_mode("SFOS2", "ssh", cfg)
+    assert sum("not a stray" in r.message for r in caplog.records) == 1, \
+        [r.message for r in caplog.records]
+
+    # Leaving SSH mode ends the episode.
+    ws._maybe_align_usb_mode("SFOS2", "device", cfg)
+    assert "SFOS2" not in ws._ssh_align_elsewhere

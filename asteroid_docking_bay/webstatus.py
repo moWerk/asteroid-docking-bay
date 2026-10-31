@@ -9,7 +9,7 @@ import threading
 import time
 
 from .util import onboarding_active
-from .util import log
+from .util import log, _run
 from .flap import flaps
 from . import oplock
 from . import wanze as wanze_mod
@@ -250,6 +250,10 @@ _SSH_ALIGN_BACKOFF_SEC = 90
 _ssh_align_fail: dict[str, int] = {}
 _ssh_align_cycled: set[str] = set()
 _SSH_ALIGN_FAILS_BEFORE_CYCLE = 2
+# Serials found in SSH mode at an address that is not the default one: not
+# strays at all. Tracked only so the "leaving it alone" line is logged once per
+# episode instead of every backoff for as long as the device stays plugged in.
+_ssh_align_elsewhere: set[str] = set()
 
 
 def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
@@ -274,6 +278,7 @@ def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
         if serial:
             _ssh_align_attempt.pop(serial, None)
             _ssh_align_fail.pop(serial, None)
+            _ssh_align_elsewhere.discard(serial)
             # Re-arm the one-shot cycle only on POSITIVE recovery. adb_state is
             # None for several seconds during the cycle's own re-enumeration,
             # and clearing the marker on that absence let the watch's own
@@ -289,6 +294,46 @@ def _maybe_align_usb_mode(serial: "str | None", adb_state: "str | None",
     if now - _ssh_align_attempt.get(serial, 0) < _SSH_ALIGN_BACKOFF_SEC:
         return
     _ssh_align_attempt[serial] = now
+
+    # a-d-b already knows this device's address, without asking it. A device in
+    # developer mode runs the DHCP server on its own link, so the address the
+    # host was leased FROM is the device, exactly — learned at link-up with
+    # nothing sent. Reading it is passive, which is what makes it safe here:
+    # everything below this point either rewrites the device's USB mode or cuts
+    # its power, and it runs unattended against devices mid-measurement.
+    #
+    # Without this, the stray path GUESSES _STRAY_SSH_IP. A device living at
+    # any other address can then never answer, so every probe fails by
+    # construction, and that failure is read as "no DHCP lease" and escalated
+    # to a power cycle. On 2026-10-31 that cut VBUS on a SailfishOS phone at
+    # 192.168.2.19 during another session's test: SailfishOS assigns its own
+    # USB address, a-d-b never allocated it, so the phone was a permanent
+    # "stray" that was never stray — and unreachable-at-our-guess was taken as
+    # proof of the one condition a power cycle fixes.
+    #
+    # The polarity is deliberate. Suppress only on POSITIVE evidence of a
+    # DIFFERENT address; do not require positive evidence of an expected one. A
+    # watch that cold-booted into developer mode and got no lease yields no
+    # peer address at all, falls through, and keeps the one-shot cycle recovery
+    # it genuinely needs (dory/sturgeon). Requiring proof instead would regress
+    # that case on any device a-d-b has no record for.
+    from .fastboot import usb_net_link_for, usb_net_peers
+    link = usb_net_link_for(serial)
+    if link:
+        # Bounded runner: _run defaults to no timeout and this is on the poll
+        # path, where a wedged nmcli would stall every row, not just this one.
+        peers = usb_net_peers(link["iface"],
+                              run=lambda cmd, check=False: _run(cmd, check=False,
+                                                                timeout=5))
+        if peers and _STRAY_SSH_IP not in peers:
+            if serial not in _ssh_align_elsewhere:
+                _ssh_align_elsewhere.add(serial)
+                log.info("%s: in SSH mode at %s, not the default %s — not a "
+                         "stray, leaving its mode and its power alone",
+                         serial, peers[0], _STRAY_SSH_IP)
+            return
+    _ssh_align_elsewhere.discard(serial)
+
     allocated = ssh_ip_for_serial(cfg, serial)
     if allocated:
         # A watch that was switched deliberately keeps its mode — but having an
