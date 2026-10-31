@@ -1131,6 +1131,21 @@ function mkadb(adb,fbprod,os,serial,sshIp,name,ncm){
   if(adb)return `<span class="dim">${esc(adb)}</span>`;
   return '<span class="dim">&mdash;</span>';
 }
+// A port whose MAPPED unit is not the one plugged into it. The name stays
+// the mapped one deliberately -- renaming a port because something else was
+// docked would be worse than saying the two disagree -- but saying nothing
+// at all makes the row read as stale, which is exactly how it was reported:
+// "the row is not updating, the former device is still shown". The status
+// document has carried serial_mismatch since the Pro1-X landed on a port
+// mapped to another unit; nothing rendered it.
+function mkmismatch(p){
+  if(!p.serial_mismatch)return '';
+  return ` <span class="cbadge warn" title="${ux(
+    'this port is MAPPED to '+esc(p.serial||'?')+' but '+esc(p.dev_serial||'?')+
+    ' is plugged into it. The name above is the mapping; readings come from the '+
+    'device that is actually here. Onboard the port to rebind it.',
+    'a different device is in this slot than the one it is set up for')}">other unit</span>`;
+}
 function mkadbrow(p){
   // Highest-priority warning: the watch is almost certainly awake and
   // draining right now, and nothing else on the row can show it. Cutting VBUS
@@ -1656,7 +1671,7 @@ function render(data){
           `<td class="thumb">${mkthumb(p)}</td>` +
           `<td>`+(p.serial
             ?`<b class="cn${p.adb?'':' offname'}" onclick="openCC('${jsq(p.serial)}','${jsq(p.codename)}',event)" title="${isDev()?'open Control Center (stale if offline)':'codename '+esc(p.codename)+' — click for details'}">${esc(watchName(p.codename))}</b>`
-            :`<b class="${p.adb?'':'offname'}" title="${isDev()?'':'codename '+esc(p.codename)}">${esc(watchName(p.codename))}</b>`)+mklife(p)+mkheld(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${jsq(p.serial)}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
+            :`<b class="${p.adb?'':'offname'}" title="${isDev()?'':'codename '+esc(p.codename)}">${esc(watchName(p.codename))}</b>`)+mklife(p)+mkheld(p)+mkmismatch(p)+(p.screen_forced?`<span class="scrn" onclick="releaseScreen('${jsq(p.serial)}')" title="screen forced ON (draining) — click to release">screen</span>`:'')+`</td>` +
           `<td class="stats">${mkstrip(p,wearH)}</td>` +
           `<td class="batc" id="bat-${slot}">${bat}</td>` +
           `<td class="actc" id="act-${slot}">` +

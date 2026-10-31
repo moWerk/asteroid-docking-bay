@@ -3597,3 +3597,49 @@ process.exit(0);
         "the table was rebuilt while an input had focus, which blurs it"
     assert out["afterBlur"] == 1, \
         "the table stopped updating once the field was blurred"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_port_holding_a_different_unit_says_so(tmp_path):
+    """The status document has carried serial_mismatch since a Pro1-X landed
+    on a port mapped to another unit, and nothing rendered it. The row then
+    showed the MAPPED name with no sign that something else was plugged in,
+    which reads as a stale row -- and was reported as exactly that: "the row
+    is not updating, the former device is still shown".
+
+    Keeping the mapped name is deliberate. Saying nothing about the
+    disagreement is not.
+    """
+    h = tmp_path / "mismatch.js"
+    h.write_text(_DOM_STUBS + JS + """
+const same = mkmismatch({serial_mismatch:false, serial:'A', dev_serial:'A'});
+const diff = mkmismatch({serial_mismatch:true, serial:'CQ30017HVF',
+                         dev_serial:'7edd4a12c9de4333'});
+console.log(JSON.stringify({
+  quietWhenMatched: same === '',
+  shownWhenNot: diff.includes('other unit'),
+  namesBoth: diff.includes('CQ30017HVF') && diff.includes('7edd4a12c9de4333')}));
+process.exit(0);
+""")
+    r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
+    assert r.returncode == 0, r.stderr[:400]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["quietWhenMatched"], "a correctly-mapped port is being badged"
+    assert out["shownWhenNot"], "a port holding a different unit still says nothing"
+    assert out["namesBoth"], "the badge does not name which unit is which"
+
+
+def test_the_mismatch_badge_is_actually_wired_into_the_row():
+    """Testing the builder is not testing the row. The first version of the
+    test above passed with mkmismatch(p) deleted from the name cell, because
+    it only ever called the function directly -- so the badge would have been
+    perfect and invisible, which is the state it was already in.
+
+    The badge has to be CALLED from the row, beside the other per-row marks.
+    """
+    calls = [l for l in JS.splitlines()
+             if "mkmismatch(" in l and "function mkmismatch" not in l]
+    assert calls, "mkmismatch is defined but never called from a row"
+    assert any("mklife(p)" in l for l in calls), (
+        "mkmismatch is called somewhere, but not in the name cell beside the "
+        f"other per-row marks: {calls}")
