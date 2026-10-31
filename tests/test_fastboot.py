@@ -357,3 +357,20 @@ def test_peers_falls_back_when_there_is_no_lease():
             return 1, "", "Error: Device not found."
         return 0, "192.168.2.16 lladdr aa:bb STALE\n", ""
     assert fb.usb_net_peers("usb0", run=run) == ["192.168.2.16"]
+
+
+def test_neighbours_drops_unresolved_entries():
+    """An INCOMPLETE entry means something ARPed for that address and nothing
+    answered — it is a record of a question, not of a device.
+
+    This is the 2026-10-31 regression: a-d-b probed the shared default address
+    every 90s, which put `192.168.2.15 INCOMPLETE` on a SailfishOS phone's
+    link. The table then named the phone at the one address it was not at, so
+    a-d-b's own failed traffic became evidence against the caller trying to
+    distinguish "this device lives elsewhere" from "this device has no lease".
+    """
+    import asteroid_docking_bay.fastboot as fb
+    out = ("192.168.2.19 lladdr 56:d1:3c:c0:7e:fa REACHABLE\n"
+           "192.168.2.15 INCOMPLETE\n")
+    got = fb._neighbours("usb0", run=lambda c, check=False: (0, out, ""))
+    assert got == ["192.168.2.19"], got

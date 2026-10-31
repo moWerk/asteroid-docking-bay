@@ -301,8 +301,17 @@ def _neighbours(iface: str, run=None) -> "list[str]":
     interface of its own, so the kernel's neighbour table already names it the
     moment either end says anything. `ip neigh` only reads.
 
-    FAILED entries are dropped: the kernel keeps them after an address stops
-    answering, and handing one back would send a probe somewhere known dead.
+    Only RESOLVED entries count -- an entry must carry an `lladdr`. The kernel
+    creates an INCOMPLETE entry the moment anything ARPs for an address, and it
+    keeps a FAILED one after an address stops answering; neither is evidence
+    that a device is there. The INCOMPLETE case is not hypothetical and it bit
+    this fleet: a-d-b's own hourly probes to the shared default address put
+    `192.168.2.15 INCOMPLETE` on a SailfishOS phone's link, so the table
+    reported the phone at the one address it was not at, and a caller trying to
+    tell "it lives elsewhere" from "it has no lease" was told the wrong thing by
+    a-d-b's own failed traffic. Requiring lladdr covers both states by asking
+    the real question -- did anything ever answer -- rather than enumerating
+    the names the kernel gives to silence.
     """
     rc, out, _ = (run or _run)(f"ip -4 neigh show dev {iface}", check=False)
     if rc != 0:
@@ -310,7 +319,8 @@ def _neighbours(iface: str, run=None) -> "list[str]":
     found = []
     for line in out.splitlines():
         parts = line.split()
-        if parts and parts[0] not in found and "FAILED" not in line:
+        if (parts and parts[0] not in found
+                and "lladdr" in line and "FAILED" not in line):
             found.append(parts[0])
     return found
 
