@@ -27,11 +27,26 @@ APP_NAME = "benchymark"
 # Keeping a second copy of the app here would have drifted from upstream the
 # first time either side was touched.
 #
-# Two ways to get an ipk into this directory:
-#   * build it from a checkout of that repo (see its packaging/benchymark.bb),
-#     which drops the package here on this rig; or
-#   * download the ipk attached to a release and drop it in.
-IPK_DIR = Path.home() / "Git/asteroid/build/tmp-qt6/deploy/ipk"
+# Where an ipk can come from, in search order. Two sources rather than one
+# because they fail at different times: the Yocto tree only has a package if
+# somebody has built benchymark into THIS rig's tree, and on 2026-10-31 nobody
+# ever had -- 3578 ipks sat in that directory and not one of them was
+# benchymark, which is a confusing way to be told "not built here".
+#
+# The drop-in directory is the no-build path: download the ipk attached to a
+# release and put it there. It lives under a-d-b's own data directory, not in
+# a build tree, so it survives a cleanstate and does not need a toolchain.
+#
+# NOTE for anyone comparing packages: the ipk filename and its Depends-level
+# version are NOT a build identity. Both the v0.1 and v0.2 release assets are
+# called benchymark_1.0-r0_armv7vehf-neon.ipk and both report Version: 1.0-r0,
+# because that is the recipe's version and it does not move with the release.
+# The authoritative discriminator is the app's own `scene` field, which it
+# writes into last-run.json and which run results therefore carry.
+IPK_DIRS = (
+    Path.home() / "Git/asteroid/build/tmp-qt6/deploy/ipk",   # built on this rig
+    Path.home() / ".local/share/asteroid-docking-bay/ipk",    # dropped in by hand
+)
 APP_RESULTS = "/home/ceres/.local/share/benchymark/last-run.json"
 # The app publishes its live phase here. It is PERSISTENT dconf, so a value
 # left by the previous run matches instantly and a poller thinks the new run
@@ -50,8 +65,11 @@ def newest_ipk() -> "str | None":
     change, only the build does."""
     # {APP_NAME}_* only: the build also emits -src, -dev and -dbg siblings,
     # and installing one of those puts no app on the watch.
-    found = sorted(IPK_DIR.rglob(f"{APP_NAME}_*.ipk"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
+    found = []
+    for d in IPK_DIRS:
+        if d.is_dir():
+            found.extend(d.rglob(f"{APP_NAME}_*.ipk"))
+    found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return str(found[0]) if found else None
 
 

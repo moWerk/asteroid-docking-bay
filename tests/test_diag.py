@@ -82,7 +82,7 @@ def test_newest_ipk_ignores_sibling_packages(tmp_path, monkeypatch):
     real.write_text("real")
     for sib in ("benchymark-src", "benchymark-dev", "benchymark-dbg"):
         (d / f"{sib}_1.0-r0_armv7vehf-neon.ipk").write_text("nope")
-    monkeypatch.setattr(bench, "IPK_DIR", tmp_path)
+    monkeypatch.setattr(bench, "IPK_DIRS", (tmp_path,))
     assert bench.newest_ipk() == str(real)
 
 
@@ -91,7 +91,7 @@ def test_newest_ipk_returns_none_when_nothing_built(tmp_path, monkeypatch):
     raising — the UI button carries no arguments and the op turns this into a
     readable error."""
     from asteroid_docking_bay import bench
-    monkeypatch.setattr(bench, "IPK_DIR", tmp_path / "does-not-exist")
+    monkeypatch.setattr(bench, "IPK_DIRS", (tmp_path / "does-not-exist",))
     assert bench.newest_ipk() is None
 
 
@@ -858,3 +858,49 @@ def test_the_journal_line_keeps_its_stderr():
     line = next(l for l in dg.DIAG_SCRIPT.split("; ") if "journalctl -p 3" in l)
     assert "2>&1" in line, f"the journal refusal is being discarded: {line}"
     assert "2>/dev/null" not in line, f"stderr suppressed on the journal: {line}"
+
+
+def test_ipk_is_found_in_the_drop_in_dir_too(tmp_path, monkeypatch):
+    """An ipk can arrive without a build: downloaded from a release and
+    dropped in. Searching only the Yocto deploy tree is what produced
+    "no benchymark ipk found" on a rig that had 3578 other ipks in that
+    directory and had simply never built this one.
+
+    Newest across ALL locations, not first-location-wins: a freshly built
+    package must beat a stale drop-in, and vice versa.
+    """
+    import os
+    from asteroid_docking_bay import bench
+
+    built, dropin = tmp_path / "deploy", tmp_path / "dropin"
+    built.mkdir(); dropin.mkdir()
+    monkeypatch.setattr(bench, "IPK_DIRS", (built, dropin))
+
+    # Only a drop-in exists: it must be found at all (the regression).
+    drop = dropin / f"{bench.APP_NAME}_1.0-r0_armv7vehf-neon.ipk"
+    drop.write_text("x")
+    os.utime(drop, (1000, 1000))
+    assert bench.newest_ipk() == str(drop)
+
+    # A newer build in the other directory wins on mtime, not on order.
+    fresh = built / f"{bench.APP_NAME}_1.0-r0_armv7vehf-neon.ipk"
+    fresh.write_text("x")
+    os.utime(fresh, (9000, 9000))
+    assert bench.newest_ipk() == str(fresh)
+
+    # And a newer drop-in beats an older build, so the order is genuinely mtime.
+    os.utime(drop, (99000, 99000))
+    assert bench.newest_ipk() == str(drop)
+
+
+def test_ipk_search_ignores_sibling_packages(tmp_path, monkeypatch):
+    """The build emits -src, -dev and -dbg siblings, and a neighbouring recipe
+    can be confusingly close: the real deploy tree holds
+    perl-module-benchmark_*.ipk, which must never be mistaken for this app."""
+    from asteroid_docking_bay import bench
+    monkeypatch.setattr(bench, "IPK_DIRS", (tmp_path,))
+    for name in ("perl-module-benchmark_5.40.2-r0_armv7vehf-neon.ipk",
+                 f"{bench.APP_NAME}-src_1.0-r0_armv7vehf-neon.ipk",
+                 f"{bench.APP_NAME}-dbg_1.0-r0_armv7vehf-neon.ipk"):
+        (tmp_path / name).write_text("x")
+    assert bench.newest_ipk() is None, "picked up a package that is not the app"

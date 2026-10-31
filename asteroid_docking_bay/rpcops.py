@@ -1877,7 +1877,10 @@ def _bench_app(argsd):
         ipk = argsd.get("ipk") or bench.newest_ipk()
         if not ipk or not Path(ipk).is_file():
             return {"ok": False,
-                    "error": f"no benchymark ipk found (looked in {bench.IPK_DIR})"}
+                    "error": "no benchymark ipk found — looked in: "
+                             + ", ".join(str(d) for d in bench.IPK_DIRS)
+                             + ". Drop a release's ipk into the second path, "
+                               "or build one into the first."}
         err = bench.app_install(w, ipk)
         return {"ok": not err, **({"error": err} if err else {"installed": Path(ipk).name})}
     if action == "start":
