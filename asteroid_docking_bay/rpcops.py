@@ -793,6 +793,16 @@ def _wifi_provision(args):
     identifies a saved network by the interface that saved it.
     """
     serial, ssid = args["serial"], args.get("ssid")
+    # Provisioning is NOT a read: it stops connman, writes, restarts it and
+    # powers the WiFi technology on. Doing that to a watch somebody is
+    # measuring corrupts the measurement silently, and the porting session
+    # planned a drain window around a hold that would not have stopped this.
+    lock = oplock.held(load_config(), serial)
+    if lock:
+        return {"ok": False, "busy": lock.get("kind"),
+                "error": f"this watch is held: {oplock.describe(lock)} — "
+                         f"provisioning stops connman and powers WiFi on, "
+                         f"which would disturb that operation"}
     aps = wifi.find_aps(BACKUP_ROOT)
     if not aps:
         return {"ok": False,

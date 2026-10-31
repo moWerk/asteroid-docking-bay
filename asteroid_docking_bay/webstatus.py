@@ -911,7 +911,14 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 # is reachable now.
                 in_orbit = True
                 adb_state = "orbit"
-            if adb_state == "device":
+            # A HELD watch is not polled. Every /api/status rebuild costs one
+            # adb round trip per docked watch, the UI asks every 3 s, and any
+            # USB topology change busts the cache and forces a rebuild at
+            # once -- so a watch under measurement was being woken roughly
+            # every three seconds, densest exactly at the VBUS transitions
+            # that bound a drain window. The row keeps its last-known reading
+            # rather than going blank.
+            if adb_state == "device" and not oplock.held(cfg, serial):
                 battery, screen_forced, charge_status = battery_and_screen(serial)
             elif adb_state == "ssh":
                 # A watch on SSH must show a LIVE battery in the row, not freeze

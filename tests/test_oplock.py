@@ -515,3 +515,48 @@ def test_a_wanze_run_still_expires_eventually():
     cfg = {"op_locks": {"S1": {"kind": wanze.PROBING_KIND, "since": stale,
                                "until": stale + wanze.PROBING_TTL_SEC}}}
     assert wanze.probing(cfg, "S1") is None
+
+
+# --- a hold must stop the POLLERS too, not only the operations ------------
+
+def test_wifi_provision_refuses_a_held_watch():
+    """Provisioning is not a read: it stops connman, writes, restarts it and
+    powers WiFi on. Nine ops refused while a watch was held and this one did
+    not, so it would have gone ahead in the middle of a drain window."""
+    import inspect
+    import asteroid_docking_bay.rpcops as rp
+    src = inspect.getsource(rp._wifi_provision)
+    assert "oplock.held" in src, "wifi.provision still ignores the hold"
+    # and it must refuse BEFORE doing any of the work
+    assert src.index("oplock.held") < src.index("find_aps"), \
+        "the hold is checked after the credential lookup has already started"
+
+
+def test_the_status_poll_skips_a_held_watch():
+    """Every /api/status rebuild costs one adb round trip per docked watch,
+    the UI asks every 3 s, and a USB topology change forces a rebuild at
+    once -- so a watch under measurement was woken about every three
+    seconds, densest exactly at the VBUS transitions bounding a drain
+    window."""
+    import inspect
+    import asteroid_docking_bay.webstatus as ws
+    src = inspect.getsource(ws._web_status_data)
+    line = next(l for l in src.splitlines()
+                if "battery_and_screen(serial)" in l and "_ssh" not in l)
+    guard = next(l for l in src.splitlines()
+                 if 'adb_state == "device"' in l and "battery" not in l
+                 or ('adb_state == "device"' in l and "oplock.held" in l))
+    assert "oplock.held" in guard, \
+        f"the status poll does not check the hold: {guard.strip()}"
+
+
+def test_the_orbit_probe_skips_a_held_watch():
+    """A TCP connect every 5 s plus an ssh session whenever it answers is a
+    network wakeup every five seconds on a watch being measured -- and it is
+    invisible to anyone looking at the USB bus for the cause."""
+    import inspect
+    import asteroid_docking_bay.ops as ops
+    src = inspect.getsource(ops._background_warmer)
+    assert "oplock.held" in src, "the orbit probe still polls a held watch"
+    assert src.index("oplock.held") < src.index("orbit.reachable"), \
+        "the hold is checked after the watch has already been probed"

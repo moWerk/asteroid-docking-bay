@@ -437,6 +437,13 @@ def _background_warmer() -> None:
             # WiFi badge without blocking. A reachable member also gets a fresh
             # battery read over its link, recorded to last_seen for its row.
             for serial, member in orbit_members(cfg).items():
+                # A HELD watch is left alone. This probe is a TCP connect
+                # every 5 s plus an ssh session whenever it answers, which on
+                # a watch being measured is a network wakeup every five
+                # seconds -- entirely independent of USB, and invisible to
+                # anyone looking at the bus for the cause.
+                if oplock.held(cfg, serial):
+                    continue
                 ip = member.get("ip")
                 ok = orbit.reachable(ip) if ip else False
                 orbit.note_reachable(serial, ok)
