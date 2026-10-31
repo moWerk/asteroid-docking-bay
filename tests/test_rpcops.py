@@ -91,6 +91,9 @@ def test_registered_ops_are_the_documented_contract():
     here and in docs/CONTAINERS.md — that is the point."""
     assert REGISTERED == {
         "status.get",
+        # Read-only API discovery (2026-10-31). Grants nothing: it only names
+        # ops a caller reaching this dispatcher could already invoke.
+        "ops.manifest",
         "watch.cc", "watch.timeline", "watch.bootchart", "watch.diag", "watch.wake_set", "watch.locale_set",
         "bench.app", "wanze.probe", "oplock.set", "watch.dump", "aod.check", "wifi.aps", "wifi.provision", "watch.session_restart", "watch.drainlog",
         "watch.settings_read", "watch.settings_write",
@@ -2003,3 +2006,53 @@ def test_onboarding_does_not_ppps_test_a_hub_that_has_no_ppps():
     assert test is not None, "the PPPS test emit is gone; update this test"
     assert guard < test, (
         f"the guard is at line {guard} but the test runs at {test}")
+
+
+def test_ops_manifest_lists_every_registered_op():
+    """The manifest is for discovery, so a missing op is the whole failure:
+    a caller that cannot see an op will hand-transcribe the endpoint from a
+    chat message instead, which is what this exists to stop.
+
+    Derived from the registry rather than a parallel list, so this also fails
+    if someone adds a second source of truth and forgets one of them.
+    """
+    got = rpcops.DISPATCH._data["ops.manifest"]({})
+    assert got["ok"] is True
+    names = {r["op"] for r in got["ops"]}
+    assert names == REGISTERED, (
+        f"manifest and registry disagree: "
+        f"missing={sorted(REGISTERED - names)} extra={sorted(names - REGISTERED)}")
+    # It must describe itself too, or discovery cannot bootstrap.
+    assert "ops.manifest" in names
+
+
+def test_ops_manifest_exposes_only_names_kinds_and_summaries():
+    """It is read-only discovery, not introspection: nothing about the handler
+    itself may travel, and the whole thing has to survive json.dumps."""
+    import json
+    got = rpcops.DISPATCH._data["ops.manifest"]({})
+    for row in got["ops"]:
+        assert set(row) == {"op", "kind", "summary"}, row
+        assert row["kind"] in ("data", "stream"), row
+    json.dumps(got)          # raises if a handler object leaked in
+
+
+def test_ops_manifest_summaries_are_whole_sentences():
+    """These docstrings wrap, so cutting at the first newline yields half a
+    sentence -- "Claim or release a watch for a long" was the real example.
+    The summary is the first PARAGRAPH, rejoined onto one line."""
+    got = rpcops.DISPATCH._data["ops.manifest"]({})
+    by_op = {r["op"]: r["summary"] for r in got["ops"]}
+    # A docstring whose first sentence WRAPS: "hub.rename" reads
+    # "...for a physical hub," at the newline, so a first-line cut yields a
+    # dangling clause. This is the case the paragraph join exists for, and the
+    # one that an op with a short opening sentence cannot catch.
+    assert by_op["hub.rename"] == (
+        "Set (or clear, with an empty name) the friendly name for a physical "
+        "hub, keyed by its address prefix so it covers every chip and port "
+        "beneath it.")
+    assert by_op["oplock.set"] == \
+        "Claim or release a watch for a long operation."
+    for op, summary in by_op.items():
+        assert "\n" not in summary, f"{op} summary still wrapped: {summary!r}"
+        assert "  " not in summary, f"{op} summary has run-together gaps: {summary!r}"

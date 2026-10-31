@@ -3658,3 +3658,26 @@ def test_wifi_provision_surfaces_a_half_success():
         "a provisioning half-success is reported as a plain success again"
     # And it is reported as a problem, not as a cheerful note.
     assert "toastErr(d.warning)" in body.replace(" ", ""), body[-400:]
+
+
+def test_api_ops_asks_the_backend_rather_than_its_own_table():
+    """/api/ops must go through the dispatcher, not read the local registry.
+
+    In split mode the frontend imports rpcops too, so reading its own copy
+    would describe the container that parses HTTP rather than the one that
+    executes ops -- and the two can be different versions. A manifest that
+    confidently describes the wrong half is worse than none.
+
+    Scoped to the route's own body so deleting the call fails this.
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "asteroid_docking_bay" / "webapp.py").read_text()
+    assert '@app.get("/api/ops")' in src, "the discovery endpoint is gone"
+    body = src.split('@app.get("/api/ops")', 1)[1].split("    @app.", 1)[0]
+    assert '_call("ops.manifest")' in body, \
+        "the manifest is being read locally instead of asked for"
+    assert "DISPATCH.manifest()" not in body, \
+        "reading the frontend's own op table describes the wrong container"
+    # The HTTP bindings are the frontend's own business and must come from the
+    # live route table, not a hand-kept list.
+    assert "_JSON_ROUTES" in body and "app.routes" in body, body[:400]

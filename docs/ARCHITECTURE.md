@@ -54,12 +54,15 @@ asteroid_docking_bay/
     webstatus.py   the /api/status document builder + live soft-remap
     webtemplate.py the single-page UI (HTML/CSS/JS) as a string
     webapp.py      Bottle app factory: routes, SSE streams, status cache,
-                   background cache warmer
+                   background cache warmer, and GET /api/ops — the
+                   machine-readable manifest, built from the backend's op
+                   list plus this layer's own route table
     cli.py         argparse commands + main()
 
     rpc.py         RPC transport for the container split: NDJSON over TCP,
                    the token gate, and the Dispatcher — the allow-list of
-                   op name -> handler (see docs/CONTAINERS.md)
+                   op name -> handler, which also describes itself through
+                   Dispatcher.manifest() (see docs/CONTAINERS.md)
     rpcops.py      the backend op table itself: every /api route as a named
                    data or stream op. Adding a capability means registering
                    an op in a reviewable diff, which is why a test pins the

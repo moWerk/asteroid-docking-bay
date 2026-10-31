@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import signal
 import sys
 import threading
@@ -21,6 +22,7 @@ from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 
 from . import fastboot
+from . import __version__
 from .util import log
 from .config import _config_lock, load_config, save_config, seed_hub_names
 from .usb import _sysfs_switch_mode, hub_vendors, usb_topology_fingerprint
@@ -237,6 +239,69 @@ def serve(args, cfg: dict):
 
     for spec in _JSON_ROUTES:
         _register(*spec)
+
+    @app.get("/api/ops")
+    def api_ops():
+        """The machine-readable operation manifest.
+
+        It exists because the alternative was transcription. Another session
+        asked for a-d-b's hold endpoint on 2026-10-31, said it would "rather
+        not guess at endpoints on your service", and got the contract typed
+        into a chat message by hand -- including the doubled segment in
+        /api/watch/<serial>/hold/hold, which is exactly the sort of thing a
+        person retypes wrongly.
+
+        Generated from the live registries, never from a second list: the ops
+        come from the dispatcher, the HTTP bindings from _JSON_ROUTES, and the
+        full endpoint set from Bottle's own route table. Nothing here can
+        drift from what the server actually serves, because there is no copy
+        to drift -- which is the same reason the op table is the security
+        boundary rather than a mirror of it.
+
+        Read-only, and it adds no capability: every name in it was already
+        reachable by anyone who could reach this port.
+        """
+        resp.content_type = "application/json"
+        bindings: dict = {}
+        for method, path, op, fixed, _bust in _JSON_ROUTES:
+            bindings.setdefault(op, []).append({
+                "method": method,
+                "path": path,
+                # The <name> and <name:type> segments a caller has to fill in,
+                # in the order they appear, so the path can be built without
+                # parsing it.
+                "params": re.findall(r"<([A-Za-z_][\w]*)(?::[^>]+)?>", path),
+                # Arguments the ROUTE supplies, which a caller must not and
+                # cannot override: this is how one op backs both /api/on and
+                # /api/off.
+                "fixed": fixed,
+            })
+        # Through the dispatcher, not from the local table: in split mode the
+        # backend is the one that executes ops and therefore the only honest
+        # source for what exists.
+        got = _call("ops.manifest")
+        if not got.get("ok"):
+            return json.dumps(got)
+        ops = []
+        for row in got.get("ops", []):
+            row = dict(row)
+            # [] rather than a missing key: an op with no HTTP binding is a
+            # real thing (CLI and RPC reach the same table), and saying so is
+            # more useful than leaving the caller to wonder.
+            row["routes"] = bindings.get(row["op"], [])
+            ops.append(row)
+        return json.dumps({
+            "ok": True,
+            "version": __version__,
+            "ops": ops,
+            # Everything the server answers, ops or not. Several endpoints are
+            # plain routes rather than dispatcher ops, and a manifest that
+            # omitted them would send a reader looking for a toggle that is
+            # right there.
+            "endpoints": [{"method": m, "path": p} for m, p in sorted(
+                {(r.method, r.rule) for r in app.routes},
+                key=lambda mr: (mr[1], mr[0]))],
+        })
 
     @app.get("/api/status")
     def api_status():

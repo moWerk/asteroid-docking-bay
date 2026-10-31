@@ -2113,6 +2113,23 @@ def _watch_dump(args):
                 _dump_runs.pop(serial, None)
 
 
+@DISPATCH.op("ops.manifest")
+def _ops_manifest(argsd):
+    """List every operation this backend offers, with a one-line summary.
+
+    An op rather than a frontend read of the local table, because in split
+    mode those are not the same thing: the frontend imports rpcops too, so
+    reading its own copy would describe the container that parses HTTP rather
+    than the one that executes ops, and the two can be different versions.
+    Asking over the same channel the work goes down means the manifest cannot
+    describe something the executing side will not do.
+
+    Read-only, and it grants nothing: every name it returns was already
+    reachable by any caller that can reach this dispatcher.
+    """
+    return {"ok": True, "ops": DISPATCH.manifest()}
+
+
 @DISPATCH.op("oplock.set")
 def _oplock_set(argsd):
     """Claim or release a watch for a long operation.

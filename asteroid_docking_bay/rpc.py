@@ -114,6 +114,19 @@ class TokenGate:
 
 # ── dispatch table ─────────────────────────────────────────────────────────
 
+def _first_doc_line(fn) -> str:
+    """The handler's one-line summary, or "" when it has no docstring.
+
+    First PARAGRAPH, not first line: these docstrings wrap, and cutting at the
+    newline leaves half a sentence ("Claim or release a watch for a long" ...).
+    """
+    doc = (fn.__doc__ or "").strip()
+    if not doc:
+        return ""
+    para = doc.split("\n\n", 1)[0]
+    return " ".join(para.split())
+
+
 class Dispatcher:
     """Allow-list of op name → handler. Handlers take one args dict; data
     handlers return a JSON-able value, stream handlers return an iterator of
@@ -135,6 +148,23 @@ class Dispatcher:
             self._stream[name] = fn
             return fn
         return deco
+
+    def manifest(self) -> "list[dict]":
+        """Every registered op: name, kind, and its handler's first doc line.
+
+        An accessor rather than a second reader of `_data`. Audit finding F7
+        was that callers reached into that dict directly; a manifest built the
+        same way would have been a third one. The registry stays the single
+        source of truth and this is the only way out of it.
+
+        Sorted by name so the output is a stable thing to diff -- callers use
+        this to discover the API, and a set that reorders per process makes
+        every fetch look like a change.
+        """
+        rows = [{"op": n, "kind": k, "summary": _first_doc_line(fn)}
+                for k, table in (("data", self._data), ("stream", self._stream))
+                for n, fn in table.items()]
+        return sorted(rows, key=lambda r: r["op"])
 
     def dispatch(self, op, args: dict):
         """Return ('data', result) or ('stream', iterator). Raises RpcError
