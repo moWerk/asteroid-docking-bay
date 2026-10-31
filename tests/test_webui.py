@@ -3643,3 +3643,18 @@ def test_the_mismatch_badge_is_actually_wired_into_the_row():
     assert any("mklife(p)" in l for l in calls), (
         "mkmismatch is called somewhere, but not in the name cell beside the "
         f"other per-row marks: {calls}")
+
+
+def test_wifi_provision_surfaces_a_half_success():
+    """provision returns ok:true with a `warning` when the credential is
+    installed but the radio was not confirmed powered. The page must say so.
+
+    Scoped to wifiProvision's own body, so deleting the branch fails this —
+    a whole-file substring search would keep passing on any other mention of
+    `warning` in the template.
+    """
+    body = JS.split("function wifiProvision(", 1)[1].split("\nfunction ", 1)[0]
+    assert "d.warning" in body, \
+        "a provisioning half-success is reported as a plain success again"
+    # And it is reported as a problem, not as a cheerful note.
+    assert "toastErr(d.warning)" in body.replace(" ", ""), body[-400:]

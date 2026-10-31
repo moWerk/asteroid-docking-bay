@@ -1090,10 +1090,72 @@ class Watch:
             self.t.shell("systemctl start connman", timeout=20)
             staged.unlink(missing_ok=True)
 
-        # connman only auto-joins if the WiFi technology is actually powered.
-        self.toggle("wifi", True)
-        log.info("%s: provisioned WiFi %s as %s", self.serial, ap["ssid"], new_id)
-        return {"ok": True, "ssid": ap["ssid"], "service": new_id, "mac": mac}
+        # connman only auto-joins if the WiFi technology is actually powered,
+        # and this used to be a bare `toggle("wifi", True)` whose return value
+        # was thrown away. `systemctl start connman` returns when the unit is
+        # activating, not when the daemon can take commands, so the enable
+        # landed in that gap, failed, logged a warning nobody reads, and
+        # provisioning still answered ok -- credential installed, radio off,
+        # watch never joins, and the next person blames the credential.
+        #
+        # It is a race, so it is intermittent: the same code provisioned sol
+        # cleanly through the UI and then needed a manual toggle over the API
+        # an hour later on 2026-10-31. There is no second code path; there was
+        # only a second roll of the dice.
+        wifi_on = self._power_wifi_when_connman_is_up()
+        log.info("%s: provisioned WiFi %s as %s (wifi powered: %s)",
+                 self.serial, ap["ssid"], new_id,
+                 {True: "yes", False: "no"}.get(wifi_on, "unknown"))
+        res = {"ok": True, "ssid": ap["ssid"], "service": new_id, "mac": mac,
+               "wifi_powered": wifi_on}
+        if wifi_on is not True:
+            # ok stays True: the credential IS installed, and a caller that
+            # retried provisioning would rewrite a file that is already
+            # correct. The missing half is named instead of hidden.
+            res["warning"] = (
+                "credential installed, but WiFi could not be confirmed powered"
+                + ("" if wifi_on is False else " (connman did not answer)")
+                + " — toggle WiFi on the watch to join")
+        return res
+
+    # connman's startup, bounded. Six tries a second apart covers the daemon
+    # coming up on the slowest watch in this fleet without making a genuinely
+    # dead connman cost the caller a minute.
+    _CONNMAN_READY_TRIES = 6
+    _CONNMAN_READY_WAIT = 1.0
+
+    def _power_wifi_when_connman_is_up(self) -> "bool | None":
+        """Power the WiFi technology once connman can take the command.
+
+        True when WiFi is confirmed powered, False when it is confirmed off,
+        None when connman never answered at all -- three different things a
+        caller wants to report differently.
+
+        The verdict is always a READ-BACK, never `connmanctl enable`'s exit
+        code. The rc cannot carry it: the command is non-zero both when the
+        daemon is not up yet and when the technology is already enabled, and
+        the second case is the state we want. Asking the technology what it is
+        answers the actual question.
+        """
+        powered = None
+        for attempt in range(self._CONNMAN_READY_TRIES):
+            if attempt:
+                time.sleep(self._CONNMAN_READY_WAIT)
+            powered = self._wifi_powered()
+            if powered:
+                return True
+            if powered is None:
+                continue        # daemon still starting: nothing to enable yet
+            self.toggle("wifi", True)
+            if self._wifi_powered():
+                return True
+        return powered
+
+    def _wifi_powered(self) -> "bool | None":
+        """Is the WiFi technology powered? None when connman did not answer."""
+        _, out, _ = self.t.shell('"connmanctl technologies 2>/dev/null"',
+                                 timeout=10)
+        return connman_powered(out).get("wifi")
 
     def collect_diagnostics(self) -> dict:
         """Gather read-only device state (logs, battery, thermal, storage,

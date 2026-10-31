@@ -423,3 +423,132 @@ def test_connman_powered_parses_blocks_and_omits_what_it_did_not_read():
     assert connman_powered("  Type = wifi\n") == {}
     assert connman_powered("") == {}
     assert "wifi" not in connman_powered("  Type = bluetooth\n  Powered = True\n")
+
+
+class _ConnmanFake:
+    """A transport whose connman answers only after `ready_after` reads, and
+    whose WiFi powers on only if `enable_works`."""
+
+    def __init__(self, ready_after=0, enable_works=True, enable_lies=False):
+        self.ready_after = ready_after
+        self.enable_works = enable_works
+        self.enable_lies = enable_lies
+        self.reads = 0
+        self.enables = 0
+        self.powered = False
+
+    def shell(self, cmd, timeout=None):
+        if "connmanctl technologies" in cmd:
+            self.reads += 1
+            if self.reads <= self.ready_after:
+                return 1, "", "Error: not connected to connman"
+            state = "True" if self.powered else "False"
+            return 0, f"  Type = wifi\n  Powered = {state}\n", ""
+        if "connmanctl enable wifi" in cmd:
+            self.enables += 1
+            if self.enable_lies:
+                return 0, "", ""          # accepted, but the radio stays off
+            if self.enable_works:
+                self.powered = True
+                return 0, "", ""
+            return 1, "", "Error wifi: Operation aborted"
+        return 0, "", ""
+
+    def push(self, *a, **k):
+        return 0, "", ""
+
+
+def _provisioning_watch(monkeypatch, tmp_path, transport):
+    """A Watch wired for provision_wifi with every side effect stubbed out."""
+    import asteroid_docking_bay.watchctl as wcm
+    monkeypatch.setattr(wcm, "BACKUP_ROOT", tmp_path)
+    monkeypatch.setattr(wcm.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(wcm.wifi, "service_id",
+                        lambda mac, hexssid, tail: "wifi_abc_managed_psk")
+    monkeypatch.setattr(wcm.wifi, "adapt_settings", lambda text, new_id: text)
+    w = wcm.Watch("S1", transport)
+    monkeypatch.setattr(w, "wlan_mac", lambda: "aa:bb:cc:dd:ee:ff")
+    cred = tmp_path / "cred"
+    cred.write_text("[wifi_old]\n")
+    return w, {"path": str(cred), "ssid": "net", "ssid_hex": "6e6574",
+               "tail": "managed_psk"}
+
+
+def test_provisioning_waits_for_connman_and_confirms_wifi(monkeypatch, tmp_path):
+    """The regression: provisioning used to fire one `connmanctl enable wifi`
+    straight after `systemctl start connman` and DISCARD the result.
+
+    systemctl returns while the unit is still activating, so the enable landed
+    before the daemon could take it, failed, and provisioning still answered
+    ok -- credential written, radio off, watch never joins. Intermittent by
+    nature, which is why the same code provisioned one watch cleanly through
+    the UI and needed a manual toggle over the API an hour later.
+    """
+    t = _ConnmanFake(ready_after=3)       # daemon answers only on the 4th read
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert res["ok"] is True
+    assert res["wifi_powered"] is True, res
+    assert "warning" not in res, res
+    assert t.reads > 3, "gave up before connman was up"
+    assert t.enables >= 1, "never actually enabled wifi"
+
+
+def test_provisioning_reports_wifi_it_could_not_power(monkeypatch, tmp_path):
+    """connman answers but the radio will not come on: say so. `ok` stays
+    True because the credential IS installed -- the missing half is named
+    rather than hidden behind a success."""
+    t = _ConnmanFake(ready_after=0, enable_works=False)
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert res["ok"] is True
+    assert res["wifi_powered"] is False, res
+    assert "warning" in res and "toggle WiFi" in res["warning"], res
+
+
+def test_provisioning_reports_a_connman_that_never_answered(monkeypatch, tmp_path):
+    """Never answering is not the same as answering 'off', and a caller that
+    wants to tell a user what to do next needs the difference."""
+    t = _ConnmanFake(ready_after=999)
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert res["wifi_powered"] is None, res
+    assert "did not answer" in res["warning"], res
+    assert t.enables == 0, "tried to enable wifi on a daemon that was not up"
+
+
+def test_provisioning_does_not_re_enable_wifi_that_is_already_on(monkeypatch,
+                                                                 tmp_path):
+    """Already powered is the wanted state. It must be read as success, not
+    re-driven -- `connmanctl enable` returns non-zero for 'Already enabled',
+    which is exactly why the verdict is a read-back and never the rc."""
+    t = _ConnmanFake(ready_after=0)
+    t.powered = True
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert res["wifi_powered"] is True
+    assert t.enables == 0, "re-enabled a technology that was already on"
+
+
+def test_provisioning_verdict_comes_from_the_radio_not_the_exit_code(
+        monkeypatch, tmp_path):
+    """`connmanctl enable wifi` exiting 0 is not evidence the radio came on.
+
+    connman accepts the command and powers the technology asynchronously, so a
+    zero exit says "queued", not "on" — and in the other direction it returns
+    NON-zero for 'Already enabled', which is the state we want. The rc cannot
+    carry this verdict in either direction, so it is never consulted: the
+    answer is read back off the technology.
+    """
+    t = _ConnmanFake(ready_after=0, enable_lies=True)
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert t.enables >= 1, "never tried to enable"
+    assert res["wifi_powered"] is False, \
+        f"believed the exit code over the radio's own state: {res}"
+    assert "warning" in res, res

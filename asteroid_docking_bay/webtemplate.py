@@ -2414,7 +2414,13 @@ function wifiProvision(ssid){
          body:JSON.stringify({ssid:ssid})})
     .then(r=>r.json()).then(d=>{
       ctlPending.delete('net:wifi');
-      if(!d.ok)alert('WiFi setup failed: '+(d.error||'?'));
+      if(!d.ok){toastErr('WiFi setup failed: '+(d.error||'?'));}
+      else if(d.warning){toastErr(d.warning);}
+      // ok with a warning is the half-success: the credential is on the watch
+      // but the radio was not confirmed powered, so it will not join. Saying
+      // nothing here is what made the original defect invisible -- the backend
+      // logged it and the page reported a plain success.
+      else{toast('WiFi set up to '+ssid+(d.service?' ('+d.service+')':''));}
       setTimeout(ctlFetch,2500);
     }).catch(()=>{ctlPending.delete('net:wifi');ctlFetch();});
 }
