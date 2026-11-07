@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .transport import USB_SSH_IP
 from .util import _run, log
-from .usb import _sysfs_path_to_serial_map
+from .usb import _sysfs_path_to_serial_map, usb_topology_fingerprint
 
 
 # Cache: fastboot serial → product codename, populated on first getvar call.
@@ -208,16 +208,59 @@ def _wait_for_fastboot(known_serials: set[str], timeout: int = 30) -> str | None
     return None
 
 
+# Addresses that did not answer, and when to stop believing that.
+# {ip: (expiry_monotonic, topology_fingerprint)}
+_rndis_dead: "dict[str, tuple[float, int]]" = {}
+_RNDIS_DEAD_TTL = 20.0
+
+
+def forget_rndis_probe(ip: "str | None" = None) -> None:
+    """Drop the remembered "did not answer" for one address, or all of them.
+    For callers that know something changed which the bus fingerprint cannot
+    see -- a watch told to start sshd, say."""
+    if ip is None:
+        _rndis_dead.clear()
+    else:
+        _rndis_dead.pop(ip, None)
+
+
 def _detect_rndis(ip: str = USB_SSH_IP, timeout: float = 1.0) -> bool:
     """Return True if a watch answers SSH at `ip` (its RNDIS address). A
     bounded TCP connect to :22, not a ping: every caller goes on to use SSH,
     and the old 2s ping timeout, paid per SSH watch per status refresh, was
     the rig's constant 4.25s render (measured 2026-07-25 with two dead
-    allocated addresses)."""
+    allocated addresses).
+
+    The same shape grew back in a new place, so the result is remembered now
+    rather than the timeout being shaved again. Measured 2026-11-07: six of
+    these ran inside every status build, all against addresses of shelved
+    watches, none of which answered -- 6.0s of pure waiting per build on a
+    page that polls every 3s. Shaving the timeout cannot fix that; not
+    repeating a settled question can.
+
+    ONLY the "did not answer" is cached, and that asymmetry is the whole
+    design. A dead address costs the full timeout, every time, and is the
+    expensive case; a live one answers in milliseconds and is re-probed on
+    every call, so a watch that goes away is never reported reachable from a
+    stale yes.
+
+    The memory is scoped to the bus staying as it is: the entry carries the
+    USB topology fingerprint, so anything plugging, unplugging or
+    re-enumerating invalidates it at once rather than after a wait. The TTL is
+    only for what the fingerprint cannot see -- an sshd that starts a few
+    seconds after its watch enumerated.
+    """
+    now = time.monotonic()
+    fp = usb_topology_fingerprint()
+    expiry, seen_fp = _rndis_dead.get(ip, (0.0, 0))
+    if now < expiry and seen_fp == fp:
+        return False
     try:
         with socket.create_connection((ip, 22), timeout=timeout):
+            _rndis_dead.pop(ip, None)
             return True
     except OSError:
+        _rndis_dead[ip] = (now + _RNDIS_DEAD_TTL, fp)
         return False
 
 

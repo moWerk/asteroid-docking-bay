@@ -374,3 +374,97 @@ def test_neighbours_drops_unresolved_entries():
            "192.168.2.15 INCOMPLETE\n")
     got = fb._neighbours("usb0", run=lambda c, check=False: (0, out, ""))
     assert got == ["192.168.2.19"], got
+
+
+def test_a_dead_ssh_address_is_not_re_probed_every_build(monkeypatch):
+    """A dead address costs the FULL timeout, and six of them ran inside every
+    status build on 2026-11-07 — 6.0s of waiting on a page that polls every 3s.
+
+    Shaving the timeout cannot fix that; not repeating a settled question can.
+    """
+    import asteroid_docking_bay.fastboot as fb
+    calls = []
+
+    def _boom(addr, timeout=None):
+        calls.append(addr)
+        raise OSError("refused")
+
+    monkeypatch.setattr(fb.socket, "create_connection", _boom)
+    monkeypatch.setattr(fb, "usb_topology_fingerprint", lambda: 1234)
+    fb.forget_rndis_probe()
+
+    assert fb._detect_rndis("192.168.13.37") is False
+    assert fb._detect_rndis("192.168.13.37") is False
+    assert fb._detect_rndis("192.168.13.37") is False
+    assert len(calls) == 1, f"re-probed a settled dead address: {calls}"
+
+
+def test_a_live_ssh_address_is_always_re_probed(monkeypatch):
+    """Only the expensive answer is remembered. A live address replies in
+    milliseconds, so re-probing costs nothing — and caching a yes would report
+    a watch as reachable after it had gone away."""
+    import asteroid_docking_bay.fastboot as fb
+
+    class _Sock:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    calls = []
+    monkeypatch.setattr(fb.socket, "create_connection",
+                        lambda addr, timeout=None: (calls.append(addr), _Sock())[1])
+    monkeypatch.setattr(fb, "usb_topology_fingerprint", lambda: 1234)
+    fb.forget_rndis_probe()
+
+    assert fb._detect_rndis("192.168.13.42") is True
+    assert fb._detect_rndis("192.168.13.42") is True
+    assert len(calls) == 2, "a reachable address was answered from cache"
+
+
+def test_anything_changing_on_the_bus_forgets_a_dead_address(monkeypatch):
+    """The memory is scoped to the bus staying as it is. A watch plugged in,
+    powered on or re-enumerated must be probed at once rather than after a
+    wait, so the entry carries the topology fingerprint."""
+    import asteroid_docking_bay.fastboot as fb
+    calls = []
+
+    def _boom(addr, timeout=None):
+        calls.append(addr)
+        raise OSError("refused")
+
+    fp = {"v": 1}
+    monkeypatch.setattr(fb.socket, "create_connection", _boom)
+    monkeypatch.setattr(fb, "usb_topology_fingerprint", lambda: fp["v"])
+    fb.forget_rndis_probe()
+
+    fb._detect_rndis("192.168.13.37")
+    fb._detect_rndis("192.168.13.37")
+    assert len(calls) == 1
+    fp["v"] = 2                       # something enumerated
+    fb._detect_rndis("192.168.13.37")
+    assert len(calls) == 2, "kept believing an address was dead across a bus change"
+
+
+def test_the_dead_memory_expires_for_what_the_bus_cannot_see(monkeypatch):
+    """An sshd that starts a few seconds after its watch enumerated changes
+    nothing on the bus, so the fingerprint cannot notice it. The TTL is the
+    only thing covering that case."""
+    import asteroid_docking_bay.fastboot as fb
+    calls = []
+
+    def _boom(addr, timeout=None):
+        calls.append(addr)
+        raise OSError("refused")
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(fb.socket, "create_connection", _boom)
+    monkeypatch.setattr(fb, "usb_topology_fingerprint", lambda: 7)
+    monkeypatch.setattr(fb.time, "monotonic", lambda: clock["t"])
+    fb.forget_rndis_probe()
+
+    fb._detect_rndis("192.168.13.37")
+    clock["t"] += fb._RNDIS_DEAD_TTL - 1
+    fb._detect_rndis("192.168.13.37")
+    assert len(calls) == 1, "expired early"
+    clock["t"] += 2
+    fb._detect_rndis("192.168.13.37")
+    assert len(calls) == 2, "never re-probed; a watch whose sshd came up stays invisible"
