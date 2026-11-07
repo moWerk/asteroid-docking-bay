@@ -4069,13 +4069,52 @@ function showBackendError(msg){
   document.getElementById('ts').textContent='stale (backend down)';
 }
 function clearBackendError(){const b=document.getElementById('berr');if(b&&b.innerHTML)b.innerHTML='';}
+// One status request at a time, and never a silent pile-up.
+//
+// The page polls every 3s; a status build on a busy rig can take longer than
+// that, so the old bare fetch() started a new request before the previous one
+// answered and the overlap grew without bound. After the laptop slept or the
+// screen locked, the requests issued across the gap never settled, the page
+// sat on stale rows looking dead, and only F5 brought it back -- which then
+// queued behind the backlog and took its own ten seconds.
+//
+// Requests COALESCE rather than drop: 38 call sites ask for a refresh after
+// an action, and silently skipping one would leave the row that the user just
+// changed showing its old state. A request arriving while one is in flight
+// sets a flag and runs once, after.
+let _rqCtl=null,_rqAgain=false;
 function refresh(){
-  fetch('/api/status').then(r=>r.json()).then(d=>{
+  if(_rqCtl){_rqAgain=true;return;}
+  // An abort timer, because the in-flight guard must never become the thing
+  // that wedges the page. A fetch interrupted by a suspend can stay unsettled
+  // indefinitely, and without this the flag would stay set for ever -- the
+  // exact symptom being fixed, reintroduced by its own fix.
+  const ctl=new AbortController();_rqCtl=ctl;
+  const kill=setTimeout(()=>ctl.abort(),15000);
+  fetch('/api/status',{signal:ctl.signal}).then(r=>r.json()).then(d=>{
     if(d&&d.error&&!d.hubs){showBackendError(d.error);return;}
     clearBackendError();
     render(d);document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString();renderSlots(d.slots);if(d.version)document.getElementById('ver').textContent='v'+d.version
-  }).catch(()=>{document.getElementById('ts').textContent='connection error'});
+  }).catch(()=>{document.getElementById('ts').textContent='connection error'})
+    .finally(()=>{
+      clearTimeout(kill);
+      if(_rqCtl===ctl)_rqCtl=null;
+      if(_rqAgain&&!_rqCtl){_rqAgain=false;refresh();}
+    });
 }
+// A hidden tab asks the rig for nothing. The browser throttles its timers
+// anyway, so the poll was already unreliable there; this makes it deliberate
+// and spares a rig that is slow precisely when somebody is working it.
+function _tick(){if(!document.hidden)refresh();}
+// Coming back is the moment the user expects live data, and the moment the
+// connection from before the sleep is most likely dead. Drop whatever was in
+// flight and ask again rather than waiting out the interval.
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)return;
+  if(_rqCtl){_rqCtl.abort();_rqCtl=null;}
+  _rqAgain=false;
+  refresh();
+});
 function _api(s){return s.replace(':','/');}
 function _pwrFlash(c){
   const r=document.getElementById('wr-'+c);
@@ -4355,7 +4394,7 @@ seedStars();
 // when its topology fingerprint sees a device appear/vanish, which busts
 // the cache instantly. Enumeration changes land in ~1.5-3s.
 paintMode();
-refresh();setInterval(refresh,3000);
+refresh();setInterval(_tick,3000);
 </script>
 </body>
 </html>

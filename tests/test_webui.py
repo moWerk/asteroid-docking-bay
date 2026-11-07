@@ -3681,3 +3681,40 @@ def test_api_ops_asks_the_backend_rather_than_its_own_table():
     # The HTTP bindings are the frontend's own business and must come from the
     # live route table, not a hand-kept list.
     assert "_JSON_ROUTES" in body and "app.routes" in body, body[:400]
+
+
+def test_status_polling_cannot_stack_or_wedge():
+    """The regression moWerk reported on 2026-11-07: after a suspend or a lock
+    screen the page sat dead until F5, and F5 then took over ten seconds.
+
+    Three properties, all in refresh()'s own body so removing any one fails:
+    one request in flight at a time, an abort timer so the guard can never
+    become the wedge itself, and a hidden tab that asks for nothing.
+    """
+    body = JS.split("function refresh(", 1)[1].split("\nfunction _tick", 1)[0]
+    # The GUARD, not merely the variable: `_rqCtl` also appears where the
+    # controller is stored, so asserting the name alone passes with the early
+    # return deleted. That exact weak-test mistake shipped twice this week.
+    tight = body.replace(" ", "").replace("\n", "")
+    assert "if(_rqCtl){_rqAgain=true;return;}" in tight, \
+        "the in-flight early return is gone; requests stack again"
+    assert "AbortController" in body and "abort()" in body, \
+        "no abort timer: a fetch unsettled by a suspend wedges the page for ever"
+    assert "_rqAgain" in body, \
+        "requests are dropped rather than coalesced; an action's refresh is lost"
+    assert "finally" in body, \
+        "the guard is not released on the error path"
+
+
+def test_the_page_recovers_when_it_becomes_visible_again():
+    """Coming back is when the user expects live data and when the connection
+    from before the sleep is most likely dead. The page must drop whatever was
+    in flight and ask again rather than waiting out the interval."""
+    assert "visibilitychange" in JS, \
+        "the page never notices it came back — the original defect"
+    handler = JS.split("visibilitychange", 1)[1][:400]
+    assert "abort()" in handler, "kept a connection that died with the suspend"
+    assert "refresh()" in handler, "came back and did not ask for fresh data"
+    # And the interval must go through the hidden-tab check, not straight to
+    # refresh, or a background tab keeps polling a rig somebody is working on.
+    assert "setInterval(_tick,3000)" in JS, JS[-300:]
