@@ -1365,6 +1365,26 @@ def _ssh_os_for(cfg: dict, serial: "str | None") -> "str | None":
     ident = _ssh_ident.get(serial)
     if ident and ident.get("os"):
         return ident["os"]
+    # A FAILED detection is remembered too, and retried on a timer rather than
+    # on every render. Without this the falsy "os" never satisfies the branch
+    # above, so a device whose OS cannot be read is re-probed by every status
+    # build for as long as it stays plugged in -- and a status build runs
+    # every few seconds.
+    #
+    # That is not theoretical. On 2026-11-15 it opened a root SSH session to a
+    # Pro1-X every 2-3 seconds for eleven hours, about 1500 logins an hour,
+    # which the SailfishOS side logs at roughly ten journal lines each. The
+    # sibling path below (the unmapped-port branch) already gated exactly this
+    # with _SSH_IDENT_RETRY; the two share _ssh_ident and only one honoured it.
+    if (ident is not None
+            and time.time() - ident.get("ts", 0) <= _SSH_IDENT_RETRY):
+        return ident.get("os")
+    # Never probe a watch somebody has claimed. A hold means "leave this alone",
+    # and an identity refresh is exactly the kind of background curiosity it is
+    # meant to stop -- the probes above ran straight through a ten-hour hold
+    # because this path never asked.
+    if oplock.held(cfg, serial):
+        return (ident or {}).get("os")
     ip = ssh_reach_ip(cfg, serial)
     if not ip:
         return None

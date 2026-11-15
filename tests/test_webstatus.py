@@ -1507,3 +1507,49 @@ def test_ncm_gadget_is_never_mode_switched_or_cycled(monkeypatch):
                              {"ssh_ips": {}, "usb_mode_preference": "ssh"})
     assert [n for n, _ in spawned] == ["_align_usb_mode_worker"], \
         f"a no-lease rndis stray lost its recovery: {spawned}"
+
+
+def test_a_device_whose_os_cannot_be_read_is_not_probed_every_render(monkeypatch):
+    """The 2026-11-15 incident: _ssh_os_for remembered a FAILED detection as
+    os=None, which is falsy, so the cache never suppressed a retry and every
+    status build opened a fresh root SSH session.
+
+    Measured on a Pro1-X: a login every 2-3s for eleven hours, ~1500/h, each
+    costing the SailfishOS side about ten journal lines. The sibling
+    unmapped-port path already gated this with _SSH_IDENT_RETRY; the two share
+    _ssh_ident and only one honoured it.
+    """
+    probes = []
+    monkeypatch.setattr(ws, "ssh_reach_ip", lambda cfg, s: "192.168.2.15")
+    monkeypatch.setattr(ws, "SshTransport", lambda ip: type("T", (), {"shell": None})())
+    monkeypatch.setattr(ws, "detect_watch_os",
+                        lambda s, shell=None: probes.append(s) or None)
+    monkeypatch.setattr(ws.oplock, "held", lambda cfg, s: False)
+    ws._ssh_ident.clear()
+    cfg = {}
+
+    for _ in range(5):                 # five status builds in quick succession
+        ws._ssh_os_for(cfg, "S1")
+    assert len(probes) == 1, f"re-probed on every render: {len(probes)} logins"
+
+    # ...and it does retry, once the window has passed. A device whose OS
+    # becomes readable must not stay unknown for the life of the process.
+    ws._ssh_ident["S1"]["ts"] -= ws._SSH_IDENT_RETRY + 1
+    ws._ssh_os_for(cfg, "S1")
+    assert len(probes) == 2, "never retried; a device that came back stays unknown"
+
+
+def test_a_held_watch_is_not_probed_for_its_identity(monkeypatch):
+    """A hold means leave this alone, and a background identity refresh is
+    exactly the curiosity it exists to stop. Those probes ran straight through
+    a ten-hour hold on 2026-11-15 because this path never asked."""
+    probes = []
+    monkeypatch.setattr(ws, "ssh_reach_ip", lambda cfg, s: "192.168.2.15")
+    monkeypatch.setattr(ws, "SshTransport", lambda ip: type("T", (), {"shell": None})())
+    monkeypatch.setattr(ws, "detect_watch_os",
+                        lambda s, shell=None: probes.append(s) or None)
+    monkeypatch.setattr(ws.oplock, "held", lambda cfg, s: True)
+    ws._ssh_ident.clear()
+
+    assert ws._ssh_os_for({}, "S1") is None
+    assert probes == [], f"probed a held watch: {probes}"
