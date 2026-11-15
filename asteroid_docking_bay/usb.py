@@ -497,16 +497,63 @@ def uhubctl_set_power(location: str, port: int, on: bool) -> bool:
 recovery_cycle_lock = threading.Lock()
 
 
+def restore_port_power(location: str, port: int, attempts: int = 3) -> "bool | None":
+    """Bring a port's power back after a cycle, and CONFIRM it came back.
+
+    True when the port reads powered, False when it does not and could not be
+    made to, None when this hub cannot report its power state at all (so the
+    best-effort "on" was issued and there is nothing to verify against).
+
+    This exists because moWerk's rule (2026-11-15) is that no session may
+    leave a device unpowered: "never cut power in unknown state to not let
+    them fall to deep discharge by chance". A cycle that fails on its second
+    half is indistinguishable from a deliberate cut, and the device pays for
+    it quietly over days.
+    """
+    for attempt in range(attempts):
+        state = _sysfs_get_power(location, port)
+        if state:
+            return True
+        if state is None:
+            # Not sysfs-switchable: issue the restore through uhubctl and say
+            # so rather than reporting a failure we cannot actually see.
+            _uhubctl_exec(f"uhubctl -S -l {location} -p {port} -a on")
+            return None
+        if attempt:
+            time.sleep(0.5)
+        if not _sysfs_set_power(location, port, True):
+            _uhubctl_exec(f"uhubctl -S -l {location} -p {port} -a on")
+    if _sysfs_get_power(location, port):
+        return True
+    log.error("%s:%d IS STILL UNPOWERED after a recovery cycle — restore it by "
+              "hand. A device left unpowered keeps no charge and can deep-"
+              "discharge unnoticed; no automatic path here may leave one off.",
+              location, port)
+    return False
+
+
 def uhubctl_cycle(location: str, port: int, delay: int = 3) -> None:
     """Power-cycle a port in a single uhubctl invocation (off → delay → on).
     Used as the stale-node recovery primitive: unlike a plain off→on pair,
-    the cycle makes this dock raise a proper connect event."""
+    the cycle makes this dock raise a proper connect event.
+
+    The port is ALWAYS left powered. The restore runs from a `finally` and is
+    verified, because this used to be a bare pair of writes whose second half
+    was unchecked: if the "on" failed, or the process was restarted during the
+    delay, the port simply stayed off and nothing said so. That is a cut, not
+    a cycle, and per moWerk's rule (2026-11-15) only the user cuts power --
+    a session may cycle a port to make a stuck device re-enumerate, never
+    leave one dark.
+    """
     flaps.reset(location, port)
     if _sysfs_set_power(location, port, False):
-        time.sleep(delay)
-        _sysfs_set_power(location, port, True)
+        try:
+            time.sleep(delay)
+        finally:
+            restore_port_power(location, port)
         return
     _uhubctl_exec(f"uhubctl -S -l {location} -p {port} -a cycle -d {delay}")
+    restore_port_power(location, port)
 
 
 def _port_device_present(location: str, port: int) -> bool:

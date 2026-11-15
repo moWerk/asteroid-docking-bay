@@ -380,3 +380,67 @@ def test_a_plain_serial_gadget_is_not_mistaken_for_rndis(tmp_path, monkeypatch):
     globals()["pathlib"] = _pl
     _fake_port(tmp_path, monkeypatch, "2931", "0a05", [("02", "02", "01")])
     assert usb._sysfs_usb_mode("1-1.1") is None
+
+
+def test_a_cycle_always_leaves_the_port_powered(monkeypatch):
+    """moWerk's rule, 2026-11-15: only the user cuts power; a session may
+    cycle a port to make a stuck device re-enumerate but must never leave one
+    dark. "never cut power in unknown state to not let them fall to deep
+    discharge by chance."
+
+    This was a bare pair of writes whose second half was unchecked — if the
+    "on" failed the port simply stayed off and nothing said so, which is a cut
+    wearing a cycle's name.
+    """
+    import asteroid_docking_bay.usb as u
+    state = {"on": True}
+    writes = []
+
+    def _set(loc, port, on):
+        writes.append(on)
+        if on and len(writes) < 3:
+            return False            # the restore fails the first time
+        state["on"] = on
+        return True
+
+    monkeypatch.setattr(u, "_sysfs_set_power", _set)
+    monkeypatch.setattr(u, "_sysfs_get_power", lambda loc, port: state["on"])
+    monkeypatch.setattr(u.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(u, "_uhubctl_exec", lambda cmd: None)
+
+    u.uhubctl_cycle("1-3.3.4", 4)
+    assert state["on"] is True, "a failed restore left the port unpowered"
+
+
+def test_an_interrupted_cycle_still_restores_power(monkeypatch):
+    """The delay between off and on is where a restart or an exception used to
+    strand a port. The restore runs from a finally, so even a raise inside the
+    wait brings the power back before it propagates."""
+    import asteroid_docking_bay.usb as u
+    state = {"on": True}
+    monkeypatch.setattr(u, "_sysfs_set_power",
+                        lambda loc, port, on: (state.__setitem__("on", on), True)[1])
+    monkeypatch.setattr(u, "_sysfs_get_power", lambda loc, port: state["on"])
+    monkeypatch.setattr(u, "_uhubctl_exec", lambda cmd: None)
+
+    def _boom(*_):
+        raise KeyboardInterrupt("service restarting mid-cycle")
+
+    monkeypatch.setattr(u.time, "sleep", _boom)
+    try:
+        u.uhubctl_cycle("1-3.3.4", 4)
+    except KeyboardInterrupt:
+        pass
+    assert state["on"] is True, "an interrupted cycle left the port dark"
+
+
+def test_restore_says_so_when_it_cannot_verify(monkeypatch):
+    """A hub that cannot report its power state gets the best-effort `on` and
+    an honest None — claiming a confirmed restore we never read would be the
+    same false comfort as the unchecked write."""
+    import asteroid_docking_bay.usb as u
+    cmds = []
+    monkeypatch.setattr(u, "_sysfs_get_power", lambda loc, port: None)
+    monkeypatch.setattr(u, "_uhubctl_exec", lambda cmd: cmds.append(cmd))
+    assert u.restore_port_power("1-6.1", 2) is None
+    assert any("-a on" in c for c in cmds), cmds
