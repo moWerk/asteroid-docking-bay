@@ -250,6 +250,22 @@ _SSH_ALIGN_BACKOFF_SEC = 90
 _ssh_align_fail: dict[str, int] = {}
 _ssh_align_cycled: set[str] = set()
 _SSH_ALIGN_FAILS_BEFORE_CYCLE = 2
+# Two failures only count as a RUN if they are close together. A cycle exists
+# to shake loose a device that just dropped off; for one that has been silent
+# for a long time it cannot help, and moWerk ruled on 2026-11-15 that the
+# recovery must leave such a device powered and simply report it.
+#
+# Ten minutes, chosen against the mechanism rather than picked round: the
+# aligner's own backoff is 90s, so a device that is genuinely stuck fails
+# again on the very next pass and reaches two failures inside three minutes.
+# Ten gives generous room for a slow boot while staying far below the hour
+# that would make a cycle pointless.
+#
+# This is also the exact defect behind the 14:03:45 cut on the Pro1-X: its two
+# failures were at 01:44:30 and 14:03:45, TWELVE HOURS apart, and the counter
+# added them together as though they were consecutive.
+_SSH_ALIGN_EPISODE_GAP_SEC = 600
+_ssh_align_last_fail: dict[str, float] = {}
 # Serials the aligner has decided to leave alone, for whatever reason, and has
 # already said so about. Tracked only so the "leaving it alone" line is logged
 # once per episode rather than on every backoff for as long as the device stays
@@ -450,9 +466,22 @@ def _recover_unreachable_ssh_watch(serial: str) -> None:
     is wrong and churning the bus will not find it."""
     if serial in _ssh_align_cycled:
         return
-    fails = _ssh_align_fail.get(serial, 0) + 1
+    now = time.time()
+    # A run of failures has to be CONTIGUOUS. Failures far apart are separate
+    # episodes, and adding them together is how a device that dropped out
+    # overnight gets its power cycled the next afternoon on the strength of a
+    # failure from twelve hours earlier.
+    last = _ssh_align_last_fail.get(serial)
+    fails = 1 if last is None or now - last > _SSH_ALIGN_EPISODE_GAP_SEC \
+        else _ssh_align_fail.get(serial, 0) + 1
     _ssh_align_fail[serial] = fails
+    _ssh_align_last_fail[serial] = now
     if fails < _SSH_ALIGN_FAILS_BEFORE_CYCLE:
+        if last is not None and now - last > _SSH_ALIGN_EPISODE_GAP_SEC:
+            log.info("%s: unreachable, and last seen failing %.0f min ago — "
+                     "treating this as a new episode rather than cycling its "
+                     "port on a stale count; leaving it powered",
+                     serial, (now - last) / 60)
         return
     seat = loc_port_for_serial(load_config(), serial)
     if seat is None:

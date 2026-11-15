@@ -1553,3 +1553,70 @@ def test_a_held_watch_is_not_probed_for_its_identity(monkeypatch):
 
     assert ws._ssh_os_for({}, "S1") is None
     assert probes == [], f"probed a held watch: {probes}"
+
+
+def test_two_failures_far_apart_are_not_a_run(monkeypatch):
+    """The 14:03:45 cut on the Pro1-X, exactly: its two failures were at
+    01:44:30 and 14:03:45 — twelve hours apart — and the counter added them
+    together as a consecutive run and cycled the port.
+
+    moWerk's rule (2026-11-15): a device silent that long is left powered and
+    reported, not cycled. A cycle shakes loose a device that JUST dropped.
+    """
+    cycled = []
+    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.4", 4))
+    monkeypatch.setattr(ws, "load_config", lambda: {})
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(ws.time, "time", lambda: clock["t"])
+    ws._ssh_align_fail.clear(); ws._ssh_align_last_fail.clear(); ws._ssh_align_cycled.clear()
+
+    ws._recover_unreachable_ssh_watch("c6848580")          # 01:44
+    clock["t"] += 12 * 3600                                 # ...twelve hours...
+    ws._recover_unreachable_ssh_watch("c6848580")          # 14:03
+    assert cycled == [], f"cycled a port on a stale failure count: {cycled}"
+
+
+def test_a_device_that_just_dropped_is_still_cycled(monkeypatch):
+    """The case the recovery exists for must survive: a watch that cold-booted
+    into developer mode gets no DHCP lease until it re-enumerates, and fails
+    again on the very next pass 90s later. That is a contiguous run."""
+    cycled = []
+    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.3", 2))
+    monkeypatch.setattr(ws, "load_config", lambda: {})
+    # Imported inside the function from .usb, so it is not an attribute of ws.
+    import asteroid_docking_bay.usb as _u
+    monkeypatch.setattr(_u, "_sysfs_serial_at", lambda loc, port: None)
+    clock = {"t": 5000.0}
+    monkeypatch.setattr(ws.time, "time", lambda: clock["t"])
+    ws._ssh_align_fail.clear(); ws._ssh_align_last_fail.clear(); ws._ssh_align_cycled.clear()
+
+    ws._recover_unreachable_ssh_watch("DORY1")
+    clock["t"] += 90                                        # the next backoff pass
+    ws._recover_unreachable_ssh_watch("DORY1")
+    assert cycled == [("1-3.3.3", 2)], \
+        f"the no-lease recovery this path exists for was lost: {cycled}"
+
+
+def test_a_stale_count_restarts_rather_than_accumulating(monkeypatch):
+    """After a long gap the run restarts at one, so a device needs two FRESH
+    failures to earn a cycle — it does not inherit credit from last night."""
+    cycled = []
+    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.4", 4))
+    monkeypatch.setattr(ws, "load_config", lambda: {})
+    # Imported inside the function from .usb, so it is not an attribute of ws.
+    import asteroid_docking_bay.usb as _u
+    monkeypatch.setattr(_u, "_sysfs_serial_at", lambda loc, port: None)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(ws.time, "time", lambda: clock["t"])
+    ws._ssh_align_fail.clear(); ws._ssh_align_last_fail.clear(); ws._ssh_align_cycled.clear()
+
+    ws._recover_unreachable_ssh_watch("S1")
+    clock["t"] += ws._SSH_ALIGN_EPISODE_GAP_SEC + 1
+    ws._recover_unreachable_ssh_watch("S1")                 # new episode, count = 1
+    assert cycled == []
+    clock["t"] += 90
+    ws._recover_unreachable_ssh_watch("S1")                 # now two fresh ones
+    assert cycled == [("1-3.3.4", 4)], cycled
