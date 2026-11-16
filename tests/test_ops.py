@@ -1128,3 +1128,61 @@ def test_every_shared_image_variant_resolves_to_its_base():
             cn = v["codename"]
             assert image_name(cn) == fam["base"], (
                 f"{cn} would fetch {image_name(cn)!r} instead of {fam['base']!r}")
+
+
+_THREE_BELUGAS = {
+    "hubs": [{"location": "1-3.3", "ports": {"2": "beluga"},
+              "port_serials": {"2": "22979c8c"}},
+             {"location": "1-3.3.4", "ports": {"1": "beluga", "2": "beluga"},
+              "port_serials": {"1": "225791c5", "2": "100c0a32"}}],
+    "serials": {"22979c8c": "beluga", "225791c5": "beluga",
+                "100c0a32": "beluga"},
+}
+
+
+def test_flash_targets_the_watch_that_is_actually_there(monkeypatch):
+    """The serial is the only unambiguous handle, and the flash path was not
+    using it: it took the FIRST seat carrying the codename.
+
+    On this rig that is 1-3.3:2 (serial 22979c8c), which was SHELVED, while
+    the watch moWerk had just put into fastboot was 225791c5 on 1-3.3.4:1.
+    The flash would have powered the shelved one on and written to it. Caught
+    by a dry run, 2026-11-16.
+    """
+    import asteroid_docking_bay.ops as o
+    monkeypatch.setattr(o.fastboot, "_fastboot_devices",
+                        lambda: {"225791c5": "fastboot"})
+    monkeypatch.setattr(o, "adb_devices", lambda: {})
+
+    loc, port, serial = o._resolve_flash_target(_THREE_BELUGAS, "beluga")
+    assert serial == "225791c5", f"picked the wrong unit: {serial}"
+    assert (loc, port) == ("1-3.3.4", 1), (loc, port)
+
+
+def test_flash_refuses_when_several_of_a_codename_are_connected(monkeypatch):
+    """Flashing is not reversible, so "pick one" is not a safe answer to
+    "which of these did you mean". It refuses and names the serials."""
+    import asteroid_docking_bay.ops as o
+    monkeypatch.setattr(o.fastboot, "_fastboot_devices",
+                        lambda: {"225791c5": "fastboot"})
+    monkeypatch.setattr(o, "adb_devices", lambda: {"100c0a32": {}})
+
+    try:
+        o._resolve_flash_target(_THREE_BELUGAS, "beluga")
+    except o.AmbiguousFlashTarget as e:
+        assert "225791c5" in str(e) and "100c0a32" in str(e), str(e)
+    else:
+        raise AssertionError("guessed between two connected watches")
+
+
+def test_flash_all_still_works_when_nothing_is_connected(monkeypatch):
+    """`flash all` powers watches on itself, so they are not visible yet. The
+    seat lookup stays as the fallback — but now carries the seat's recorded
+    serial, so the unit is pinned for the rest of the run."""
+    import asteroid_docking_bay.ops as o
+    monkeypatch.setattr(o.fastboot, "_fastboot_devices", lambda: {})
+    monkeypatch.setattr(o, "adb_devices", lambda: {})
+
+    loc, port, serial = o._resolve_flash_target(_THREE_BELUGAS, "beluga")
+    assert (loc, port) == ("1-3.3", 2), (loc, port)
+    assert serial == "22979c8c", "the fallback lost the serial that pins the unit"

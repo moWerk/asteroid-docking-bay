@@ -16,7 +16,8 @@ from .adb import (adb_devices, adb_devices_checked, adb_shell, battery_and_scree
                   maybe_heal_wedged_adb, wait_serial_online)
 from .config import (ChargeConfig, FlashConfig, charge_config, find_codename_for_loc_port,
                      find_port_for_codename, find_serial_for_loc_port,
-                     is_port_smart, is_slot_smart, load_config, orbit_members,
+                     is_port_smart, is_slot_smart, load_config,
+                     loc_port_for_serial, orbit_members,
                      orbit_add, orbit_forget, orbit_member_for, save_config,
                      _config_lock, usb_mode_preference)
 from . import fastboot, oplock, orbit, usb
@@ -1096,6 +1097,55 @@ def _resume_persisted_tasks() -> None:
         log.info("resumed %d operation(s) from previous run", resumed)
 
 
+class AmbiguousFlashTarget(Exception):
+    """More than one watch of this codename is present and none was named."""
+
+
+def _resolve_flash_target(cfg: dict, codename: str
+                          ) -> "tuple[str | None, int | None, str | None]":
+    """(loc, port, serial) for `flash <codename>`, by the unit actually there.
+
+    The serial is the only unambiguous handle a watch has, and the flash path
+    was not using it: it asked find_port_for_codename() for the FIRST seat
+    carrying that name. With three belugas on this rig that picked a shelved
+    one, and the flash would have powered it on and written to it while the
+    watch the operator had just put into fastboot sat untouched (moWerk,
+    2026-11-16, caught by a dry run).
+
+    So presence decides. A device in fastboot or on adb whose serial maps to
+    this codename IS the target, and its seat is looked up from the serial
+    rather than the other way round.
+
+    With several present and none named, this REFUSES. Flashing is not
+    reversible and "pick one" is not a safe answer to "which of these did you
+    mean"; the caller surfaces the serials so the operator can say.
+
+    With none present, it falls back to the codename seat lookup, which is
+    what `flash all` needs: there the watch is powered on by a-d-b and cannot
+    be seen yet. Even then the seat's recorded serial is carried, so the unit
+    is pinned for the rest of the run.
+    """
+    by_serial = (cfg.get("serials") or {})
+    present = set(fastboot._fastboot_devices()) | set(adb_devices())
+    mine = sorted(s for s in present if by_serial.get(s) == codename)
+
+    if len(mine) > 1:
+        raise AmbiguousFlashTarget(
+            f"{codename}: {len(mine)} are connected ({', '.join(mine)}) — "
+            f"name the one you mean by its serial or flash it from its row")
+    if mine:
+        serial = mine[0]
+        seat = loc_port_for_serial(cfg, serial)
+        loc, port = seat if seat else (None, None)
+        log.info("%s: targeting %s%s", codename, serial,
+                 f" on {loc}:{port}" if loc else " (no hub seat)")
+        return loc, port, serial
+
+    loc, port = find_port_for_codename(cfg, codename)
+    serial = find_serial_for_loc_port(cfg, loc, port) if loc else None
+    return loc, port, serial
+
+
 def _flash_one_watch(
     codename: str,
     cfg: dict,
@@ -1118,8 +1168,11 @@ def _flash_one_watch(
     if target is not None:
         loc, port, want_serial = target
     else:
-        loc, port = find_port_for_codename(cfg, codename)
-        want_serial = None
+        try:
+            loc, port, want_serial = _resolve_flash_target(cfg, codename)
+        except AmbiguousFlashTarget as e:
+            log.error("%s", e)
+            return str(e)
     # A watch does not need a hub seat to be flashed. Without one there is no
     # VBUS to switch, so the power steps are skipped and the watch simply has
     # to be present already — which is precisely the NO-HUB user's situation,
