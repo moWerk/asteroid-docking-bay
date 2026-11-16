@@ -16,10 +16,10 @@ _M = "echo ---%s---"
 
 DIAG_SCRIPT = "; ".join([
     _M % "wakeup",
-    "cat /sys/kernel/debug/wakeup_sources 2>/dev/null | head -60",
+    "cat /sys/kernel/debug/wakeup_sources 2>/dev/null | head -n 60",
     _M % "suspend",
     "cat /sys/power/suspend_stats/success /sys/power/suspend_stats/fail 2>/dev/null",
-    "grep -sE '^(success|fail):' /sys/kernel/debug/suspend_stats 2>/dev/null | head -2",
+    "grep -sE '^(success|fail):' /sys/kernel/debug/suspend_stats 2>/dev/null | head -n 2",
     _M % "freq",
     "cat /sys/devices/system/cpu/cpu0/cpufreq/stats/time_in_state 2>/dev/null",
     # The clamp behind the residency above, plus which cores are even up —
@@ -49,7 +49,7 @@ DIAG_SCRIPT = "; ".join([
     # stdout-silence when the login lacks the journal group, so discarding it
     # left an empty list that the UI renders as "no errors this boot" --
     # a clean bill of health from a check that never got to look.
-    "journalctl -p 3 -b --no-pager 2>&1 | tail -12",
+    "journalctl -p 3 -b --no-pager 2>&1 | tail -n 12",
     _M % "boots",
     "journalctl --list-boots 2>/dev/null | wc -l",
     _M % "psi",

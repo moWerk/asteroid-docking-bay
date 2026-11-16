@@ -121,7 +121,7 @@ def detect_watch_os(serial: str, shell=None) -> str:
         _, sdk, _e = run("getprop ro.build.version.sdk")
         _, app, _e = run(
             "dumpsys package com.google.android.wearable.app "
-                    "2>/dev/null | sed -n 's/.*versionName=//p' | head -1")
+                    "2>/dev/null | sed -n 's/.*versionName=//p' | head -n 1")
         return wear_brand(sdk if _ == 0 else "", app)
     return "unknown"
 
@@ -154,7 +154,7 @@ _SBIN = "PATH=$PATH:/usr/sbin:/sbin; "
 _CC_SCRIPT = r'''. /etc/os-release 2>/dev/null; echo "os=$NAME $VERSION"
 echo "host=$(hostname)"
 echo "kernel=$(uname -r)"
-echo "qt=$(ls /usr/lib/libQt*Core.so.*.*.* 2>/dev/null | grep -o "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1)"
+echo "qt=$(ls /usr/lib/libQt*Core.so.*.*.* 2>/dev/null | grep -o "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -n 1)"
 echo "uptime=$(cut -d" " -f1 /proc/uptime)"
 echo "load=$(cut -d" " -f1-3 /proc/loadavg)"
 echo "threads=$(cut -d" " -f4 /proc/loadavg)"
@@ -170,7 +170,7 @@ echo "soc=$(grep -m1 Hardware /proc/cpuinfo | cut -d: -f2)"
 echo "cpufreq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)"
 echo "cores=$(cat /sys/devices/system/cpu/online 2>/dev/null)"
 echo "bootreason=$(tr " " "\n" < /proc/cmdline | grep bootreason | cut -d= -f2)"
-echo "df=$(df -h / 2>/dev/null | tail -1)"
+echo "df=$(df -h / 2>/dev/null | tail -n 1)"
 __BATDIR__
 echo "bat_cap=$(cat $BATD/capacity 2>/dev/null)"
 echo "bat_status=$(cat $BATD/status 2>/dev/null)"
@@ -189,12 +189,12 @@ echo "ip=$(ip -o -4 addr show wlan0 2>/dev/null | grep -o "inet [0-9.]*" | cut -
 echo "net_rx=$(cat /sys/class/net/wlan0/statistics/rx_bytes 2>/dev/null)"
 echo "net_tx=$(cat /sys/class/net/wlan0/statistics/tx_bytes 2>/dev/null)"
 echo "btcount=$(hcitool con 2>/dev/null | grep -c "<")"
-echo "btmac=$(hcitool con 2>/dev/null | grep -o "[0-9A-F:]\{17\}" | head -1)"
+echo "btmac=$(hcitool con 2>/dev/null | grep -o "[0-9A-F:]\{17\}" | head -n 1)"
 echo "bt_name=$(cat /sys/class/bluetooth/hci0/name 2>/dev/null)"
 echo "bt_flags=$(hciconfig hci0 2>/dev/null | grep -o "UP\|DOWN\|PSCAN\|ISCAN" | tr "\n" " ")"
-echo "wifi_ssid=$(connmanctl services 2>/dev/null | grep "^\*" | head -1 | sed "s/^\*[A-Za-z]* *//;s/  *wifi_.*//")"
+echo "wifi_ssid=$(connmanctl services 2>/dev/null | grep "^\*" | head -n 1 | sed "s/^\*[A-Za-z]* *//;s/  *wifi_.*//")"
 echo "wifi_signal=$(grep wlan0 /proc/net/wireless 2>/dev/null | sed "s/^ *//" | tr -s " " | cut -d" " -f4 | tr -d ".")"
-echo "usb_ifip=$(ip -o -4 addr show 2>/dev/null | grep -E "usb0|rndis0" | grep -o "inet [0-9.]*" | cut -d" " -f2 | head -1)"
+echo "usb_ifip=$(ip -o -4 addr show 2>/dev/null | grep -E "usb0|rndis0" | grep -o "inet [0-9.]*" | cut -d" " -f2 | head -n 1)"
 # Empty on anything without mcetool, which includes every SailfishOS device:
 # mce is running there and answers over D-Bus, but its
 # get_display_blanking_inhibit returns "active" unchanged whether blanking is
@@ -230,12 +230,12 @@ echo "memcached=$(grep -m1 "^Cached" /proc/meminfo 2>/dev/null | tr -dc 0-9)"
 echo "soc=$(getprop ro.board.platform)"
 echo "datetime=$(date "+%Y-%m-%d %H:%M:%S")"
 echo "tz=$(getprop persist.sys.timezone)"
-echo "df=$(df /data 2>/dev/null | tail -1)"
+echo "df=$(df /data 2>/dev/null | tail -n 1)"
 echo "bt_name=$(settings get secure bluetooth_name 2>/dev/null)"
 echo "build_id=$(getprop ro.build.id)"
 echo "fingerprint=$(getprop ro.build.fingerprint)"
 echo "sdk=$(getprop ro.build.version.sdk)"
-echo "wear_app=$(dumpsys package com.google.android.wearable.app 2>/dev/null | sed -n "s/.*versionName=//p" | head -1)"
+echo "wear_app=$(dumpsys package com.google.android.wearable.app 2>/dev/null | sed -n "s/.*versionName=//p" | head -n 1)"
 dumpsys battery 2>/dev/null | sed -n "s/^  level: /bat_cap=/p
 s/^  status: /bat_status_raw=/p
 s/^  health: /bat_health_raw=/p

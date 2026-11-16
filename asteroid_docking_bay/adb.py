@@ -319,7 +319,7 @@ def get_battery_level(serial: str) -> int | None:
     # (where the only supply is the laptop's BAT0) and the watch is handed a path
     # it lacks — the read returns None, which silently breaks every drain/charge
     # that reads the battery. Same reason battery_and_screen quotes its pipeline.
-    rc, out, _ = adb_shell(serial, f'"cat {paths} 2>/dev/null | head -1"')
+    rc, out, _ = adb_shell(serial, f'"cat {paths} 2>/dev/null | head -n 1"')
     if rc == 0 and out.strip().isdigit():
         return int(out.strip())
     return None
@@ -410,7 +410,7 @@ def battery_and_screen(serial, shell=None) -> "tuple[int | None, bool, str | Non
     # unquoted `; mcetool | grep` would be parsed by the host shell (where
     # mcetool doesn't exist) instead of the device. Double-quoting keeps the
     # embedded `grep '^Blank inhibit'` single-quotes intact for the watch shell.
-    remote = (f"cat {paths} 2>/dev/null | head -1; echo ---SCR---; "
+    remote = (f"cat {paths} 2>/dev/null | head -n 1; echo ---SCR---; "
               f"mcetool 2>/dev/null | grep '^Blank inhibit'; echo ---CHG---; "
               f"cat /sys/class/power_supply/*/status 2>/dev/null")
     # `shell` lets the same read run over any transport (an SshTransport.shell

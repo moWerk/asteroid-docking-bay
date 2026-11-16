@@ -290,3 +290,33 @@ def test_every_module_is_in_the_architecture_map():
     assert not missing, (
         f"modules absent from docs/ARCHITECTURE.md: {missing} — add them to the "
         f"Layout block in the same commit that adds the module")
+
+
+def test_no_legacy_head_or_tail_in_watch_commands():
+    """`head -1` is not portable and newer BusyBox rejects it outright.
+
+    Found 2026-11-16 on nemo (AsteroidOS 2.2-nightly, BusyBox v1.37.0): the
+    battery read returned the usage text instead of a number, so the parse
+    produced None — and because the pipeline still exits 0, the rc guard never
+    fired and the failure was completely silent. The row then showed a STALE
+    battery with a FRESH timestamp, because last_seen's None-filter keeps the
+    previous value: nemo displayed 100% while sitting at 37%.
+
+    Thirteen occurrences across three modules were affected, so this asserts
+    the form rather than the one call: `-n N` is POSIX and works on GNU and
+    BusyBox alike.
+    """
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "asteroid_docking_bay"
+    bad = []
+    for mod in ("adb.py", "diag.py", "watchctl.py", "wanze.py", "stockrom.py"):
+        p = root / mod
+        if not p.is_file():
+            continue
+        for n, line in enumerate(p.read_text().splitlines(), 1):
+            if re.search(r"\b(?:head|tail) -\d+\b", line):
+                bad.append(f"{mod}:{n}: {line.strip()[:70]}")
+    assert not bad, (
+        "legacy head/tail form sent to a watch — newer BusyBox rejects it and "
+        "the failure is silent:\n  " + "\n  ".join(bad))
