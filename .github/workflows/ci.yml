@@ -6,10 +6,22 @@ on:
   pull_request:
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    # Per-entry runner. ubuntu-latest rolled to 26.04 between 2026-11-07 and
+    # 2026-11-15 and setup-python has no 3.9 build for it, so the floor leg
+    # started failing on "version not found" rather than on anything in this
+    # repo. Pinning the old leg keeps the floor honest instead of quietly
+    # dropping it because a runner image moved.
+    runs-on: ${{ matrix.os }}
     strategy:
+      # One leg failing must not cancel the other. With the default fail-fast
+      # the 3.14 job was CANCELLED every time 3.9 could not install, so the
+      # run said "failure" while nothing was known about the version that
+      # actually matters.
+      fail-fast: false
       matrix:
-        python: ["3.9", "3.14"]   # floor and current
+        include:
+          - {python: "3.9",  os: ubuntu-22.04}    # floor
+          - {python: "3.14", os: ubuntu-latest}   # current
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
