@@ -571,6 +571,10 @@ def test_ssh_battery_reads_over_the_ssh_link(monkeypatch):
 
 def test_ssh_battery_none_without_an_ip(monkeypatch):
     from asteroid_docking_bay import webstatus as ws
+    # The read is cached on a timer now (a login per render was the 2026-11-15
+    # probe flood), and the cache is module-level, so a sibling test's entry
+    # for this serial would answer before the lookup under test ran.
+    ws._ssh_batt_cache.clear()
     monkeypatch.setattr(ws, "ssh_ip_for_serial", lambda cfg, s: None)
     assert ws._ssh_battery({}, "S1") == (None, False, None)
 
@@ -1620,3 +1624,67 @@ def test_a_stale_count_restarts_rather_than_accumulating(monkeypatch):
     clock["t"] += 90
     ws._recover_unreachable_ssh_watch("S1")                 # now two fresh ones
     assert cycled == [("1-3.3.4", 4)], cycled
+
+
+def test_a_held_watch_on_ssh_gets_no_battery_login(monkeypatch):
+    """The 2026-11-15 flood, and why the first fix missed it.
+
+    The ADB branch of the row build already honoured the hold; the SSH branch
+    beside it never got the guard, so a held watch still took one root SSH
+    LOGIN per status build — every two or three seconds. That is the path that
+    kept flooding after 51f3f10, which had only gated the identity probe.
+    """
+    import asteroid_docking_bay.webstatus as w
+    logins = []
+    monkeypatch.setattr(w, "ssh_reach_ip", lambda cfg, s: "192.168.2.19")
+    monkeypatch.setattr(w, "SshTransport", lambda ip: type("T", (), {"shell": None})())
+    monkeypatch.setattr(w, "battery_and_screen",
+                        lambda s, shell=None: (logins.append(s), (50, False, "Discharging"))[1])
+    w._ssh_batt_cache.clear()
+
+    # Unheld: the read happens, once.
+    monkeypatch.setattr(w.oplock, "held", lambda cfg, s: False)
+    assert w._ssh_battery({}, "S1")[0] == 50
+    assert len(logins) == 1
+
+    # ...and is not repeated on the next render seconds later.
+    assert w._ssh_battery({}, "S1")[0] == 50
+    assert len(logins) == 1, "a login per render is the flood itself"
+
+    # Past the TTL it refreshes, or the row would freeze.
+    w._ssh_batt_cache["S1"] = (w._ssh_batt_cache["S1"][0] - w._SSH_BATT_TTL - 1,
+                               w._ssh_batt_cache["S1"][1])
+    w._ssh_battery({}, "S1")
+    assert len(logins) == 2, "never refreshed; the row would freeze on a stale number"
+
+
+def test_every_live_read_branch_in_the_row_build_honours_the_hold():
+    """The asymmetry that has now caused three incidents: a live-read branch
+    gets the oplock guard, its sibling beside it does not, and a held watch
+    keeps being touched by the one that was missed.
+
+    2026-10-31 the pollers, 2026-11-15 the identity probe (51f3f10), and then
+    the SSH battery read beside an ADB branch that WAS guarded — each found
+    only after a device had been hammered for hours.
+
+    So this asserts the invariant rather than any one line: in the row build,
+    both arms of the adb_state read must consult oplock.held.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent
+           / "asteroid_docking_bay" / "webstatus.py").read_text()
+    # Anchor on the live-read pair specifically. There are five
+    # `if adb_state == "device"` sites in this module and only this one reads
+    # the battery, so the first match is the wrong block.
+    start = src.index('battery, screen_forced, charge_status = battery_and_screen(serial)')
+    start = src.rindex('if adb_state == "device"', 0, start)
+    block = src[start:start + 900]
+    device_arm = block[:block.index('elif adb_state == "ssh"')]
+    ssh_arm = block[block.index('elif adb_state == "ssh"'):]
+    ssh_arm = ssh_arm[:ssh_arm.index("else:")]
+
+    assert "oplock.held" in device_arm, \
+        "the ADB live read stopped honouring the hold"
+    assert "oplock.held" in ssh_arm, (
+        "the SSH live read does not honour the hold — a held watch still takes "
+        "a root SSH login per status build, which is the 2026-11-15 flood")

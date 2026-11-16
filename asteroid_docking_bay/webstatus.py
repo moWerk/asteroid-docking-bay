@@ -763,6 +763,19 @@ def _battery_view(adb_state: "str | None", serial: "str | None",
     return cached.get("battery"), cached.get("last_live_ts")
 
 
+# A battery reading over SSH costs a LOGIN, and the status build runs every
+# two or three seconds. Read per render it becomes a flood: measured on an
+# F(x)tec Pro1-X on 2026-11-15, a root login every ~2s for over an hour,
+# ~850 journal lines a minute on the device, and the reporting session's lead
+# suspect for a journal that stopped mid-rotation under the write load.
+#
+# A battery percentage does not change on a three-second timescale, so it is
+# read on a timer instead. Thirty seconds is still far fresher than the row
+# needs and is 10-15x fewer logins.
+_ssh_batt_cache: "dict[str, tuple[float, tuple]]" = {}
+_SSH_BATT_TTL = 30.0
+
+
 def _ssh_battery(cfg, serial) -> "tuple[int | None, bool, str | None]":
     """Battery / screen / charge for a watch on SSH, read over its SSH link so
     its row shows a live reading instead of the last ADB one. None when it has
@@ -775,10 +788,15 @@ def _ssh_battery(cfg, serial) -> "tuple[int | None, bool, str | None]":
     from last_seen via the warmer instead. Adding that branch here would put a
     network probe on the status path for every SSH watch on every refresh —
     the 4.25s render that _detect_rndis exists to have removed."""
+    cached = _ssh_batt_cache.get(serial)
+    if cached and time.time() - cached[0] < _SSH_BATT_TTL:
+        return cached[1]
     ip = ssh_reach_ip(cfg, serial)
     if not ip:
         return None, False, None
-    return battery_and_screen(serial, shell=SshTransport(ip).shell)
+    got = battery_and_screen(serial, shell=SshTransport(ip).shell)
+    _ssh_batt_cache[serial] = (time.time(), got)
+    return got
 
 
 def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | None":
@@ -1022,7 +1040,7 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # rather than going blank.
             if adb_state == "device" and not oplock.held(cfg, serial):
                 battery, screen_forced, charge_status = battery_and_screen(serial)
-            elif adb_state == "ssh":
+            elif adb_state == "ssh" and not oplock.held(cfg, serial):
                 # A watch on SSH must show a LIVE battery in the row, not freeze
                 # at its last ADB reading (mo: tunny stuck at 71% over SSH, jumped
                 # to 100% on ADB). Read the same values over its SSH link.
