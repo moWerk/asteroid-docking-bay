@@ -3718,3 +3718,23 @@ def test_the_page_recovers_when_it_becomes_visible_again():
     # And the interval must go through the hidden-tab check, not straight to
     # refresh, or a background tab keeps polling a rig somebody is working on.
     assert "setInterval(_tick,3000)" in JS, JS[-300:]
+
+
+def test_a_refused_power_command_is_shown():
+    """The backend returns {ok:false, error} when it declines a power command —
+    the watch is held, or the xHCI slot pool is full. pwrGo tested only
+    `confirmed`, which a refusal does not carry, so the click fell through to
+    the refresh and the page said nothing: moWerk pressed power-on for sawfish
+    four times and watched it stay off while the reason sat in every response
+    body (2026-11-16).
+
+    The cycle handler always got this right; only this one dropped it. So the
+    assertion is on pwrGo's own body."""
+    body = JS.split("function pwrGo(", 1)[1].split("\nfunction ", 1)[0]
+    tight = body.replace(" ", "").replace("\n", "")
+    assert "d.ok===false" in tight, \
+        "a refused power command is silently swallowed again"
+    assert "toastErr" in body, "the refusal reason is never shown to the user"
+    # ...and the network-failure path must speak too, or a rig that cannot be
+    # reached looks identical to a port that simply did not move.
+    assert body.count("toastErr") >= 2, body[-400:]

@@ -1106,8 +1106,19 @@ class Watch:
         log.info("%s: provisioned WiFi %s as %s (wifi powered: %s)",
                  self.serial, ap["ssid"], new_id,
                  {True: "yes", False: "no"}.get(wifi_on, "unknown"))
+        joined = self._join_wifi(new_id) if wifi_on is True else None
+        log.info("%s: %s joined %s", self.serial,
+                 {True: "", False: "has NOT", None: "could not be confirmed"}
+                 .get(joined, "?") or "", ap["ssid"])
         res = {"ok": True, "ssid": ap["ssid"], "service": new_id, "mac": mac,
-               "wifi_powered": wifi_on}
+               "wifi_powered": wifi_on, "joined": joined}
+        if wifi_on is True and joined is not True:
+            res["warning"] = (
+                "credential installed and WiFi powered, but the watch did not "
+                "join " + ap["ssid"]
+                + (" — it is on USB, and connman will not auto-connect WiFi "
+                   "while a wired service is already connected"
+                   if joined is False else " (could not be confirmed)"))
         if wifi_on is not True:
             # ok stays True: the credential IS installed, and a caller that
             # retried provisioning would rewrite a file that is already
@@ -1117,6 +1128,47 @@ class Watch:
                 + ("" if wifi_on is False else " (connman did not answer)")
                 + " — toggle WiFi on the watch to join")
         return res
+
+    def _join_wifi(self, service_id: str) -> "bool | None":
+        """Ask connman to actually USE the credential just installed.
+
+        Writing the service file and powering the radio is not joining. A
+        docked watch already has a connected wired service over USB, and
+        connman does not auto-connect WiFi while it believes it has
+        connectivity -- so the network sits in the list as favourite,
+        autoconnect, in range and NOT connected, indefinitely.
+
+        That is what "provisioning failed" looked like on nemo (moWerk,
+        2026-11-16): credential correct, radio on, AP visible, `*A` in
+        connmanctl, and no association. One explicit connect and it was on
+        192.168.176.203 immediately.
+
+        True when the service reads back as connected, False when it does not,
+        None when connman could not be asked. The verdict is the READ-BACK,
+        never connmanctl's exit code -- `connect` returns promptly while the
+        association is still in progress, so its rc says only that the request
+        was accepted.
+        """
+        self.t.shell(shlex.quote(f"connmanctl connect {service_id}"), timeout=25)
+        for attempt in range(self._JOIN_TRIES):
+            if attempt:
+                time.sleep(self._JOIN_WAIT)
+            rc, out, _ = self.t.shell('"connmanctl services 2>/dev/null"',
+                                      timeout=15)
+            if rc != 0 or not out.strip():
+                continue
+            for line in out.splitlines():
+                if service_id in line:
+                    # connmanctl marks state in the leading flags: R(eady) or
+                    # O(nline) is joined, a bare A(utoconnect) is not.
+                    flags = line.split()[0] if line.split() else ""
+                    return "R" in flags or "O" in flags
+        return None
+
+    # Association is not instant and is not worth a long block on the status
+    # path; five tries two seconds apart covers a normal WPA2 join.
+    _JOIN_TRIES = 5
+    _JOIN_WAIT = 2.0
 
     # connman's startup, bounded. Six tries a second apart covers the daemon
     # coming up on the slowest watch in this fleet without making a genuinely

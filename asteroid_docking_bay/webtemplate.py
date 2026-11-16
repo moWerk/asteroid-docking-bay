@@ -801,9 +801,22 @@ function pwrGo(el,slot,want){
   const on=(want!==undefined)?want:(el?!el.classList.contains('tgl-on'):true);
   if(el)el.classList.add('pending');
   fetch((on?'/api/on/':'/api/off/')+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{
+    // A REFUSAL is not a quiet no. The backend returns {ok:false, error} when
+    // it declines a power command -- the watch is held, or the xHCI slot pool
+    // is full -- and this handler used to test only `confirmed`, which a
+    // refusal does not carry. So the click fell through to the refresh and the
+    // page said nothing at all: moWerk pressed power-on for sawfish four times
+    // and watched it stay off, with the reason sitting in the response body
+    // each time (2026-11-16). The cycle handler two functions down always got
+    // this right; only this one dropped it.
+    if(d&&d.ok===false){
+      if(el)flashFail(el);
+      toastErr(d.error||'the port refused that command');
+      return;
+    }
     if(d.confirmed===false){if(el)flashFail(el);_pwrFlash(slot);return;}
     setTimeout(refresh,700);
-  }).catch(()=>{if(el)flashFail(el);});
+  }).catch(()=>{if(el)flashFail(el);toastErr('power command did not reach the rig');});
   setTimeout(()=>{try{if(el)el.classList.remove('pending');}catch(e){}},8000);
 }
 function connPill(serial){

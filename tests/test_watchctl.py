@@ -429,15 +429,29 @@ class _ConnmanFake:
     """A transport whose connman answers only after `ready_after` reads, and
     whose WiFi powers on only if `enable_works`."""
 
-    def __init__(self, ready_after=0, enable_works=True, enable_lies=False):
+    def __init__(self, ready_after=0, enable_works=True, enable_lies=False,
+                 join_works=True):
         self.ready_after = ready_after
         self.enable_works = enable_works
         self.enable_lies = enable_lies
+        self.join_works = join_works
+        self.joined = False
+        self.connects = 0
         self.reads = 0
         self.enables = 0
         self.powered = False
 
     def shell(self, cmd, timeout=None):
+        if "connmanctl connect" in cmd:
+            self.connects += 1
+            # connect returns promptly whether or not the join succeeds; the
+            # caller must read the state back rather than trust this.
+            if self.join_works:
+                self.joined = True
+            return 0, "", ""
+        if "connmanctl services" in cmd:
+            flags = "*AR" if self.joined else "*A"
+            return 0, f"{flags}  net   wifi_abc_managed_psk\n", ""
         if "connmanctl technologies" in cmd:
             self.reads += 1
             if self.reads <= self.ready_after:
@@ -552,3 +566,48 @@ def test_provisioning_verdict_comes_from_the_radio_not_the_exit_code(
     assert res["wifi_powered"] is False, \
         f"believed the exit code over the radio's own state: {res}"
     assert "warning" in res, res
+
+
+def test_provisioning_actually_joins_the_network(monkeypatch, tmp_path):
+    """Writing the credential and powering the radio is not joining.
+
+    A docked watch already has a connected wired service over USB, and connman
+    will not auto-connect WiFi while it believes it has connectivity — so the
+    network sits in the list as favourite, autoconnect, in range and NOT
+    connected, indefinitely. On nemo that looked exactly like a failed
+    provision (moWerk, 2026-11-16); one explicit connect put it on the network.
+    """
+    t = _ConnmanFake(ready_after=0)
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert t.connects >= 1, "installed the credential and never asked connman to use it"
+    assert res["joined"] is True, res
+    assert "warning" not in res, res
+
+
+def test_provisioning_reports_a_credential_that_did_not_join(monkeypatch, tmp_path):
+    """When the join does not take, say so and say why. `ok` stays True —
+    the credential IS installed and re-provisioning would rewrite a correct
+    file — but the half that did not happen is named rather than hidden."""
+    t = _ConnmanFake(ready_after=0, join_works=False)
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert res["ok"] is True
+    assert res["wifi_powered"] is True
+    assert res["joined"] is False, res
+    assert "did not join" in res.get("warning", ""), res
+
+
+def test_the_join_verdict_is_read_back_not_taken_from_connect(monkeypatch, tmp_path):
+    """`connmanctl connect` returns promptly while the association is still in
+    progress, so its exit code says only that the request was accepted. The
+    answer comes from reading the service's state flags back."""
+    t = _ConnmanFake(ready_after=0, join_works=False)   # connect exits 0, no join
+    w, ap = _provisioning_watch(monkeypatch, tmp_path, t)
+
+    res = w.provision_wifi(ap)
+    assert t.connects >= 1
+    assert res["joined"] is False, \
+        "believed connect's exit code over the service's own state"
