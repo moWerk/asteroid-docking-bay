@@ -468,3 +468,48 @@ def test_the_dead_memory_expires_for_what_the_bus_cannot_see(monkeypatch):
     clock["t"] += 2
     fb._detect_rndis("192.168.13.37")
     assert len(calls) == 2, "never re-probed; a watch whose sshd came up stays invisible"
+
+
+def _capture_nightly(monkeypatch, tmp_path, codename, listing):
+    """Run _download_nightly with every shell call stubbed, returning the
+    commands it issued. Verification goes through _run too, so stubbing that
+    one function is enough to drive the whole path."""
+    import asteroid_docking_bay.fastboot as fb
+    cmds = []
+
+    def _fake_run(cmd, **kw):
+        cmds.append(cmd)
+        (tmp_path / "SHA512SUMS").write_text(listing)
+        return 0, "", ""
+
+    monkeypatch.setattr(fb, "_run", _fake_run)
+    fb._download_nightly(codename, tmp_path, "https://example/nightlies")
+    return " ".join(cmds)
+
+
+def test_a_shared_image_watch_fetches_its_machine_not_its_codename(monkeypatch, tmp_path):
+    """AsteroidOS publishes nightlies per MACHINE. `flash rover` asked for
+    `nightlies/rover/` and got a 404, because rover rides rubyfish's image —
+    a mapping watch_variants.json already carried and the flash path never
+    consulted (reported by the git session, 2026-11-16)."""
+    joined = _capture_nightly(
+        monkeypatch, tmp_path, "rover",
+        "abc  asteroid-rubyfish-boot.img\n"
+        "def  asteroid-image-rubyfish.rootfs.ext4\n")
+    assert "/nightlies/rubyfish/" in joined, \
+        f"fetched the codename path, which does not exist: {joined[:200]}"
+    assert "/nightlies/rover/" not in joined, joined[:200]
+    # And the FILES it asks for are the published ones, not rover-named.
+    assert "asteroid-image-rubyfish.rootfs.ext4" in joined
+    assert "asteroid-image-rover" not in joined
+
+
+def test_a_watch_that_owns_its_image_is_unchanged(monkeypatch, tmp_path):
+    """The mapping must not rewrite names for the common case — a watch whose
+    codename IS its machine keeps fetching exactly what it always did."""
+    joined = _capture_nightly(
+        monkeypatch, tmp_path, "lenok",
+        "a  asteroid-lenok-boot.img\n"
+        "b  asteroid-image-lenok.rootfs.ext4\n")
+    assert "/nightlies/lenok/" in joined, joined[:200]
+    assert "asteroid-image-lenok.rootfs.ext4" in joined

@@ -117,6 +117,25 @@ def exact_codename(machine: "str | None",
     return fam.get("base", machine)
 
 
+def image_name(codename: str) -> str:
+    """The name the PROJECT publishes this watch's images under.
+
+    `image_of` answers "does this codename ride a sibling's image", and says
+    None when it does not. Callers that have to build a filename or a URL want
+    a name every time, so they get this instead of writing `or codename` at
+    each site and getting it wrong at one of them.
+
+    This is the flash path's missing link. AsteroidOS publishes nightlies per
+    MACHINE -- `nightlies/rubyfish/`, `asteroid-image-rubyfish.rootfs.ext4` --
+    while a-d-b addresses watches by codename, so `flash rover` asked for
+    `nightlies/rover/` and got a 404, and `--local` looked for
+    `asteroid-image-rover.rootfs.ext4` which the project never ships. The
+    mapping was already in watch_variants.json; the flash path simply never
+    consulted it (reported by the git session, 2026-11-16).
+    """
+    return image_of(codename) or codename
+
+
 def image_of(codename: "str | None") -> "str | None":
     """The MACHINE image a codename ships on, or None if it is its own image
     (or unknown). image_of('tunny') == 'skipjack'."""

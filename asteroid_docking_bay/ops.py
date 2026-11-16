@@ -1144,8 +1144,13 @@ def _flash_one_watch(
         dl_dir = dl_dir / channel
 
     if local_dir:
-        boot_file = local_dir / f"asteroid-{codename}-boot.img"
-        img_file  = local_dir / f"asteroid-image-{codename}.rootfs.ext4"
+        # Same rule as the download path: the files are named for the MACHINE
+        # the images are published under, which is not the codename for a
+        # watch that rides a sibling's image (rover -> rubyfish).
+        from .variants import image_name
+        image = image_name(codename)
+        boot_file = local_dir / f"asteroid-{image}-boot.img"
+        img_file  = local_dir / f"asteroid-image-{image}.rootfs.ext4"
         missing = [f for f in (boot_file, img_file) if not f.exists()]
         if missing:
             log.error("%s: not found in --local: %s", codename, ", ".join(f.name for f in missing))

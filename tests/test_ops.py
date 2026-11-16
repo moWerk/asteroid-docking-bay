@@ -1095,3 +1095,36 @@ def test_a_landed_watch_comes_back_once_its_wifi_returns(monkeypatch):
         "the watch answered again and stayed marked landed -- it would never "
         "return to Orbit, however long its WiFi stays on")
     assert member["docked_serial"] == "SKIP1"
+
+
+def test_local_flash_looks_for_the_published_image_names(tmp_path, monkeypatch):
+    """`--local DIR` looked for asteroid-image-rover.rootfs.ext4, which the
+    project never ships. The git session got past it with codename-named
+    symlinks, which is a workaround and not a fix (2026-11-16)."""
+    from asteroid_docking_bay.variants import image_name
+    # The names the flash path builds, as the project publishes them.
+    assert image_name("rover") == "rubyfish"
+    assert f"asteroid-image-{image_name('rover')}.rootfs.ext4" == \
+        "asteroid-image-rubyfish.rootfs.ext4"
+    assert f"asteroid-{image_name('rover')}-boot.img" == \
+        "asteroid-rubyfish-boot.img"
+    # ...and a watch that owns its image is untouched.
+    assert image_name("lenok") == "lenok"
+
+
+def test_every_shared_image_variant_resolves_to_its_base():
+    """The whole table, not just rover: a codename that rides a sibling's
+    image must resolve to that machine, and a base must resolve to itself.
+    Catches a new family being added to watch_variants.json without the flash
+    path being able to find its images."""
+    import json
+    from pathlib import Path
+    from asteroid_docking_bay.variants import image_name
+    data = json.loads((Path(__file__).resolve().parent.parent
+                       / "asteroid_docking_bay" / "watch_variants.json").read_text())
+    for base, fam in data["shared_images"].items():
+        assert image_name(base) == base, base
+        for v in fam["variants"]:
+            cn = v["codename"]
+            assert image_name(cn) == fam["base"], (
+                f"{cn} would fetch {image_name(cn)!r} instead of {fam['base']!r}")

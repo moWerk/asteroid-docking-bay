@@ -542,16 +542,22 @@ def _download_nightly(codename: str, download_dir: Path, nightly_url: str, force
     Returns (boot_file, img_file).
     """
     download_dir.mkdir(parents=True, exist_ok=True)
+    # Nightlies are published per MACHINE, not per codename: rover's images
+    # live under rubyfish. Everything user-facing still says "rover".
+    from .variants import image_name
+    image = image_name(codename)
+    if image != codename:
+        log.info("%s: images are published as %s", codename, image)
     sha_name  = "SHA512SUMS"
     sha_file  = download_dir / sha_name
-    base_url  = f"{nightly_url}/{codename}"
+    base_url  = f"{nightly_url}/{image}"
 
     # Always fetch SHA512SUMS so we detect when a new nightly has landed — and,
     # since it lists exactly what this release ships, so the file NAMES can be
     # read from it instead of assumed.
     log.info("%s: fetching SHA512SUMS…", codename)
     _run(f"wget -q '{base_url}/{sha_name}' -O '{sha_file}'")
-    boot_name, img_name = _release_filenames(codename, sha_file)
+    boot_name, img_name = _release_filenames(image, sha_file)
     boot_file = download_dir / boot_name
     img_file  = download_dir / img_name
 
