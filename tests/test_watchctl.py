@@ -611,3 +611,58 @@ def test_the_join_verdict_is_read_back_not_taken_from_connect(monkeypatch, tmp_p
     assert t.connects >= 1
     assert res["joined"] is False, \
         "believed connect's exit code over the service's own state"
+
+
+def test_a_watch_without_wlan0_refuses_provisioning(monkeypatch, tmp_path):
+    """hoki, 2026-11-17: no wlan0 at all, and provisioning reported SUCCESS.
+
+    `adb shell` exits 0 for its own success whatever the remote command did,
+    and busybox's "cat: can't open '/sys/class/net/wlan0/address': No such
+    file or directory" is full of colons — so the old `rc == 0 and ":" in mac`
+    passed, the error text became the MAC, it was hex-encoded into a connman
+    service id, and a-d-b wrote a credential into a directory named after an
+    error message. Then returned ok.
+    """
+    import asteroid_docking_bay.watchctl as wcm
+
+    class _NoWlan:
+        def shell(self, cmd, timeout=None):
+            if "/sys/class/net/wlan0/address" in cmd:
+                return 0, ("cat: can't open '/sys/class/net/wlan0/address': "
+                           "No such file or directory"), ""
+            return 0, "", ""
+
+        def push(self, *a, **k):
+            return 0, "", ""
+
+    w = wcm.Watch("S1", _NoWlan())
+    assert w.wlan_mac() is None, "an error message was accepted as a MAC"
+
+    res = w.provision_wifi({"path": str(tmp_path / "x"), "ssid": "net",
+                            "ssid_hex": "6e6574", "tail": "managed_psk"})
+    assert res["ok"] is False, res
+    assert "MAC" in res["error"], res
+
+
+def test_a_real_mac_is_still_accepted():
+    """The validation must not reject the normal case, in either letter case."""
+    import asteroid_docking_bay.watchctl as wcm
+
+    for raw in ("00:90:4c:31:c6:da\n", "00:90:4C:31:C6:DA"):
+        class _T:
+            def shell(self, cmd, timeout=None, _r=raw):
+                return 0, _r, ""
+        assert wcm.Watch("S1", _T()).wlan_mac() == "00:90:4c:31:c6:da"
+
+
+def test_junk_that_merely_contains_colons_is_not_a_mac():
+    """The old guard's whole failure mode: colons are not a MAC."""
+    import asteroid_docking_bay.watchctl as wcm
+
+    for junk in ("sh: connmanctl: not found",
+                 "Usage: cat [OPTIONS] [FILE]...",
+                 "12:34", "", "00:90:4c:31:c6", "zz:90:4c:31:c6:da"):
+        class _T:
+            def shell(self, cmd, timeout=None, _j=junk):
+                return 0, _j, ""
+        assert wcm.Watch("S1", _T()).wlan_mac() is None, junk

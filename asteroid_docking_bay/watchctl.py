@@ -263,6 +263,11 @@ WEAR_SHORT = {"WearOS": "WO", "AndroidWear": "AW"}
 _WEAR_OS_APP_MIN = (2, 20)   # com.google.android.wearable.app at the rebrand
 
 
+# Six hex pairs, nothing else. Anything a shell prints on failure -- an error
+# message, a usage block, a prompt -- fails this, which is the point.
+_MAC_RE = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
+
+
 def is_sailfish(os_name: "str | None") -> bool:
     """Whether this device runs SailfishOS.
 
@@ -1031,10 +1036,24 @@ class Watch:
 
     def wlan_mac(self) -> "str | None":
         """The watch's own WiFi MAC. connman keys every saved network on it,
-        so provisioning cannot be done without it."""
+        so provisioning cannot be done without it.
+
+        The answer must LOOK like a MAC, and that is not fussiness. The old
+        test was `rc == 0 and ":" in mac`, and both halves fail open: `adb
+        shell` exits 0 for ITS own success whatever the remote command did,
+        and busybox's error text is full of colons. So on a watch with no
+        wlan0 this returned
+
+            cat: can't open '/sys/class/net/wlan0/address': No such file...
+
+        which is truthy, sailed past provisioning's `if not mac` guard, and
+        got hex-encoded into a connman service id. a-d-b then wrote a
+        credential into a directory named after an error message and reported
+        ok (hoki, 2026-11-17).
+        """
         rc, out, _ = self.t.shell("cat /sys/class/net/wlan0/address", timeout=12)
-        mac = (out or "").strip()
-        return mac if rc == 0 and ":" in mac else None
+        mac = (out or "").strip().lower()
+        return mac if _MAC_RE.match(mac) else None
 
     def provision_wifi(self, ap: dict) -> dict:
         """Install a WiFi credential taken from another watch's backup.
