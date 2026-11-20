@@ -1688,3 +1688,46 @@ def test_every_live_read_branch_in_the_row_build_honours_the_hold():
     assert "oplock.held" in ssh_arm, (
         "the SSH live read does not honour the hold — a held watch still takes "
         "a root SSH login per status build, which is the 2026-11-15 flood")
+
+
+def test_a_bound_seat_does_not_claim_a_watch_that_moved():
+    """moWerk moved pike from its mapped seat to a direct USB port, and the row
+    went on flashing pike's adb status on and off — flapping in time with
+    pike's real connection at the other port, over a seat that was powered off
+    and empty (2026-11-20).
+
+    The guard existed but exempted BOUND seats, reasoning that a port binding
+    is the stronger statement. It is stronger about whose seat this is; it says
+    nothing about where the watch is now.
+    """
+    serial, elsewhere = ws._seat_claim("PIKE1", "PIKE1", "1-2", "1-3.4.1")
+    assert elsewhere is True, "the seat still claims a watch that moved away"
+    assert serial == "PIKE1", "a bound seat should keep the identity"
+
+
+def test_a_seat_holding_its_own_watch_is_unaffected():
+    """The common case must not change: the watch is where it belongs, so the
+    seat reports its connection exactly as before."""
+    serial, elsewhere = ws._seat_claim("PIKE1", "PIKE1", "1-3.4.1", "1-3.4.1")
+    assert (serial, elsewhere) == ("PIKE1", False)
+    # ...and with no live path at all (watch off the bus) nothing is inferred.
+    assert ws._seat_claim("PIKE1", "PIKE1", None, "1-3.4.1") == ("PIKE1", False)
+
+
+def test_an_unbound_seat_drops_the_serial_entirely():
+    """No binding means no claim on the identity either, so the serial goes
+    rather than merely being marked elsewhere — unchanged behaviour."""
+    assert ws._seat_claim("W1", None, "1-9.2", "1-3.4.1") == (None, False)
+
+
+def test_a_fastboot_device_at_this_path_is_here_whatever_the_serial_says():
+    """`elsewhere` gates the serial-keyed lookups only. A fastboot device
+    sitting at THIS sysfs path is in this seat by definition — many watches
+    report a different serial in fastboot, which is why the path check exists
+    (beluga: adb 22979c8c vs fastboot 100c0a32)."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent
+           / "asteroid_docking_bay" / "webstatus.py").read_text()
+    blk = src[src.index("in_fastboot = bool("):][:260].replace("\n", " ")
+    assert "not elsewhere and serial in fb_devices" in blk, blk
+    assert "fb_by_path" in blk, "the path-keyed fastboot check was lost"

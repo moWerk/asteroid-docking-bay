@@ -799,6 +799,33 @@ def _ssh_battery(cfg, serial) -> "tuple[int | None, bool, str | None]":
     return got
 
 
+def _seat_claim(serial: "str | None", bound_serial: "str | None",
+                live_path: "str | None", seat_path: str
+                ) -> "tuple[str | None, bool]":
+    """What a seat may say about a watch enumerated somewhere else.
+
+    Returns (serial, elsewhere). `elsewhere` means: this seat keeps the
+    identity but must report NO connection, because the watch is positively
+    enumerated at another path.
+
+    An unbound seat loses the serial outright — no binding means no claim on
+    the identity either. A BOUND seat keeps it: the seat is still pike's. What
+    it may not do is report pike's connection, because pike is not in it.
+
+    The old code exempted bound seats from the check entirely, reasoning that a
+    port binding is the stronger statement. It is stronger about WHOSE seat
+    this is; it says nothing about where the watch is now. moWerk moved pike
+    from its mapped seat to a direct USB port on 2026-11-20 and the row went on
+    flashing pike's adb status on and off — flapping in time with pike's real
+    connection at the other port, over a seat that was powered off and empty.
+
+    Pure — see tests.
+    """
+    if not serial or not live_path or live_path == seat_path:
+        return serial, False
+    return (serial, True) if bound_serial else (None, False)
+
+
 def _geometry_view(adb_state: "str | None", serial: "str | None") -> "dict | None":
     """The watch's screen geometry, probed once and cached forever.
 
@@ -986,20 +1013,37 @@ def _web_status_data(cfg: dict) -> list[dict]:
             #
             # A port-BOUND serial is left alone: that binding is the stronger
             # statement, and a watch that moved is the soft-remap's business.
-            if serial and not bound_serial:
-                live_path = _adb_paths.get(serial)
-                if live_path and live_path != f"{loc}.{port_num}":
-                    serial = None
+            # Positive evidence that this watch is enumerated SOMEWHERE ELSE.
+            # An unbound seat simply loses the serial; a bound one keeps the
+            # identity -- the seat is still pike's -- but must not report
+            # pike's connection, because pike is not in it.
+            #
+            # The exemption used to cover the bound case entirely, on the
+            # reasoning that a port binding is the stronger statement and a
+            # watch that moved is the soft-remap's business. It is stronger
+            # about WHOSE seat this is; it says nothing about where the watch
+            # is now. moWerk moved pike from its mapped seat to a direct USB
+            # port on 2026-11-20 and the old row went on flashing pike's adb
+            # status on and off -- flapping because it tracked pike's real
+            # connection at the other port, over a seat that was powered off
+            # and empty (2026-11-20).
+            serial, elsewhere = _seat_claim(
+                serial, bound_serial, _adb_paths.get(serial) if serial else None,
+                f"{loc}.{port_num}")
 
             # Fastboot detection must survive a bootloader serial that differs
             # from the adb serial (many watches report a different, or no, serial
             # in fastboot -- beluga: adb 22979c8c vs fastboot 100c0a32). The port
             # is bound to the adb serial, so also accept a fastboot device sitting
             # at THIS port's sysfs path -- the port uniquely identifies the watch.
-            in_fastboot = bool((serial and serial in fb_devices)
+            # `elsewhere` gates the serial-keyed lookups, not the path-keyed
+            # one: a fastboot device actually sitting at THIS sysfs path is
+            # here by definition, whatever the serial says.
+            in_fastboot = bool((serial and not elsewhere and serial in fb_devices)
                                or f"{loc}.{port_num}" in fb_by_path)
             adb_state = _resolve_conn_state(
-                _adb_state(devices, serial) if serial else None,
+                None if elsewhere else
+                (_adb_state(devices, serial) if serial else None),
                 in_fastboot,
                 lambda: _sysfs_usb_mode(f"{loc}.{port_num}") == "ssh")
             in_orbit = False
