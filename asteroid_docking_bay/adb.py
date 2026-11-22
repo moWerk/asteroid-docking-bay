@@ -538,7 +538,8 @@ def wait_serial_online(serial: str, wait_secs: int, retries: int,
             # Imported lazily: usb imports this module, so a top-level import
             # here would be circular. This is one of the two seams documented
             # in docs/ARCHITECTURE.md.
-            from .usb import uhubctl_cycle, _sysfs_serial_at, recovery_cycle_lock
+            from .usb import (uhubctl_cycle, _sysfs_serial_at, recovery_cycle_lock,
+                              count_recovery_cycle)
             here = _sysfs_serial_at(loc, port)
             if here and here != serial:
                 # recover_loc_port is the target's seat as of op start. If the
@@ -555,6 +556,7 @@ def wait_serial_online(serial: str, wait_secs: int, retries: int,
                 # one watch must not cut VBUS at the same instant the background
                 # heal cuts another (never many ports at once).
                 with recovery_cycle_lock:
+                    count_recovery_cycle(loc, port, "not enumerating")
                     uhubctl_cycle(loc, port)
     return False
 

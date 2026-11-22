@@ -532,6 +532,40 @@ def restore_port_power(location: str, port: int, attempts: int = 3) -> "bool | N
     return False
 
 
+def count_recovery_cycle(location: str, port: int, reason: str) -> None:
+    """Record that an AUTOMATIC recovery cycled this port, durably.
+
+    The meta-smartwatch session asked for a before/after number per watch for
+    the "does not enumerate right after boot, needs a port cycle" problem, and
+    there was none to give: `flaps` counts bus reconnects but lives in memory
+    only and a service restart forgets them, and nothing else records an
+    enumeration event at all.
+
+    So this counts the thing that matters -- how often a-d-b had to intervene
+    for a watch -- keyed by serial in last_seen, which survives restarts. It
+    records only AUTOMATIC cycles: a cycle a person asked for says nothing
+    about whether the watch needs one.
+
+    Best-effort by design. A counter must never be the reason a recovery does
+    not happen, so every failure here is swallowed.
+    """
+    try:
+        from .config import find_serial_for_loc_port, load_config
+        from .lastseen import last_seen
+        serial = find_serial_for_loc_port(load_config(), location, port)
+        if not serial:
+            return
+        prev = (last_seen.get(serial) or {}).get("recovery_cycles") or 0
+        last_seen.mark(serial,
+                       recovery_cycles=int(prev) + 1,
+                       recovery_last_ts=time.time(),
+                       recovery_last_reason=reason)
+        log.info("%s (%s:%d): automatic recovery cycle #%d (%s)",
+                 serial, location, port, int(prev) + 1, reason)
+    except Exception as e:                      # never block a recovery
+        log.debug("recovery counter failed for %s:%s — %s", location, port, e)
+
+
 def uhubctl_cycle(location: str, port: int, delay: int = 3) -> None:
     """Power-cycle a port in a single uhubctl invocation (off → delay → on).
     Used as the stale-node recovery primitive: unlike a plain off→on pair,

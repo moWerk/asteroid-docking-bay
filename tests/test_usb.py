@@ -444,3 +444,62 @@ def test_restore_says_so_when_it_cannot_verify(monkeypatch):
     monkeypatch.setattr(u, "_uhubctl_exec", lambda cmd: cmds.append(cmd))
     assert u.restore_port_power("1-6.1", 2) is None
     assert any("-a on" in c for c in cmds), cmds
+
+
+def test_an_automatic_recovery_cycle_is_counted_per_serial(monkeypatch):
+    """meta-smartwatch asked for a before/after number per watch for the
+    "needs a port cycle shortly after boot" problem and there was none:
+    `flaps` counts bus reconnects but lives in memory only, and a restart
+    forgets them (2026-11-22).
+
+    This counts the thing that actually matters — how often a-d-b had to
+    intervene for a given watch — in last_seen, which survives restarts.
+    """
+    import asteroid_docking_bay.usb as u
+    import asteroid_docking_bay.lastseen as ls_mod
+    import asteroid_docking_bay.config as cfg_mod
+
+    store = {}
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: {})
+    monkeypatch.setattr(cfg_mod, "find_serial_for_loc_port",
+                        lambda c, l, p: "SAW1")
+    monkeypatch.setattr(ls_mod.last_seen, "get", lambda s: dict(store))
+    monkeypatch.setattr(ls_mod.last_seen, "mark",
+                        lambda s, **f: store.update(f))
+
+    u.count_recovery_cycle("1-3.3.3", 3, "not enumerating")
+    assert store["recovery_cycles"] == 1
+    assert store["recovery_last_reason"] == "not enumerating"
+
+    u.count_recovery_cycle("1-3.3.3", 3, "ssh unreachable")
+    assert store["recovery_cycles"] == 2, "the count did not accumulate"
+    assert store["recovery_last_reason"] == "ssh unreachable"
+
+
+def test_the_counter_never_blocks_a_recovery(monkeypatch):
+    """A counter must never be the reason a recovery does not happen, so every
+    failure in it is swallowed. A watch wedged on the bus matters more than a
+    statistic about watches wedging on the bus."""
+    import asteroid_docking_bay.usb as u
+    import asteroid_docking_bay.config as cfg_mod
+
+    def _boom(*a, **k):
+        raise RuntimeError("config unreadable")
+    monkeypatch.setattr(cfg_mod, "load_config", _boom)
+    u.count_recovery_cycle("1-3", 1, "not enumerating")     # must not raise
+
+
+def test_an_unmapped_port_is_not_counted(monkeypatch):
+    """No serial means no watch to attribute it to. Counting it under a
+    placeholder would put intervention history on the wrong watch."""
+    import asteroid_docking_bay.usb as u
+    import asteroid_docking_bay.lastseen as ls_mod
+    import asteroid_docking_bay.config as cfg_mod
+
+    marked = []
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: {})
+    monkeypatch.setattr(cfg_mod, "find_serial_for_loc_port", lambda c, l, p: None)
+    monkeypatch.setattr(ls_mod.last_seen, "mark",
+                        lambda s, **f: marked.append(f))
+    u.count_recovery_cycle("1-9", 2, "not enumerating")
+    assert marked == [], marked

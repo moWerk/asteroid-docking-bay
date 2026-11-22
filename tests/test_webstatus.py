@@ -1568,7 +1568,8 @@ def test_two_failures_far_apart_are_not_a_run(monkeypatch):
     reported, not cycled. A cycle shakes loose a device that JUST dropped.
     """
     cycled = []
-    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "_recovery_cycle",
+                        lambda loc, port, reason="": cycled.append((loc, port)))
     monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.4", 4))
     monkeypatch.setattr(ws, "load_config", lambda: {})
     clock = {"t": 1000.0}
@@ -1586,7 +1587,8 @@ def test_a_device_that_just_dropped_is_still_cycled(monkeypatch):
     into developer mode gets no DHCP lease until it re-enumerates, and fails
     again on the very next pass 90s later. That is a contiguous run."""
     cycled = []
-    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "_recovery_cycle",
+                        lambda loc, port, reason="": cycled.append((loc, port)))
     monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.3", 2))
     monkeypatch.setattr(ws, "load_config", lambda: {})
     # Imported inside the function from .usb, so it is not an attribute of ws.
@@ -1607,7 +1609,8 @@ def test_a_stale_count_restarts_rather_than_accumulating(monkeypatch):
     """After a long gap the run restarts at one, so a device needs two FRESH
     failures to earn a cycle — it does not inherit credit from last night."""
     cycled = []
-    monkeypatch.setattr(ws, "_recovery_cycle", lambda loc, port: cycled.append((loc, port)))
+    monkeypatch.setattr(ws, "_recovery_cycle",
+                        lambda loc, port, reason="": cycled.append((loc, port)))
     monkeypatch.setattr(ws, "loc_port_for_serial", lambda cfg, s: ("1-3.3.4", 4))
     monkeypatch.setattr(ws, "load_config", lambda: {})
     # Imported inside the function from .usb, so it is not an attribute of ws.
@@ -1731,3 +1734,26 @@ def test_a_fastboot_device_at_this_path_is_here_whatever_the_serial_says():
     blk = src[src.index("in_fastboot = bool("):][:260].replace("\n", " ")
     assert "not elsewhere and serial in fb_devices" in blk, blk
     assert "fb_by_path" in blk, "the path-keyed fastboot check was lost"
+
+
+def test_every_automatic_recovery_cycle_is_counted(monkeypatch):
+    """The counter is only worth having if the recovery paths actually call
+    it. Removing the call is invisible to a test of the counter alone, so this
+    asserts the wiring, and that each path identifies itself — the reason is
+    what separates "not enumerating" from "ssh unreachable" in the history."""
+    counted = []
+    monkeypatch.setattr(ws, "count_recovery_cycle",
+                        lambda loc, port, reason: counted.append((loc, port, reason)))
+    monkeypatch.setattr(ws, "uhubctl_cycle", lambda loc, port: None)
+
+    ws._recovery_cycle("1-3.3.3", 3, "ssh unreachable")
+    assert counted == [("1-3.3.3", 3, "ssh unreachable")], counted
+
+    # And it is counted BEFORE the actuation, so a cycle that wedges the bus
+    # still leaves a record that it was attempted.
+    order = []
+    monkeypatch.setattr(ws, "count_recovery_cycle",
+                        lambda l, p, r: order.append("count"))
+    monkeypatch.setattr(ws, "uhubctl_cycle", lambda l, p: order.append("cycle"))
+    ws._recovery_cycle("1-3", 1, "fake-power wedge")
+    assert order == ["count", "cycle"], order

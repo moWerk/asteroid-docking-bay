@@ -248,7 +248,10 @@ def test_the_fake_power_self_heal_leaves_a_held_watch_alone(monkeypatch):
     # Same call with no lock DOES cycle — the guard must not disable the feature.
     ws._fake_power_since["1-3:1"] = now - 10_000
     ws._maybe_self_heal_fake_power("1-3:1", "1-3", 1, wedged=True, busy=False, cfg={})
-    assert spawned == [("1-3", 1)], spawned
+    # The reason is part of the call now: it is what distinguishes the three
+    # automatic recovery paths in the durable counter.
+    assert [t[:2] for t in spawned] == [("1-3", 1)], spawned
+    assert spawned[0][2] == "fake-power wedge", spawned
 
 
 def test_charge_drain_and_workbench_refuse_a_held_watch(monkeypatch):

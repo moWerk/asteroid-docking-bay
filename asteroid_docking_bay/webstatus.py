@@ -30,7 +30,7 @@ from .usb import (_parse_hub_port_path, _port_device_present, _sysfs_hub_scan,
                   _sysfs_path_to_serial_map, _sysfs_usb_mode, adb_usb_paths,
                   gadget_composition,
                   watch_devices_on_bus,
-                  recovery_cycle_lock, uhubctl_cycle,
+                  count_recovery_cycle, recovery_cycle_lock, uhubctl_cycle,
                   uhubctl_list)
 from .fastboot import (_detect_rndis, _fastboot_getvar_product,
                        _fastboot_list, ssh_reach_ip)
@@ -183,7 +183,7 @@ _FAKE_POWER_BACKOFF_SEC = 300
 _FAKE_POWER_MAX_CYCLES = 2   # a register cycle can't fix a physical button cut
 
 
-def _recovery_cycle(loc: str, port: int) -> None:
+def _recovery_cycle(loc: str, port: int, reason: str = "unspecified") -> None:
     """One automatic recovery power-cycle, serialized against every other one.
 
     Holds the shared recovery_cycle_lock for the whole off→on so no two
@@ -192,6 +192,7 @@ def _recovery_cycle(loc: str, port: int) -> None:
     Calls the module-level uhubctl_cycle so the recovery-path tests that stub it
     keep intercepting the actuation."""
     with recovery_cycle_lock:
+        count_recovery_cycle(loc, port, reason)
         uhubctl_cycle(loc, port)
 
 
@@ -231,7 +232,8 @@ def _maybe_self_heal_fake_power(slot: str, loc: str, port: int,
     log.info("%s: fake-power wedge (powered, no connect >%ds) — auto-cycling "
              "(best-effort; a register cycle can't fix a physical button cut)",
              slot, _FAKE_POWER_GRACE_SEC)
-    threading.Thread(target=_recovery_cycle, args=(loc, port), daemon=True).start()
+    threading.Thread(target=_recovery_cycle, args=(loc, port, "fake-power wedge"),
+                     daemon=True).start()
 
 
 # Stray SSH watches: a watch that self-enumerated in developer/SSH mode without
@@ -501,7 +503,7 @@ def _recover_unreachable_ssh_watch(serial: str) -> None:
              "%s:%s once so it re-enumerates and can take a lease",
              serial, fails, loc, port)
     _ssh_align_cycled.add(serial)
-    _recovery_cycle(loc, port)
+    _recovery_cycle(loc, port, "ssh unreachable")
 
 
 def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
