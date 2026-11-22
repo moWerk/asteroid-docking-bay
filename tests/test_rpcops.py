@@ -1879,6 +1879,8 @@ def test_switching_usb_mode_is_a_noop_when_a_watch_offers_both(monkeypatch):
     monkeypatch.setattr(ro, "_adb_state", lambda devices, serial: "device")
     monkeypatch.setattr(ro, "usb_net_link_for",
                         lambda serial: {"iface": "usb0", "serial": serial})
+    # No prototype marker: the OLD gadget, where the noop guard must hold.
+    monkeypatch.setattr(ro, "adb_shell", lambda serial, cmd, timeout=8: (1, "", ""))
     def boom(*a, **k):
         raise AssertionError("performed a USB-mode switch on a watch offering both")
     monkeypatch.setattr(ro, "_switch_ssh_to_adb", boom)
@@ -2120,3 +2122,63 @@ def test_local_images_and_a_release_channel_are_exclusive(tmp_path, monkeypatch)
     monkeypatch.setattr(rpcops, "_refuse_if_busy", lambda loc, port: None)
     out = _flash_start(loc="1-3", port=1, local=str(tmp_path), channel="2.1")
     assert len(out) == 1 and "exclusive" in out[0], out
+
+
+def _proto_switch(monkeypatch, marker_text, switch_result):
+    """Drive watch.switch_ssh for a watch that offers both links, with the
+    prototype marker file answering `marker_text` (rc 1 when None)."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "adb_devices",
+                        lambda: {"S1": {"status": "device", "usb": "1-3.4.2"}})
+    monkeypatch.setattr(ro, "_adb_state", lambda devices, serial: "device")
+    monkeypatch.setattr(ro, "usb_net_link_for",
+                        lambda serial: {"iface": "usb0", "serial": serial})
+    monkeypatch.setattr(ro, "adb_shell",
+                        lambda serial, cmd, timeout=8:
+                        (0, marker_text, "") if marker_text is not None
+                        else (1, "", ""))
+    monkeypatch.setattr(ro, "load_config", lambda: {"ssh_ips": {}})
+    monkeypatch.setattr(ro.oplock, "held", lambda cfg, serial: None)
+    monkeypatch.setattr(ro, "allocate_ssh_ip", lambda cfg, serial: "192.168.13.99")
+    switched = []
+    monkeypatch.setattr(ro, "_switch_to_developer_mode",
+                        lambda *a, **k: (switched.append(a), switch_result)[1],
+                        raising=False)
+    # the op body calls _run for the actual switch on some paths; capture both
+    monkeypatch.setattr(ro, "_run",
+                        lambda cmd, **k: (switched.append(cmd), (0, "", ""))[1])
+    out = ro.DISPATCH._data["watch.switch_ssh"]({"serial": "S1"})
+    return out, switched
+
+
+def test_the_prototype_marker_unlocks_the_mode_switch(monkeypatch):
+    """asteroid#48 prototypes ship /etc/usb-moded/asteroid-usb.conf, the agreed
+    discriminator (meta-smartwatch, 2026-11-22): present means usb-moded owns
+    the gadget and switching 0a03 <-> 0a02 is the SUPPORTED operation, so the
+    adb-beside-network noop guard must stand aside."""
+    out, switched = _proto_switch(
+        monkeypatch, "USB_MODED_STACK=configfs\nUSB_MODED_NET=ncm\n", {"ok": True})
+    assert not out.get("noop"), f"noop'd a prototype watch: {out}"
+    assert switched, "the switch was never attempted"
+
+
+def test_net_none_is_a_noop_with_its_own_reason(monkeypatch):
+    """USB_MODED_NET=none: developer_mode has no network function on that
+    kernel, so the switch would change nothing — and the message says that,
+    not the old 'does not support switching' text, which would be wrong."""
+    out, switched = _proto_switch(
+        monkeypatch, "USB_MODED_STACK=android\nUSB_MODED_NET=none\n", {"ok": True})
+    assert out.get("noop") is True, out
+    assert "USB_MODED_NET=none" in out.get("message", ""), out
+    assert not switched, "switched despite the kernel having no network function"
+
+
+def test_an_absent_marker_keeps_the_destructive_switch_guard(monkeypatch):
+    """No marker = old gadget = the switch re-runs the RNDIS-era change that
+    destroyed a working NCM setup on 2026-08-16. The guard must hold, and the
+    safe default covers every failure mode: unreadable file, garbage content,
+    watch that cannot be asked."""
+    for marker in (None, "garbage without equals", ""):
+        out, switched = _proto_switch(monkeypatch, marker, {"ok": True})
+        assert out.get("noop") is True, (marker, out)
+        assert not switched, (marker, "switched an old-gadget watch")

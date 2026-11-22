@@ -33,7 +33,7 @@ from . import bench
 from . import icecc, oplock, wanze
 from . import aodcheck
 from .util import _run, log
-from .adb import (_adb_state, adb_devices, adb_external_power,
+from .adb import (_adb_state, adb_devices, adb_external_power, adb_shell,
                   get_watch_codename, is_a_serial)
 from .config import (_config_lock, _store_smart_verdict, allocate_ssh_ip,
                      charge_config, ssh_ip_for_serial, usb_mode_preference,
@@ -899,7 +899,7 @@ def _ssh_switch_adb(args):
     the default 192.168.2.15 for a watch that predates IP assignment. ok=False
     means nothing was reachable there, or a broken usb-moded refused it."""
     serial = args.get("serial")
-    if _offers_both_links(serial):
+    if _offers_both_links(serial) and not _usb_moded_owns_gadget(serial):
         link = usb_net_link_for(serial)
         return {"ok": True, "noop": True,
                 "message": f"{serial} already answers ADB alongside its network "
@@ -922,6 +922,38 @@ def _ssh_switch_adb(args):
           or (ssh_ip_for_serial(cfg, serial) if serial else None)
           or USB_SSH_IP)
     return _switch_ssh_to_adb(ip)
+
+
+# The prototype marker (meta-smartwatch, 2026-11-22, asteroid#48): every
+# image from the usb-moded rework ships this file, and it is the agreed
+# discriminator between "switching re-runs the RNDIS-era change and destroys
+# the gadget" (old configfs watches: file absent) and "usb-moded owns the
+# gadget and switching 0a03 <-> 0a02 is the supported operation" (present).
+_USB_MODED_MARKER = "/etc/usb-moded/asteroid-usb.conf"
+
+
+def _usb_moded_owns_gadget(serial: "str | None") -> "dict | None":
+    """The prototype marker's contents as a dict, or None.
+
+    None means the file is absent or unreadable -- the OLD gadget, where the
+    noop guard must hold, and that is the safe default for every failure mode
+    here: a watch that cannot be asked keeps the protective behaviour.
+    Present, the keys are USB_MODED_STACK (android|configfs) and
+    USB_MODED_NET (ncm|rndis|none).
+    """
+    if not serial:
+        return None
+    rc, out, _ = adb_shell(serial, f'"cat {_USB_MODED_MARKER} 2>/dev/null"',
+                           timeout=8)
+    if rc != 0 or "=" not in (out or ""):
+        return None
+    vals = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if "=" in line and not line.startswith("#"):
+            k, _, v = line.partition("=")
+            vals[k.strip()] = v.strip().strip('"')
+    return vals if "USB_MODED_STACK" in vals else None
 
 
 def _offers_both_links(serial: "str | None") -> bool:
@@ -952,12 +984,24 @@ def _watch_switch_ssh(args):
     if not serial:
         return {"ok": False, "error": "no serial for this port"}
     if _offers_both_links(serial):
-        link = usb_net_link_for(serial)
-        return {"ok": True, "noop": True,
-                "message": f"{serial} already answers ADB and offers a network "
-                           f"link ({link['iface']}) at the same time — nothing "
-                           f"to switch. Switching would re-run the RNDIS mode "
-                           f"change, which this watch does not support."}
+        # adb-beside-network is every prototype watch in developer_mode, and
+        # on those switching IS the supported operation -- the marker file is
+        # the agreed discriminator. Absent marker = old gadget = the switch
+        # re-runs the RNDIS-era change that destroyed a working NCM setup on
+        # 2026-08-16, so the noop guard holds.
+        marker = _usb_moded_owns_gadget(serial)
+        if not marker:
+            link = usb_net_link_for(serial)
+            return {"ok": True, "noop": True,
+                    "message": f"{serial} already answers ADB and offers a network "
+                               f"link ({link['iface']}) at the same time — nothing "
+                               f"to switch. Switching would re-run the RNDIS mode "
+                               f"change, which this watch does not support."}
+        if marker.get("USB_MODED_NET") == "none":
+            return {"ok": True, "noop": True,
+                    "message": f"{serial}: developer_mode has no network "
+                               f"function on this kernel (USB_MODED_NET=none) "
+                               f"— the switch would change nothing."}
     # Same hazard as ssh.switch_adb, from the other direction. This also closes
     # the aligner's own gap: finish_ssh_relocation calls this op up to a minute
     # after the pass that checked the lock, so a hold taken in between was
