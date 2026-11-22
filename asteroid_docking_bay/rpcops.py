@@ -2336,9 +2336,11 @@ class _QueueHandler(logging.Handler):
 
 
 def _flash_stream(codename: str, slot: str, cfg: dict, channel: "str | None" = None,
-                  target: "tuple[str, int, str | None] | None" = None):
+                  target: "tuple[str, int, str | None] | None" = None,
+                  local_dir: "Path | None" = None):
     """Run a flash in a daemon thread and yield its log lines as they happen.
     channel selects a release (e.g. "2.1"); None flashes the nightly.
+    local_dir flashes images already on disk instead of downloading any.
     target = (loc, port, serial) pins the exact watch. Empty string = heartbeat."""
     q: "queue.Queue[str | None]" = queue.Queue()
     flash_cfg = flash_config(cfg)
@@ -2350,11 +2352,13 @@ def _flash_stream(codename: str, slot: str, cfg: dict, channel: "str | None" = N
         h.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         logging.root.addHandler(h)
         try:
-            q.put(f"INFO: flashing {codename} ({channel or 'nightly'})")
+            q.put(f"INFO: flashing {codename} "
+                  f"({local_dir if local_dir else (channel or 'nightly')})")
             q.put("INFO: waiting for ADB bus (another operation in progress)…")
             with _adb_lock:
                 _flash_one_watch(codename, cfg_copy, flash_cfg,
-                                 channel=channel, target=target)
+                                 channel=channel, target=target,
+                                 local_dir=local_dir)
         except Exception as exc:
             try:
                 q.put(f"ERROR: {exc}")
@@ -2406,6 +2410,26 @@ def _flash_start(args):
     if channel and not re.fullmatch(r"[\w.-]+", channel):
         yield f"ERROR: invalid channel {channel!r}"
         return
+    # A locally built image, for porting work: the rework in asteroid#48 needs
+    # to flash what it just built, and until now only the CLI could do that, so
+    # the UI and the API could not flash a local image at all.
+    #
+    # The path is CHECKED rather than taken, because the op table is the
+    # security boundary and this is the one argument that names a filesystem
+    # location. It must be an existing directory holding the two images, named
+    # for the MACHINE the project publishes under -- which is not the codename
+    # for a watch riding a sibling's image (rover -> rubyfish). Saying which
+    # names are missing beats "flash failed" three minutes in.
+    local_dir = None
+    if args.get("local"):
+        from .variants import image_name
+        local_dir = Path(str(args["local"])).expanduser()
+        if not local_dir.is_dir():
+            yield f"ERROR: --local is not a directory: {local_dir}"
+            return
+        if channel:
+            yield "ERROR: local images and a release channel are exclusive"
+            return
     cfg = load_config()
     codename = find_codename_for_loc_port(cfg, loc, port)
     if not codename:
@@ -2415,7 +2439,18 @@ def _flash_start(args):
     # port from the codename, which flashes the wrong unit when two watches
     # share a codename.
     serial = find_serial_for_loc_port(cfg, loc, port)
-    yield from _flash_stream(codename, slot, cfg, channel, target=(loc, port, serial))
+    if local_dir is not None:
+        image = image_name(codename)
+        missing = [n for n in (f"asteroid-{image}-boot.img",
+                               f"asteroid-image-{image}.rootfs.ext4")
+                   if not (local_dir / n).is_file()]
+        if missing:
+            yield (f"ERROR: {local_dir} is missing {', '.join(missing)} — "
+                   f"images are named for the machine ({image}), not the "
+                   f"codename ({codename})")
+            return
+    yield from _flash_stream(codename, slot, cfg, channel,
+                             target=(loc, port, serial), local_dir=local_dir)
 
 
 def _onboard_stream(loc: str, port: int):

@@ -549,6 +549,11 @@ def serve(args, cfg: dict):
         channel = request.query.get("channel")   # e.g. "2.1"; absent = nightly
         if channel:
             args["channel"] = channel
+        # A directory of locally built images, for porting work. The op
+        # validates the path and the filenames; this layer only passes it.
+        local = request.query.get("local")
+        if local:
+            args["local"] = local
         return _sse("flash.start", args)
 
     @app.get("/api/remap/<loc>/<port:int>")

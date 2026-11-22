@@ -2056,3 +2056,67 @@ def test_ops_manifest_summaries_are_whole_sentences():
     for op, summary in by_op.items():
         assert "\n" not in summary, f"{op} summary still wrapped: {summary!r}"
         assert "  " not in summary, f"{op} summary has run-together gaps: {summary!r}"
+
+
+def _flash_start(**args):
+    """Drive the flash.start stream op and collect what it yields before it
+    would spawn anything."""
+    return list(rpcops.DISPATCH._stream["flash.start"](args))
+
+
+def test_flash_start_accepts_a_local_image_directory(tmp_path, monkeypatch):
+    """Locally built images were unreachable from the UI and the API — only
+    the CLI's --local could flash them. The usb-moded rework (asteroid#48)
+    needs to flash what it just built, on beluga, rubyfish/rover, nemo and
+    sawfish (meta-smartwatch, 2026-11-22)."""
+    monkeypatch.setattr(rpcops, "_refuse_if_busy", lambda loc, port: None)
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "find_codename_for_loc_port", lambda c, l, p: "rover")
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    seen = {}
+
+    def _stream(codename, slot, cfg, channel, target=None, local_dir=None):
+        seen.update(codename=codename, local_dir=local_dir, target=target)
+        yield "ok"
+    monkeypatch.setattr(rpcops, "_flash_stream", _stream)
+
+    # rover rides rubyfish's image, so the files are named for the MACHINE.
+    (tmp_path / "asteroid-rubyfish-boot.img").write_text("x")
+    (tmp_path / "asteroid-image-rubyfish.rootfs.ext4").write_text("x")
+
+    out = _flash_start(loc="1-3", port=1, local=str(tmp_path))
+    assert out == ["ok"], out
+    assert seen["local_dir"] == tmp_path, seen
+    assert seen["target"] == ("1-3", 1, "S1"), "the exact unit was not pinned"
+
+
+def test_flash_start_names_the_files_it_could_not_find(tmp_path, monkeypatch):
+    """"flash failed" three minutes in is useless. A missing image is named,
+    with the reason the name is not what the operator expected: images are
+    published per machine, so rover's are called rubyfish."""
+    monkeypatch.setattr(rpcops, "_refuse_if_busy", lambda loc, port: None)
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "find_codename_for_loc_port", lambda c, l, p: "rover")
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+
+    (tmp_path / "asteroid-rover-boot.img").write_text("x")   # codename-named
+    out = _flash_start(loc="1-3", port=1, local=str(tmp_path))
+    assert len(out) == 1 and out[0].startswith("ERROR:"), out
+    assert "asteroid-rubyfish-boot.img" in out[0], out[0]
+    assert "machine (rubyfish)" in out[0] and "codename (rover)" in out[0], out[0]
+
+
+def test_flash_start_refuses_a_path_that_is_not_a_directory(tmp_path, monkeypatch):
+    """The op table is the security boundary and this is the one argument that
+    names a filesystem location, so it is checked rather than taken."""
+    monkeypatch.setattr(rpcops, "_refuse_if_busy", lambda loc, port: None)
+    out = _flash_start(loc="1-3", port=1, local=str(tmp_path / "nope"))
+    assert len(out) == 1 and "not a directory" in out[0], out
+
+
+def test_local_images_and_a_release_channel_are_exclusive(tmp_path, monkeypatch):
+    """Both name where the images come from. Silently preferring one would
+    flash something the operator did not ask for."""
+    monkeypatch.setattr(rpcops, "_refuse_if_busy", lambda loc, port: None)
+    out = _flash_start(loc="1-3", port=1, local=str(tmp_path), channel="2.1")
+    assert len(out) == 1 and "exclusive" in out[0], out

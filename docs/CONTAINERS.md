@@ -127,7 +127,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `config.hide / hide_hub` | config mutations |
 | `hub.rename` | set a physical hub's friendly name (by address prefix) |
 | `socket.set` | set/clear a port's physical socket number (ports sort by it) |
-| `flash.start`, `onboard.start` | streaming ops |
+| `flash.start`, `onboard.start` | streaming ops. `flash.start` takes an optional `local` — a directory of locally built images, for porting work. It is the one op argument naming a filesystem location, so the op checks it rather than trusting it: the path must be an existing directory holding `asteroid-<machine>-boot.img` and `asteroid-image-<machine>.rootfs.ext4`, named for the MACHINE the project publishes under (rover's are rubyfish's), and `local` and `channel` are mutually exclusive since both say where the images come from |
 | `onboard.sweep_prepare` | power all sockets down before an onboard sweep |
 | `onboard.sweep_run` | streaming: onboard every equipped socket, one at a time |
 | `onboard.sweep_skip` | skip the running sweep's current port (boot-wait aborts) |
