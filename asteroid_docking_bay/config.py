@@ -229,12 +229,15 @@ class ConfigManager:
                     self._write_atomic(rejected, cfg)
                 except OSError:
                     pass
+                import traceback
                 log.error(
                     "REFUSED a config save that would drop %d hubs / %d serials "
                     "to empty — kept the good file. The fleet mapping is NOT "
-                    "lost; the rejected config is at %s. This is a caller bug.",
+                    "lost; the rejected config is at %s. This is a caller bug.\n"
+                    "Caller stack:\n%s",
                     len(current.get("hubs") or []),
-                    len(current.get("serials") or {}), rejected)
+                    len(current.get("serials") or {}), rejected,
+                    "".join(traceback.format_stack()))
                 return
             if (current.get("hubs") != cfg.get("hubs")
                     or current.get("serials") != cfg.get("serials")):

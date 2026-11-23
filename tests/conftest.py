@@ -47,3 +47,28 @@ def _clear_onboarding_quiet_window(monkeypatch):
     """
     import asteroid_docking_bay.util as util
     monkeypatch.setattr(util, "_onboarding_until", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config(tmp_path_factory, monkeypatch):
+    """Redirect the config manager at a tmp file for every test.
+
+    save_config/load_config use a module-level ConfigManager pointed at the
+    REAL ~/.config/.../config.json. Many ops do `cfg = load_config(); …;
+    save_config(cfg)`, and a test that patches load_config to a fleet-less
+    store but leaves save_config real writes that store straight to the live
+    file — which, run on the deploy host, truncated the whole 12-hub mapping to
+    `{"ssh_ips": {}}` on 2026-11-22 and again on 2026-11-23. The suite was the
+    culprit, not production.
+
+    Same shape as _isolate_registry and _isolate_task_store above; config was
+    simply never added. Repoint the singleton's path and its cross-process
+    lock at a tmpdir so the suite can only ever write a config it owns."""
+    from asteroid_docking_bay import config as cfg_mod
+    d = tmp_path_factory.mktemp("config")
+    path = d / "config.json"
+    monkeypatch.setattr(cfg_mod.config_manager, "path", path)
+    monkeypatch.setattr(cfg_mod.config_manager, "lock",
+                        cfg_mod._ConfigLock(path.with_name(path.name + ".lock")))
+    # The module also exposes the lock as a shared name; keep it consistent.
+    monkeypatch.setattr(cfg_mod, "_config_lock", cfg_mod.config_manager.lock)
