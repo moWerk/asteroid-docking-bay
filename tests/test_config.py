@@ -346,3 +346,93 @@ def test_loc_port_for_serial_only_trusts_an_exact_binding():
         {"hubs": [{"port_serials": {"1": "S1"}}]}, "S1") is None
     assert loc_port_for_serial(
         {"hubs": [{"location": "1-2", "port_serials": None}]}, "S1") is None
+
+
+def _mgr(tmp_path):
+    from asteroid_docking_bay.config import ConfigManager
+    return ConfigManager(tmp_path / "config.json")
+
+
+_POPULATED = {"hubs": [{"location": "1-3", "ports": {"1": "sol"}}],
+              "serials": {"S1": "sol"}, "ssh_ips": {}}
+
+
+def test_save_refuses_to_drop_a_populated_fleet_to_empty(tmp_path):
+    """The 2026-11-22 incident: a caller saved {"ssh_ips": {}} over a 12-hub
+    mapping, and with the backup also gone it was unrecoverable. No code here
+    empties the fleet on purpose, so that transition is always a bug — the save
+    must keep the good file.
+    """
+    m = _mgr(tmp_path)
+    m.save(_POPULATED)
+    assert m.load()["hubs"], "setup failed"
+
+    # The wipe: only ssh_ips, no hubs, no serials.
+    m.save({"ssh_ips": {}})
+
+    reloaded = m.load()
+    assert reloaded["hubs"], "the fleet mapping was lost — the guard did not hold"
+    assert reloaded["serials"] == {"S1": "sol"}
+    # The rejected config is kept aside, not silently discarded.
+    import json
+    rej = tmp_path / "config.json.rejected"
+    assert rej.is_file() and json.loads(rej.read_text()) == {"ssh_ips": {}}
+
+
+def test_first_run_can_still_write_an_empty_config(tmp_path):
+    """The guard must not break first run or onboarding, which legitimately
+    start from empty: with nothing on disk there is no fleet to lose."""
+    m = _mgr(tmp_path)
+    m.save({"ssh_ips": {}})                 # nothing on disk yet
+    assert m.load().get("hubs") == []       # written, not refused
+    # And onboarding builds UP from there — a populated save over empty is fine.
+    m.save(_POPULATED)
+    assert m.load()["hubs"]
+
+
+def test_a_meaningful_change_leaves_a_backup(tmp_path):
+    """The recovery point the atomic-save rewrite dropped. A change to hubs or
+    serials snapshots the previous good file, so a bad later write is always
+    one backup away from recovery."""
+    m = _mgr(tmp_path)
+    m.save(_POPULATED)
+    # change the fleet: add a hub
+    two = {"hubs": _POPULATED["hubs"] + [{"location": "1-6", "ports": {}}],
+           "serials": {"S1": "sol"}, "ssh_ips": {}}
+    m.save(two)
+
+    baks = sorted(tmp_path.glob("config.json.bak-*"))
+    assert baks, "no backup was written on a meaningful change"
+    import json
+    assert json.loads(baks[-1].read_text())["hubs"] == _POPULATED["hubs"], \
+        "the backup does not hold the PREVIOUS good content"
+
+
+def test_a_cosmetic_save_does_not_spam_backups(tmp_path):
+    """The status path saves every few seconds without touching hubs or
+    serials (exact codenames, etc). Those must NOT each cut a backup, or the
+    history is buried under noise within a minute."""
+    m = _mgr(tmp_path)
+    m.save(_POPULATED)
+    for i in range(5):
+        cosmetic = dict(_POPULATED, exact_codenames={"S1": f"sol{i}"})
+        m.save(cosmetic)
+    assert list(tmp_path.glob("config.json.bak-*")) == [], \
+        "a save that did not change hubs/serials still cut a backup"
+
+
+def test_empty_over_empty_proceeds_without_a_false_refusal(tmp_path):
+    """An already-empty on-disk config (a genuinely reset rig, or the morning
+    after an incident) must accept another empty save — there is no fleet to
+    lose, so refusing it would be a false positive that also litters a
+    .rejected file. This is what makes the had_fleet check meaningful rather
+    than just `current is not None`."""
+    import json
+    m = _mgr(tmp_path)
+    m.save({"ssh_ips": {"S1": "192.168.13.37"}})     # empty of fleet, has an IP
+    assert (tmp_path / "config.json.rejected").exists() is False
+
+    # another fleet-less save: allowed, because nothing was there to lose
+    m.save({"ssh_ips": {"S1": "192.168.13.37", "S2": "192.168.13.38"}})
+    assert (tmp_path / "config.json.rejected").exists() is False
+    assert m.load()["ssh_ips"] == {"S1": "192.168.13.37", "S2": "192.168.13.38"}

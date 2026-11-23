@@ -23,6 +23,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 from .adb import adb_devices, is_a_serial
+from .util import log
 
 
 CONFIG_DIR = Path.home() / ".config" / "asteroid-docking-bay"
@@ -159,24 +160,86 @@ class ConfigManager:
             cfg.setdefault(key, default)
         return cfg
 
-    def save(self, cfg: dict) -> None:
-        """Write the config so a reader never sees a half-written file.
+    # Timestamped backups kept, newest wins. One per MEANINGFUL change (hubs or
+    # serials differ), so history spans real fleet edits rather than the
+    # every-few-seconds status saves that change neither.
+    _KEEP_BACKUPS = 15
 
-        The old truncate-in-place left invalid JSON behind if the process died
-        mid-write (or the disk filled), and nothing catches the decode error —
-        every op and the whole status page would break, with the fleet's port
-        mappings and operation locks unreadable. Write a sibling temp file,
-        fsync it, then os.replace, which is atomic on POSIX: a reader sees
-        either the old file or the new one, never a truncated one.
-        """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
+    def _read_raw(self) -> "dict | None":
+        """The current on-disk config, or None if absent/unreadable. Lets save()
+        see what a write is about to replace. Never raises."""
+        try:
+            with self.path.open() as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def _write_atomic(self, dest: Path, cfg: dict) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".tmp")
         with tmp.open("w") as f:
             json.dump(cfg, f, indent=2)
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        os.replace(tmp, dest)
+
+    def _snapshot_and_prune(self, current: dict) -> None:
+        """Snapshot the current good config as a timestamped backup, then prune
+        to the newest _KEEP_BACKUPS. This is the recovery point the atomic-save
+        rewrite dropped in 7044e27: truncate-in-place left a .bak before it;
+        after it nothing did, which is why the 2026-11-22 wipe had no recent
+        backup to restore from. Best-effort: a backup must never fail a save."""
+        try:
+            import time
+            stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+            self._write_atomic(
+                self.path.with_name(self.path.name + ".bak-" + stamp), current)
+            baks = sorted(self.path.parent.glob(self.path.name + ".bak-*"))
+            for old_bak in baks[:-self._KEEP_BACKUPS]:
+                old_bak.unlink(missing_ok=True)
+        except OSError as exc:
+            log.debug("config backup failed (non-fatal): %s", exc)
+
+    def save(self, cfg: dict) -> None:
+        """Write the config so a reader never sees a half-written file, never
+        loses a populated fleet, and always leaves a recent backup.
+
+        Atomic: a sibling temp file, fsync, then os.replace — a reader sees the
+        old file or the new one, never a truncated one.
+
+        Guarded: a save that would drop a config WITH hubs or serials to one
+        with NEITHER is refused. No code here empties the fleet on purpose
+        (onboarding only builds up), so that transition is always a caller bug.
+        On 2026-11-22 exactly this wrote {"ssh_ips": {}} over the whole 12-hub
+        mapping and, with the backup gone too, it was unrecoverable. The
+        rejected config is written aside so nothing is silently discarded, the
+        good file is kept, and the next load re-reads it — self-healing.
+
+        Backed up: on a meaningful change the previous good file is snapshotted.
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        current = self._read_raw()
+        if current is not None:
+            had_fleet = bool(current.get("hubs") or current.get("serials"))
+            empties = not (cfg.get("hubs") or cfg.get("serials"))
+            if had_fleet and empties:
+                rejected = self.path.with_name(self.path.name + ".rejected")
+                try:
+                    self._write_atomic(rejected, cfg)
+                except OSError:
+                    pass
+                log.error(
+                    "REFUSED a config save that would drop %d hubs / %d serials "
+                    "to empty — kept the good file. The fleet mapping is NOT "
+                    "lost; the rejected config is at %s. This is a caller bug.",
+                    len(current.get("hubs") or []),
+                    len(current.get("serials") or {}), rejected)
+                return
+            if (current.get("hubs") != cfg.get("hubs")
+                    or current.get("serials") != cfg.get("serials")):
+                self._snapshot_and_prune(current)
+        self._write_atomic(self.path, cfg)
 
 
 config_manager = ConfigManager()
