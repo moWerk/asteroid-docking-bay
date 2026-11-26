@@ -277,19 +277,24 @@ def test_record_exact_codename_is_change_gated():
 
 # ── SSH-mode IP allocation ──────────────────────────────────────────────────
 
-def test_ssh_ips_are_unique_and_start_at_leet():
-    from asteroid_docking_bay.config import allocate_ssh_ip, SSH_IP_BASE
+def test_ssh_ips_are_unique_and_start_at_leet(monkeypatch):
+    from asteroid_docking_bay import config as C
+    monkeypatch.setattr(C, "_ssh_subnet_free", lambda third, run=None: True)
     cfg = {}
-    a = allocate_ssh_ip(cfg, "S1")
-    b = allocate_ssh_ip(cfg, "S2")
-    c = allocate_ssh_ip(cfg, "S3")
-    assert a == SSH_IP_BASE == "192.168.13.37"
-    assert (b, c) == ("192.168.13.38", "192.168.13.39")
-    assert len({a, b, c}) == 3, "two watches got the same SSH IP — the conflict"
+    a = C.allocate_ssh_ip(cfg, "S1")
+    b = C.allocate_ssh_ip(cfg, "S2")
+    c = C.allocate_ssh_ip(cfg, "S3")
+    # One /24 per watch now (the conflict the old shared-/24 scheme caused);
+    # the first keeps the historical base .13.37, the rest step the third octet.
+    assert a == C.SSH_IP_BASE == "192.168.13.37"
+    assert (b, c) == ("192.168.14.37", "192.168.15.37")
+    assert len({a, b, c}) == 3
 
 
-def test_ssh_ip_assignment_is_sticky():
+def test_ssh_ip_assignment_is_sticky(monkeypatch):
+    from asteroid_docking_bay import config as C
     from asteroid_docking_bay.config import allocate_ssh_ip, ssh_ip_for_serial
+    monkeypatch.setattr(C, "_ssh_subnet_free", lambda third, run=None: True)
     cfg = {}
     first = allocate_ssh_ip(cfg, "S1")
     allocate_ssh_ip(cfg, "S2")
@@ -307,15 +312,16 @@ def test_usb_mode_preference_defaults_to_adb_and_ignores_junk():
         "a junk value must fall back to the safe standard, not pass through")
 
 
-def test_ssh_ip_fills_a_freed_gap():
-    """If a serial is removed, its address is reused rather than skipped."""
-    from asteroid_docking_bay.config import allocate_ssh_ip
+def test_ssh_ip_fills_a_freed_gap(monkeypatch):
+    """A removed serial frees its /24, which is reused rather than skipped."""
+    from asteroid_docking_bay import config as C
+    monkeypatch.setattr(C, "_ssh_subnet_free", lambda third, run=None: True)
     cfg = {}
-    allocate_ssh_ip(cfg, "S1")            # .37
-    b = allocate_ssh_ip(cfg, "S2")        # .38
-    del cfg["ssh_ips"]["S1"]              # free .37
-    assert allocate_ssh_ip(cfg, "S3") == "192.168.13.37", "did not reuse the gap"
-    assert b == "192.168.13.38"
+    C.allocate_ssh_ip(cfg, "S1")               # 192.168.13.37
+    b = C.allocate_ssh_ip(cfg, "S2")           # 192.168.14.37
+    del cfg["ssh_ips"]["S1"]                    # free the .13 /24
+    assert C.allocate_ssh_ip(cfg, "S3") == "192.168.13.37", "did not reuse the /24"
+    assert b == "192.168.14.37"
 
 
 def test_loc_port_for_serial_only_trusts_an_exact_binding():
@@ -436,3 +442,78 @@ def test_empty_over_empty_proceeds_without_a_false_refusal(tmp_path):
     m.save({"ssh_ips": {"S1": "192.168.13.37", "S2": "192.168.13.38"}})
     assert (tmp_path / "config.json.rejected").exists() is False
     assert m.load()["ssh_ips"] == {"S1": "192.168.13.37", "S2": "192.168.13.38"}
+
+
+def _no_route(third, run=None):
+    """Route check stub: every candidate /24 is free (via gateway)."""
+    return True
+
+
+def test_each_watch_gets_its_own_24(monkeypatch):
+    """usb-moded derives its DHCP pool from the watch address, so two watches
+    in one /24 give the host the same connected route twice and it can only
+    reach the first (meta-smartwatch, approved 2026-11-26). Every watch must
+    land in a distinct /24 so plain ssh root@<ip> works."""
+    from asteroid_docking_bay import config as C
+    monkeypatch.setattr(C, "_ssh_subnet_free", _no_route)
+    cfg = {"ssh_ips": {}}
+    a = C.allocate_ssh_ip(cfg, "S1")
+    b = C.allocate_ssh_ip(cfg, "S2")
+    c = C.allocate_ssh_ip(cfg, "S3")
+    net = lambda ip: ip.rsplit(".", 1)[0]
+    assert len({net(a), net(b), net(c)}) == 3, (a, b, c)
+    # the watch sits at .37, outside usb-moded's .1-.15 pool
+    assert all(ip.endswith(".37") for ip in (a, b, c)), (a, b, c)
+    assert a == "192.168.13.37", a          # first /24 keeps the historical base
+
+
+def test_allocation_is_sticky(monkeypatch):
+    from asteroid_docking_bay import config as C
+    monkeypatch.setattr(C, "_ssh_subnet_free", _no_route)
+    cfg = {"ssh_ips": {}}
+    first = C.allocate_ssh_ip(cfg, "S1")
+    assert C.allocate_ssh_ip(cfg, "S1") == first
+
+
+def test_migration_moves_a_shared_24_but_keeps_the_lowest(monkeypatch):
+    """The exact two sticky entries the old scheme wrote: nemo 192.168.13.37
+    and sawfish 192.168.13.38, same /24. nemo keeps its /24; sawfish moves to
+    its own."""
+    from asteroid_docking_bay import config as C
+    monkeypatch.setattr(C, "_ssh_subnet_free", _no_route)
+    table = {"604KPMZ003491": "192.168.13.37",
+             "TKQ7N17406001852": "192.168.13.38"}
+    assert C._migrate_ssh_ips(table) is True
+    assert table["604KPMZ003491"] == "192.168.13.37"
+    assert table["TKQ7N17406001852"] == "192.168.14.37"
+    # idempotent: a second pass changes nothing
+    assert C._migrate_ssh_ips(table) is False
+
+
+def test_allocation_skips_a_subnet_the_host_already_routes(monkeypatch):
+    """Skip any /24 the host already has a connected route for — the home LAN,
+    and a watch link already up. 192.168.2.0/24 is skipped unconditionally
+    (the default watch address and the Pro1-X)."""
+    from asteroid_docking_bay import config as C
+    # pretend 192.168.13 and 192.168.14 are already routed (connected)
+    monkeypatch.setattr(C, "_ssh_subnet_free",
+                        lambda third, run=None: third not in (13, 14))
+    cfg = {"ssh_ips": {}}
+    ip = C.allocate_ssh_ip(cfg, "S1")
+    assert ip == "192.168.15.37", ip        # 13,14 routed → first free is 15
+    # and 2 is reserved even if the route check says free
+    monkeypatch.setattr(C, "_ssh_subnet_free", _no_route)
+    assert C._next_free_ssh_third({13, 14, 15}) == 16
+    assert 2 not in {C._next_free_ssh_third(set(range(13, n))) for n in range(13, 20)}
+
+
+def test_subnet_free_reads_the_route(monkeypatch):
+    """A directly-connected /24 (no `via`) is in use; one via the gateway is
+    free. This is what skips the LAN and live watch links without listing them."""
+    from asteroid_docking_bay import config as C
+    connected = lambda cmd, check=False, timeout=None: (0, "192.168.13.37 dev enx0 src 192.168.13.1", "")
+    viagw = lambda cmd, check=False, timeout=None: (0, "192.168.99.37 via 192.168.176.1 dev enp0s25 src 192.168.176.21", "")
+    assert C._ssh_subnet_free(13, run=connected) is False
+    assert C._ssh_subnet_free(99, run=viagw) is True
+    # a failed lookup must not block a switch
+    assert C._ssh_subnet_free(50, run=lambda *a, **k: (1, "", "err")) is True

@@ -23,7 +23,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 from .adb import adb_devices, is_a_serial
-from .util import log
+from .util import log, _run
 
 
 CONFIG_DIR = Path.home() / ".config" / "asteroid-docking-bay"
@@ -428,7 +428,8 @@ def exact_codename_for_serial(cfg: dict, serial: "str | None") -> "str | None":
 # home-network clash too. Assignment is sticky per serial, so a watch keeps its
 # address across sessions.
 
-SSH_IP_BASE = "192.168.13.37"
+SSH_IP_BASE = "192.168.13.37"      # watch .37 of the FIRST /24 (see
+                                   # allocate_ssh_ip: one /24 per watch)
 
 
 def ssh_ip_for_serial(cfg: dict, serial: "str | None") -> "str | None":
@@ -444,23 +445,97 @@ def usb_mode_preference(cfg: dict) -> str:
     return pref if pref in ("adb", "ssh") else "adb"
 
 
+# SSH-mode addressing is one /24 PER WATCH, not one address in a shared /24.
+#
+# usb-moded derives its own udhcpd pool from the watch's address: a watch at
+# 192.168.13.37 serves 192.168.13.1-.15 and the host end leases 192.168.13.1/24
+# (observed on nemo and sawfish, 2026-11-26). If two watches share that /24 the
+# host gets the same connected route twice and the kernel sends ALL of their
+# traffic down the first link — the second is "No route to host", reachable
+# only through a SO_BINDTODEVICE socket. Giving each watch its own /24 gives
+# each link a distinct connected route, so plain `ssh root@<ip>` works.
+#
+# meta-smartwatch PROPOSAL, approved by moWerk 2026-11-26. The original
+# shared-/24 base (SSH_IP_BASE) was his spec, set before the routing
+# consequence was known; it is kept as the first /24 so nemo's 192.168.13.37
+# is unchanged.
+_SSH_THIRD_BASE = 13                    # first /24: 192.168.13.0/24
+_SSH_HOST_OCTET = 37                    # the watch sits at .37 — OUTSIDE
+                                        # usb-moded's .1-.15 pool, one per /24.
+_SSH_SKIP_THIRDS = {2}                  # 192.168.2.0/24: the default watch
+                                        # address, and the Pro1-X on this rig.
+
+
+def _ssh_subnet_free(third: int, run=None) -> bool:
+    """Is 192.168.<third>.0/24 free to hand a watch link?
+
+    Free means the host has no directly-connected route to it. The home LAN and
+    any watch link already up both show as connected (`ip route get` prints no
+    `via`), so this skips them with no special case; an unused /24 routes via
+    the default gateway (`via` present) and is free. A failed lookup does not
+    block — a missing route tool should not stop a switch. `run` is injected
+    for tests."""
+    run = run or _run
+    addr = "192.168.%d.%d" % (third, _SSH_HOST_OCTET)
+    rc, out, _ = run("ip route get %s" % addr, check=False, timeout=4)
+    if rc != 0:
+        return True
+    return " via " in (out or "")
+
+
+def _next_free_ssh_third(taken: "set[int]", route_check: bool = True) -> int:
+    """The lowest third octet not already assigned, not reserved, and (when
+    route_check) not already routed by the host. Falls back to the base."""
+    for third in range(_SSH_THIRD_BASE, 256):
+        if third in taken or third in _SSH_SKIP_THIRDS:
+            continue
+        if route_check and not _ssh_subnet_free(third):
+            continue
+        return third
+    return _SSH_THIRD_BASE
+
+
+def _migrate_ssh_ips(table: dict) -> bool:
+    """Heal an ssh_ips table to one /24 per watch. Idempotent; returns True iff
+    it changed something.
+
+    The shared-/24 scheme wrote nemo 192.168.13.37 and sawfish 192.168.13.38 —
+    same /24, which is the bug. The lowest address keeps its /24; any serial
+    that collides on a third octet, or is not at the .37 host position, is moved
+    to the next free /24. Processed lowest-address-first so the migration is
+    deterministic and nemo keeps .13."""
+    import ipaddress
+    changed = False
+    taken: "set[int]" = set()
+    for serial, addr in sorted(table.items(),
+                               key=lambda kv: int(ipaddress.ip_address(kv[1]))):
+        third = int(ipaddress.ip_address(addr).packed[2])
+        want = "192.168.%d.%d" % (third, _SSH_HOST_OCTET)
+        if third not in taken and third not in _SSH_SKIP_THIRDS and addr == want:
+            taken.add(third)
+            continue
+        new_third = _next_free_ssh_third(taken)
+        table[serial] = "192.168.%d.%d" % (new_third, _SSH_HOST_OCTET)
+        taken.add(new_third)
+        changed = True
+    return changed
+
+
 def allocate_ssh_ip(cfg: dict, serial: str) -> str:
-    """The SSH-mode IP for a serial, assigning the next free one from the base
-    up on first use. Sticky: a serial always gets back the same address."""
+    """The SSH-mode address for a serial: its own /24, assigned on first use and
+    sticky. See the _SSH_THIRD_BASE comment for why each watch needs a separate
+    /24. Also heals any shared-/24 entries from the old scheme on the way
+    through, so the table converges the next time any watch is switched."""
     import ipaddress
     table = cfg.setdefault("ssh_ips", {})
+    _migrate_ssh_ips(table)
     if serial in table:
         return table[serial]
-    used = set(table.values())
-    base = int(ipaddress.ip_address(SSH_IP_BASE))
-    for offset in range(0, 200):          # 192.168.13.37 .. .236
-        cand = str(ipaddress.ip_address(base + offset))
-        if cand not in used:
-            table[serial] = cand
-            return cand
-    # Pool exhausted (200 watches on one rig is not a real scenario); fall back
-    # to the base rather than raising, so a switch is never blocked by this.
-    return SSH_IP_BASE
+    taken = {int(ipaddress.ip_address(a).packed[2]) for a in table.values()}
+    third = _next_free_ssh_third(taken)
+    addr = "192.168.%d.%d" % (third, _SSH_HOST_OCTET)
+    table[serial] = addr
+    return addr
 
 
 def record_exact_codename(cfg: dict, serial: "str | None",

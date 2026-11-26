@@ -566,6 +566,11 @@ def _mock_switch_ssh_config(monkeypatch, ro, cfg=None):
     cfg = cfg if cfg is not None else {}
     monkeypatch.setattr(ro, "load_config", lambda: cfg)
     monkeypatch.setattr(ro, "save_config", lambda c: None)
+    # The SSH IP allocator now checks `ip route get` to avoid a /24 the host
+    # already routes (one /24 per watch). Stub it free so the assigned address
+    # does not depend on the test host's own networking.
+    from asteroid_docking_bay import config as _C
+    monkeypatch.setattr(_C, "_ssh_subnet_free", lambda third, run=None: True)
     return cfg
 
 
