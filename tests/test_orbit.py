@@ -808,3 +808,42 @@ def test_a_watch_back_on_usb_leaves_orbit_under_either_identity(monkeypatch):
                                   "codename": "beluga", "auto": True,
                                   "docked_serial": "USB-ID"}}}
     assert ws._orbit_hub_view(cfg2, {"USB-ID"})["ports"] == []
+
+
+def test_direct_view_names_a_watch_the_registry_knows(monkeypatch):
+    """wren enumerates only on a direct port, so it was never mapped to a hub
+    seat and its serial is not in the config's serials map — the row showed its
+    raw serial (GCNZCJ008777517) as the name. But a-d-b has seen wren before,
+    so the fleet registry knows its codename. The direct view now falls back to
+    that, naming any previously-seen watch without a config entry or a hardware
+    read (moWerk, 2026-11-27)."""
+    from asteroid_docking_bay.registry import registry
+    registry.note("GCNZCJ008777517", source="test", codename="wren")
+
+    cfg = {"hubs": [], "serials": {}}       # wren is in neither
+    monkeypatch.setattr(ws, "_adb_state", lambda devices, serial: "device")
+    monkeypatch.setattr(ws, "watch_devices_on_bus", lambda known_paths=None: [])
+    view = ws._direct_hub_view(
+        cfg,
+        devices={"GCNZCJ008777517": "device"},
+        adb_paths={"GCNZCJ008777517": "1-2"},    # a direct root port
+        fb_by_path={})
+
+    row = {r["serial"]: r for r in view["ports"]}["GCNZCJ008777517"]
+    assert row["machine"] == "wren", "the registry codename was not used"
+    assert row["codename"] == "wren" and row["named"]
+
+
+def test_the_config_map_still_wins_over_the_registry(monkeypatch):
+    """The config binding is the authoritative one; the registry is only the
+    fallback. A serial mapped in config must use that name even if the registry
+    disagrees (a reflash the registry has not caught up with)."""
+    from asteroid_docking_bay.registry import registry
+    registry.note("S1", source="test", codename="stale_old_name")
+
+    cfg = {"hubs": [], "serials": {"S1": "narwhal"}}
+    monkeypatch.setattr(ws, "_adb_state", lambda devices, serial: "device")
+    monkeypatch.setattr(ws, "watch_devices_on_bus", lambda known_paths=None: [])
+    view = ws._direct_hub_view(cfg, {"S1": "device"}, {"S1": "1-1"}, {})
+    row = view["ports"][0]
+    assert row["machine"] == "narwhal", "the registry overrode the config map"

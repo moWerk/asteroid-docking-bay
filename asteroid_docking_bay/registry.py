@@ -90,6 +90,17 @@ class Registry:
             if fresh or changes or now - self._last_write >= self.min_write_interval:
                 self._flush_locked(now)
 
+    def codename(self, serial: "str | None") -> "str | None":
+        """Just this serial's last-known codename, or None. A cheap single-
+        field read -- no deep copy of the whole record (and its Log) -- for the
+        status path, which names a directly-connected watch from here when the
+        config map does not have it yet."""
+        if not serial:
+            return None
+        with self._lock:
+            rec = self._data.get(serial)
+            return (rec.get("fields") or {}).get("codename") if rec else None
+
     def get(self, serial: "str | None") -> "dict | None":
         """A deep copy of one watch's full record (incl. Log), or None."""
         if not serial:

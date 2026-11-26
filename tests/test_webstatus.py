@@ -1072,6 +1072,12 @@ def test_a_codename_on_two_ports_does_not_light_up_both(monkeypatch, tmp_path):
         {"location": "1-3.4", "ports": [1, 2, 3, 4], "power": {}, "connect": {}}])
     monkeypatch.setattr(ws, "_soft_remap", lambda cfg, online: None)
     monkeypatch.setattr(ws, "port_device_info", lambda loc, port: None)
+    # The ssh-mode probe reads real sysfs; without this it picks up whatever is
+    # actually in developer mode on the rig (the porting session had a watch in
+    # ssh mode at 1-3.2), and the stale 1-3:2 row then reads "ssh" instead of
+    # None. This test is about the codename/geometry trap, not usb mode, so pin
+    # the probe to None and keep it independent of the live bus.
+    monkeypatch.setattr(ws, "_sysfs_usb_mode", lambda path: None)
     # THE GEOMETRY CACHE IS THE TRAP: it is keyed by serial, and the entry
     # recorded while another watch was enumerating under the bogus string
     # carries THAT watch's machine name. Stubbing this to None would hide half

@@ -1579,7 +1579,12 @@ def _direct_hub_view(cfg: dict, devices: dict, adb_paths: dict,
 
     rows: list[dict] = []
     for serial, path in found.items():
-        machine = find_codename_for_serial(cfg, serial)
+        # The config map first, then the fleet registry: a watch a-d-b has
+        # seen before knows its own codename there, so a directly-connected
+        # watch that was never mapped to a port (wren, which enumerates only on
+        # a direct port) is named instead of showing its raw serial. Both are
+        # in-memory reads, so the "no hardware" promise of this view holds.
+        machine = find_codename_for_serial(cfg, serial) or registry.codename(serial)
         cached = last_seen.get(serial) or {}
         state = _resolve_conn_state(
             _adb_state(devices, serial) if serial in devices else None,
