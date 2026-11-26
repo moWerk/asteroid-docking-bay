@@ -696,8 +696,14 @@ def test_power_toggle_uses_the_orbit_eclipse_states(tmp_path):
                  "const tel={classList:{_s:new Set(),add(c){this._s.add(c);},remove(){},"
                  "toggle(){},contains(c){return this._s.has(c);}}};"
                  "pwrGo(tel,'1-2:2');"
-                 "console.log(JSON.stringify({html,pending:tel.classList.contains('pending'),url}));"
-                 "\nprocess.exit(0);\n")
+                 # Flush before exit: pwrGo's fetch stub returns a
+                 # never-resolving promise (an in-flight request), which leaves
+                 # a pending handle so process.exit(0) can truncate the buffered
+                 # stdout write — the test then read empty output ~half the
+                 # time. Exit from the write callback, after the line is out.
+                 "process.stdout.write("
+                 "JSON.stringify({html,pending:tel.classList.contains('pending'),url})+'\\n',"
+                 "()=>process.exit(0));\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     out = json.loads(r.stdout.strip().splitlines()[-1])
