@@ -513,3 +513,28 @@ def test_a_watch_that_owns_its_image_is_unchanged(monkeypatch, tmp_path):
         "b  asteroid-image-lenok.rootfs.ext4\n")
     assert "/nightlies/lenok/" in joined, joined[:200]
     assert "asteroid-image-lenok.rootfs.ext4" in joined
+
+
+def test_switch_to_adb_needs_proof_the_session_ran(monkeypatch):
+    """A preauth SSH failure — a 3.10 kernel without the getrandom backport
+    kills sshd's preauth child with SIGSYS — connects on TCP but never runs a
+    command. The old code read the absence of usb-moded's own error text as
+    success and reported ok while the watch stayed in developer_mode (wren,
+    nemo, 2026-11-28). A sentinel echoed before the switch is the proof the
+    session authenticated and ran."""
+    import asteroid_docking_bay.fastboot as fb
+    monkeypatch.setattr(fb, "_detect_rndis", lambda ip, timeout=1.0: True)
+    monkeypatch.setattr(fb, "_clear_ssh_known_hosts", lambda ip: None)
+
+    # preauth death: TCP open, but the command never ran -> no sentinel
+    monkeypatch.setattr(fb, "_run",
+                        lambda cmd, **k: (255, "", "Connection closed by 192.168.22.37 port 22"))
+    d = fb._switch_ssh_to_adb("192.168.22.37")
+    assert d["ok"] is False and "not delivered" in d["error"].lower(), d
+
+    # authenticated and ran: the sentinel comes back even though the switch
+    # then severs the link (a non-zero return is expected on success).
+    monkeypatch.setattr(fb, "_run",
+                        lambda cmd, **k: (255, "__ADB_SWITCH_REACHED__\n", "client_loop: send disconnect"))
+    d = fb._switch_ssh_to_adb("192.168.22.37")
+    assert d["ok"] is True, d

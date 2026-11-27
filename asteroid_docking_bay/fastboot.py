@@ -465,14 +465,31 @@ def _switch_ssh_to_adb(ip: str = "192.168.2.15") -> dict:
     if not _detect_rndis(ip):
         return {"ok": False, "error": f"no SSH watch reachable at {ip}"}
     _clear_ssh_known_hosts(ip)   # a fresh flash rotates the host key
+    # A sentinel echoed BEFORE the switch proves the session authenticated and
+    # a shell ran. The switch itself drops the link (the gadget re-enumerates),
+    # so a non-zero return and a severed connection are EXPECTED on success --
+    # which is exactly what a failed login looks like too. On a 3.10 kernel
+    # without the getrandom backport, sshd's preauth child dies with SIGSYS:
+    # TCP connects, the mode never changes, and the old code read the absence
+    # of usb-moded's own error text as success and reported ok while the watch
+    # stayed in developer_mode (wren, nemo; meta-smartwatch 2026-11-28). The
+    # sentinel reaches the host before the switch severs the link, so its
+    # ABSENCE means the command never ran -- not delivered.
     _, out, err = _run(
         "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "
-        f"root@{ip} usb_moded_util -s adb_mode", check=False, timeout=15)
+        f"root@{ip} 'echo __ADB_SWITCH_REACHED__; usb_moded_util -s adb_mode'",
+        check=False, timeout=15)
+    if "__ADB_SWITCH_REACHED__" not in (out or ""):
+        return {"ok": False,
+                "error": f"SSH connected at {ip} but the session never "
+                         f"authenticated or ran a command (preauth failure — "
+                         f"e.g. a kernel without the getrandom backport); the "
+                         f"switch was NOT delivered"}
     if _usb_moded_switch_failed(out, err):
         return {"ok": False,
                 "error": "usb-moded refused the switch on this watch (its "
                          "service may be down)"}
-    return {"ok": True}
+    return {"ok": True, "via": "ssh"}
 
 
 def _usb_moded_switch_failed(out: str, err: str) -> bool:

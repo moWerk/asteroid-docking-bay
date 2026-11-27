@@ -915,9 +915,27 @@ def _ssh_switch_adb(args):
         return {"ok": False, "busy": lock.get("kind"),
                 "error": f"this watch is held: {oplock.describe(lock)} — "
                          f"switching its USB mode would break that operation"}
-    # Prefer the address the watch demonstrably answers on (allocated, or the
-    # shared default when its link wins the route); fall back to the assigned
-    # address so an unreachable watch still yields the helper's clean error.
+    # Prefer ADB when the watch answers it. The prototype's developer_mode
+    # carries adb alongside the network function, and adb avoids the sshd
+    # getrandom gap that makes the ssh path silently no-op on 3.10 kernels
+    # (wren, nemo; meta-smartwatch 2026-11-28). systemd-run detaches the switch
+    # so the command is not killed when the gadget re-enumerates and adb drops.
+    # rc 0 here proves adb authenticated and the watch accepted the unit --
+    # delivery, which the ssh path could only fake.
+    if serial and _adb_state(adb_devices(), serial) == "device":
+        rc, out, err = _run(
+            f"adb -s {serial} shell systemd-run usb_moded_util -s adb_mode",
+            check=False, timeout=15)
+        if rc == 0 and not _usb_moded_switch_failed(out, err):
+            return {"ok": True, "via": "adb"}
+        # adb reached the watch but the switch was refused: say so rather than
+        # falling through to ssh, which on these kernels cannot do better.
+        return {"ok": False,
+                "error": "the watch answers ADB but usb-moded refused the "
+                         "switch to adb_mode" + (f": {(err or out).strip()[:120]}"
+                                                 if (err or out).strip() else "")}
+    # No adb: the old-gadget / RNDIS path. Reach it over SSH at the address it
+    # demonstrably answers on, falling back to the assigned one.
     ip = (ssh_reach_ip(cfg, serial)
           or (ssh_ip_for_serial(cfg, serial) if serial else None)
           or USB_SSH_IP)

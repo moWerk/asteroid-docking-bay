@@ -2230,3 +2230,45 @@ def test_port_clear_is_refused_while_an_op_owns_the_slot(monkeypatch):
                         lambda loc, port: {"ok": False, "error": "a dump owns this port"})
     d = ro.DISPATCH._data["port.clear"]({"loc": "1-3.4", "port": 4})
     assert d["ok"] is False and not saved, "cleared a seat under a running op"
+
+
+def test_switch_adb_prefers_adb_when_the_watch_answers_it(monkeypatch):
+    """The prototype's developer_mode carries adb alongside the network
+    function, and adb dodges the sshd getrandom gap. When the watch answers
+    adb, the switch goes over adb (systemd-run), not ssh, and ssh is never
+    touched (meta-smartwatch 2026-11-28)."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "load_config", lambda: {"ssh_ips": {}})
+    monkeypatch.setattr(ro, "oplock", type("O", (), {"held": staticmethod(lambda c, s: None)}))
+    monkeypatch.setattr(ro, "_offers_both_links", lambda s: False)
+    monkeypatch.setattr(ro, "adb_devices", lambda: {"S1": {"status": "device"}})
+    monkeypatch.setattr(ro, "_adb_state", lambda devs, s: "device")
+    ssh_called = []
+    monkeypatch.setattr(ro, "_switch_ssh_to_adb",
+                        lambda ip: ssh_called.append(ip) or {"ok": True})
+    cmds = []
+    monkeypatch.setattr(ro, "_run",
+                        lambda cmd, **k: (cmds.append(cmd), (0, "Running as unit: run-x.service", ""))[1])
+
+    d = ro.DISPATCH._data["ssh.switch_adb"]({"serial": "S1"})
+    assert d["ok"] is True and d.get("via") == "adb", d
+    assert any("systemd-run usb_moded_util -s adb_mode" in c for c in cmds), cmds
+    assert not ssh_called, "fell back to ssh though the watch answered adb"
+
+
+def test_switch_adb_over_adb_reports_a_refusal(monkeypatch):
+    """When adb reaches the watch but usb-moded refuses, say so — do not fall
+    through to ssh, which on these kernels cannot do better."""
+    import asteroid_docking_bay.rpcops as ro
+    monkeypatch.setattr(ro, "load_config", lambda: {"ssh_ips": {}})
+    monkeypatch.setattr(ro, "oplock", type("O", (), {"held": staticmethod(lambda c, s: None)}))
+    monkeypatch.setattr(ro, "_offers_both_links", lambda s: False)
+    monkeypatch.setattr(ro, "adb_devices", lambda: {"S1": {"status": "device"}})
+    monkeypatch.setattr(ro, "_adb_state", lambda devs, s: "device")
+    ssh_called = []
+    monkeypatch.setattr(ro, "_switch_ssh_to_adb", lambda ip: ssh_called.append(ip) or {"ok": True})
+    monkeypatch.setattr(ro, "_run", lambda cmd, **k: (0, "an error occured", ""))
+
+    d = ro.DISPATCH._data["ssh.switch_adb"]({"serial": "S1"})
+    assert d["ok"] is False and "refused" in d["error"], d
+    assert not ssh_called
