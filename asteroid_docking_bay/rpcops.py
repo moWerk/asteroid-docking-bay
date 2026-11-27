@@ -1567,6 +1567,48 @@ def _port_poweroff(args):
     return {"ok": True, "adb_shutdown": graceful, "confirmed": confirmed}
 
 
+@DISPATCH.op("port.clear")
+def _port_clear(args):
+    """Unbind the watch from a port — the manual "I moved this watch off this
+    seat" action. Removes ports[port] and port_serials[port] for this loc:port,
+    so the row goes empty and whatever enumerates here next is onboarded fresh.
+
+    Actuates nothing: no power change, the watch itself is untouched. It only
+    edits the seat map.
+
+    This exists because the automatic swap detection cannot cover every case.
+    It remaps when a DIFFERENT serial enumerates at a bound seat, so it needs
+    the replacement to come up on the bus. A watch that does not enumerate --
+    bad contact, flat battery, a dead cradle -- leaves the stale binding in
+    place with no live serial to correct it, and the row keeps showing the
+    watch that left (moWerk moved nemo off and firefish, which was not
+    enumerating, replaced it; 2026-11-27). This is the operator's override for
+    exactly that: name what you see, not what a-d-b last saw.
+
+    Refused while an operation owns the slot -- clearing a seat under a running
+    dump or flash would orphan it -- but takes no lock of its own.
+    """
+    loc, port = args["loc"], args["port"]
+    busy = _refuse_if_busy(loc, port)
+    if busy:
+        return busy
+    with _config_lock:
+        cfg = load_config()
+        hub = next((h for h in cfg.get("hubs", []) if h["location"] == loc), None)
+        if hub is None:
+            return {"ok": False, "error": f"no hub mapped at {loc}"}
+        port_str = str(port)
+        had = (hub.get("ports") or {}).get(port_str)
+        if had is None:
+            return {"ok": True, "noop": True,
+                    "message": "this seat was already empty"}
+        hub.get("ports", {}).pop(port_str, None)
+        hub.get("port_serials", {}).pop(port_str, None)
+        save_config(cfg)
+    log.info("%s:%s: seat cleared by operator (was %s)", loc, port, had)
+    return {"ok": True, "cleared": had, "loc": loc, "port": port}
+
+
 @DISPATCH.op("port.declare_shelved")
 def _port_declare_shelved(args):
     """Record, on mo's word, that this watch is safely powered down.

@@ -104,6 +104,7 @@ Deliberately mirrors the existing `/api/*` routes and module seams — the
 | `ops.manifest` | the op list itself: name, kind and one-line summary for every op THIS backend registers. Read-only and grants nothing — it names only ops the caller could already invoke. Served to callers as `GET /api/ops`, where the frontend merges it with its own HTTP route table. It is an op rather than a frontend read of the local table on purpose: in split mode the frontend imports `rpcops` too, so reading its own copy would describe the container that parses HTTP rather than the one that executes ops, and the two can be different versions |
 | `port.set / port.cycle` | usb.set_power / cycle |
 | `port.declare_shelved` | record, per watch on the operator's word, that a watch a-d-b could not observe going down is safely powered off (bookkeeping only, actuates nothing) |
+| `port.clear` | unbind the watch from a seat — the manual "I moved this watch off this port" action, for when the replacement does not enumerate so the automatic swap detection cannot fire. Edits the seat map only; actuates nothing, powers nothing. Refused while an op owns the slot |
 | `onboard.guide` | hardware read-backs for the guided onboarding: preflight checks, watches currently on the bus, hub tree grouped into physical boxes (read-only) |
 | `watch.poweroff / reboot / bootloader` | existing endpoints |
 | `port.recovery / port.continue` | boot recovery / resume boot chain (fastboot) |

@@ -109,7 +109,7 @@ def test_registered_ops_are_the_documented_contract():
         "watch.buzz", "watch.screen", "watch.screenshot", "screen.release_all",
         "watch.backup", "watch.restore", "watch.diagnostics", "watch.fbreport",
         "watch.image", "ssh.switch_adb", "watch.switch_ssh",
-        "port.set", "port.cycle", "port.poweroff", "port.declare_shelved", "port.reboot",
+        "port.set", "port.cycle", "port.poweroff", "port.declare_shelved", "port.clear", "port.reboot",
         "port.bootloader", "port.recovery", "port.continue",
         "port.hide", "hub.hide", "hub.rename", "socket.set",
         "charge.start", "charge.stop", "prefs.set_usb_mode",
@@ -2187,3 +2187,46 @@ def test_an_absent_marker_keeps_the_destructive_switch_guard(monkeypatch):
         out, switched = _proto_switch(monkeypatch, marker, {"ok": True})
         assert out.get("noop") is True, (marker, out)
         assert not switched, (marker, "switched an old-gadget watch")
+
+
+def test_port_clear_unbinds_the_seat(monkeypatch):
+    """The manual "I moved this watch off this port" action. nemo was moved
+    off and firefish — not enumerating — replaced it, so the automatic swap
+    detection could not fire and the row kept showing nemo (moWerk,
+    2026-11-27). Clearing the seat unbinds it; it actuates nothing."""
+    import asteroid_docking_bay.rpcops as ro
+    store = {"hubs": [{"location": "1-3.4", "ports": {"4": "nemo", "3": "sol"},
+                       "port_serials": {"4": "604KPMZ003491", "3": "SOLSER"}}]}
+    monkeypatch.setattr(ro, "load_config", lambda: store)
+    monkeypatch.setattr(ro, "save_config", lambda c: store.update(c))
+    monkeypatch.setattr(ro, "_refuse_if_busy", lambda loc, port: None)
+
+    d = ro.DISPATCH._data["port.clear"]({"loc": "1-3.4", "port": 4})
+    assert d["ok"] is True and d["cleared"] == "nemo", d
+    hub = store["hubs"][0]
+    assert "4" not in hub["ports"] and "4" not in hub["port_serials"], "seat not cleared"
+    # the neighbour is untouched
+    assert hub["ports"]["3"] == "sol" and hub["port_serials"]["3"] == "SOLSER"
+
+
+def test_port_clear_is_a_noop_on_an_empty_seat(monkeypatch):
+    import asteroid_docking_bay.rpcops as ro
+    store = {"hubs": [{"location": "1-3.4", "ports": {}, "port_serials": {}}]}
+    monkeypatch.setattr(ro, "load_config", lambda: store)
+    monkeypatch.setattr(ro, "save_config", lambda c: None)
+    monkeypatch.setattr(ro, "_refuse_if_busy", lambda loc, port: None)
+    d = ro.DISPATCH._data["port.clear"]({"loc": "1-3.4", "port": 4})
+    assert d["ok"] is True and d.get("noop") is True, d
+
+
+def test_port_clear_is_refused_while_an_op_owns_the_slot(monkeypatch):
+    """Clearing a seat under a running dump or flash would orphan it."""
+    import asteroid_docking_bay.rpcops as ro
+    saved = []
+    monkeypatch.setattr(ro, "load_config", lambda: {"hubs": [
+        {"location": "1-3.4", "ports": {"4": "nemo"}, "port_serials": {"4": "S"}}]})
+    monkeypatch.setattr(ro, "save_config", lambda c: saved.append(c))
+    monkeypatch.setattr(ro, "_refuse_if_busy",
+                        lambda loc, port: {"ok": False, "error": "a dump owns this port"})
+    d = ro.DISPATCH._data["port.clear"]({"loc": "1-3.4", "port": 4})
+    assert d["ok"] is False and not saved, "cleared a seat under a running op"

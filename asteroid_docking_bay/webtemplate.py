@@ -794,7 +794,10 @@ function pwrMenu(ev,slot,on,noSw,codename,live){
   openMenu(ev,menuIdent(codename,slot,'port')+
     `<div class="menu-hd">the PORT, not the watch &mdash; VBUS only</div>`+
     grpBox(cut+mi('rb','Cycle power',`doCy('${slot}')`,noSw,'this port cannot switch its own power'))+
-    `<div class="menu-hd heldnote">cutting VBUS does not stop a running watch &mdash; it keeps draining on battery. Halt it from the power dot first.</div>`);
+    `<div class="menu-hd heldnote">cutting VBUS does not stop a running watch &mdash; it keeps draining on battery. Halt it from the power dot first.</div>`+
+    (codename?grpHd('Seat')+
+      grpBox(mi('rb',`Moved ${esc(codename)} off &mdash; clear this seat`,`clearSeat('${jsq(slot)}','${jsq(codename)}')`))+
+      `<div class="menu-hd heldnote">unbinds ${esc(codename)} from this port so the next watch here is onboarded fresh. Use it when you physically moved the watch and the replacement has not shown up on its own. Nothing is powered or erased &mdash; reversible.</div>`:''));
 }
 function pwrGo(el,slot,want){
   if(el&&el.classList.contains('pending'))return;
@@ -1230,6 +1233,13 @@ function menuShelve(ev,slot,codename){
     `<div class="menu-hd">correct the state a-d-b could not observe</div>`+
     grpBox(mi('po','Actually powered down &mdash; mark shelved',`shelveGo('${jsq(slot)}')`))+
     `<div class="menu-hd heldnote">recorded on your word, not measured. It clears itself: powering the port on, or simply seeing the watch live again, drops the claim.</div>`);
+}
+function clearSeat(slot,codename){
+  fetch('/api/clear-port/'+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok)toast(d.noop?'this seat was already empty':'cleared '+(d.cleared||codename||'the watch')+' from this seat \u2014 the next watch here is onboarded fresh');
+    else toastErr('could not clear the seat: '+(d.error||'unknown'));
+    refresh();
+  }).catch(()=>toastErr('could not reach the rig to clear the seat'));
 }
 function shelveGo(slot){
   fetch('/api/declare-shelved/'+_api(slot),{method:'POST'}).then(r=>r.json()).then(d=>{

@@ -1691,8 +1691,12 @@ def test_control_center_weather_section(tmp_path):
                  "const withWx=global.__els['cc'].innerHTML;"
                  "wxData={ok:true,location:null,days:[]};"
                  "renderControl({serial:'S9',kernel:'3.18',os:'AsteroidOS'});"
-                 "console.log(JSON.stringify({withWx,noLoc:global.__els['cc'].innerHTML}));"
-                 "process.exit(0);\n")
+                 # Flush before exit (see the power-toggle test): a large
+                 # innerHTML payload plus process.exit(0) can truncate the
+                 # piped stdout under suite load, and json.loads then saw empty.
+                 "process.stdout.write("
+                 "JSON.stringify({withWx,noLoc:global.__els['cc'].innerHTML})+'\\n',"
+                 "()=>process.exit(0));\n")
     r = subprocess.run(["node", str(h)], capture_output=True, text=True, timeout=25)
     assert r.returncode == 0, r.stderr[:400]
     o = json.loads(r.stdout.strip().splitlines()[-1])
@@ -3744,3 +3748,15 @@ def test_a_refused_power_command_is_shown():
     # ...and the network-failure path must speak too, or a rig that cannot be
     # reached looks identical to a port that simply did not move.
     assert body.count("toastErr") >= 2, body[-400:]
+
+
+def test_clear_seat_is_wired_to_its_route():
+    """The manual port-clear control posts to /api/clear-port and is only
+    offered when a watch is mapped (clearing an empty seat is pointless)."""
+    assert "function clearSeat(" in JS
+    body = JS.split("function clearSeat(", 1)[1].split("\nfunction ", 1)[0]
+    assert "/api/clear-port/" in body, "clearSeat does not hit the route"
+    # the menu offers it only for a named seat
+    pm = JS.split("function pwrMenu(", 1)[1].split("\nfunction ", 1)[0]
+    assert "clearSeat(" in pm, "the port menu never offers clear-seat"
+    assert "codename?" in pm.replace(" ", ""), "clear-seat is offered on an empty seat"
