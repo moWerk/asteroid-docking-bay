@@ -131,6 +131,23 @@ The background cache warmer (needs both `usb` and `fastboot`) lives in
 `ops`, with the operations: whichever process runs the ops — monolithic
 serve, or the split backend — starts exactly one warmer.
 
+The warmer also runs the **volatile-PPPS reconcile**
+(`_maybe_reshelve_repowered`). The RTS5411 A16 hubs do not keep per-port
+VBUS coherent across their own re-enumeration: a hub reset restores power to
+every port and boots the shelved watches, while a-d-b's bookkeeping still
+says off. a-d-b records its shelve intent durably as `parked_ts` (set at
+every deliberate port cut, cleared only by a deliberate power-on — unlike
+`safe_off_ts`, which self-clears the moment a re-powered watch is seen live).
+The reconcile is gated on an OBSERVED hub re-enumeration (the hub's sysfs
+`devnum` changing), never on bare "parked yet powered": the A16's physical
+buttons also restore VBUS, with no re-enumeration, and re-shelving a port the
+operator just buttoned on is the fight-the-operator failure. On a
+re-enumeration it queues that hub's parked watches and re-shelves them one per
+cycle (`_end_port`), giving each a boot window to reach adb for a graceful
+poweroff first. The passive side — the amber "re-powered" row badge driven by
+`webstatus._repowered_since_parked` — flags the gap whatever its cause
+(buttons included) and never actuates. Off via config `auto_reshelve=false`.
+
 ## Where the classes are — and where they aren't
 
 Classes were introduced where there is real per-instance state or identity:

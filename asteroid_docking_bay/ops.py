@@ -407,6 +407,103 @@ def _maybe_realign_stray_ssh(cfg: dict) -> None:
                      daemon=True).start()
 
 
+# ── Volatile-PPPS reconcile: re-shelve ports a hub re-powered behind us ────────
+# A known failure of the RTS5411 A16 hubs: the hub re-enumerates and comes back
+# with every port's VBUS restored, booting the shelved watches, while a-d-b's
+# bookkeeping still says off. parked_ts records the shelve intent durably (see
+# webstatus); here a-d-b ACTS on the gap by re-shelving what it itself parked.
+#
+# Gated on an OBSERVED hub re-enumeration (devnum change), never on bare "parked
+# yet powered": the A16's physical per-port buttons also restore VBUS, with no
+# re-enumeration, and re-shelving a port moWerk just buttoned on is the exact
+# fight-the-operator failure. A button press is left to the passive re-power
+# flag; only a hub re-enumeration — which moWerk cannot cause one port at a
+# time — actuates. Off via config auto_reshelve=false (his kill switch).
+_hub_devnum: "dict[str, int]" = {}
+_reshelve_pending: "dict[str, float]" = {}       # serial -> queued-at
+RESHELVE_BOOT_WINDOW = 300.0                      # let a re-powered watch reach
+                                                  # adb (so the shutdown is
+                                                  # graceful) before a raw cut
+
+
+def _hub_devnum_now(loc: str) -> "int | None":
+    """The hub's current USB device number, or None if unreadable. A plain
+    sysfs attribute read — no USB transaction, so it never renegotiates these
+    flaky hubs the way a per-port `disable` read does (the reason the onboarding
+    rework stopped polling empty ports)."""
+    try:
+        return int((Path(_SYSFS_USB) / loc / "devnum").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _queue_reshelve_after_reenum(cfg: dict) -> None:
+    """Detect each configured hub re-enumerating and queue its parked watches.
+    The FIRST sighting of a hub only baselines its devnum — no reconcile — so a
+    service restart (which re-baselines every hub) can never mass-actuate."""
+    for hub in cfg.get("hubs", []):
+        loc = hub.get("location")
+        if not loc:
+            continue
+        dn = _hub_devnum_now(loc)
+        if dn is None:
+            continue                      # transient; keep the old baseline
+        prev = _hub_devnum.get(loc)
+        _hub_devnum[loc] = dn
+        if prev is None or dn == prev:
+            continue
+        log.warning("hub %s re-enumerated (devnum %s->%s) — re-checking its "
+                    "parked ports for a volatile-PPPS re-power", loc, prev, dn)
+        for port_str, serial in (hub.get("port_serials") or {}).items():
+            if serial and (last_seen.get(serial) or {}).get("parked_ts"):
+                _reshelve_pending.setdefault(serial, time.time())
+
+
+def _reshelve_one(cfg: dict) -> None:
+    """Re-shelve at most ONE queued watch per call — the hard-line serialize
+    rule, and the powered count falls one port at a time. A watch not yet
+    actionable (still booting, or held by an op) stays queued for a later cycle;
+    one moWerk has since powered on (parked_ts cleared) is dropped unactioned."""
+    on_adb = set(adb_devices() or {})
+    now = time.time()
+    for serial, since in list(_reshelve_pending.items()):
+        where = loc_port_for_serial(cfg, serial)
+        ls = last_seen.get(serial) or {}
+        if not where or not ls.get("parked_ts"):
+            _reshelve_pending.pop(serial, None)      # unmapped, or un-parked
+            continue
+        loc, port = where
+        slot = f"{loc}:{port}"
+        if oplock.held(cfg, serial) or active_op_on_slot(slot):
+            continue                                  # an op owns it — leave it
+        cc = charge_config(cfg)
+        if serial in on_adb:
+            log.warning("re-shelving %s (%s): hub re-powered it and it booted "
+                        "to adb — graceful poweroff", serial, slot)
+            _end_port(loc, port, serial, cc, "re-shelve: hub re-enumerated")
+            _reshelve_pending.pop(serial, None)
+            return
+        if now - since > RESHELVE_BOOT_WINDOW:
+            # Never reached adb in the boot window: an offmode-charge watch or a
+            # 0afe charging fallback that will not boot. Cut VBUS — _end_port
+            # leaves the state honestly unmarked when it cannot reach the watch.
+            log.warning("re-shelving %s (%s): hub re-powered it, no adb after "
+                        "%ds — cutting VBUS", serial, slot, int(now - since))
+            _end_port(loc, port, serial, cc, "re-shelve: hub re-enumerated (no adb)")
+            _reshelve_pending.pop(serial, None)
+            return
+        # else: still inside the boot window — wait for adb to come up.
+
+
+def _maybe_reshelve_repowered(cfg: dict) -> None:
+    """The volatile-PPPS active reconcile. moWerk asked for it after a hub reset
+    re-powered half the A16 unnoticed; off via config auto_reshelve=false."""
+    if not cfg.get("auto_reshelve", True):
+        return
+    _queue_reshelve_after_reenum(cfg)
+    _reshelve_one(cfg)
+
+
 def _background_warmer() -> None:
     """Background daemon feeding the two slow caches so the status path never
     blocks: usb's port-power cache (a `disable` read is a slow, variable USB
@@ -430,6 +527,7 @@ def _background_warmer() -> None:
             if not bus_busy:
                 _maybe_realign_stray_ssh(cfg)
                 _warm_port_power(cfg)
+                _maybe_reshelve_repowered(cfg)
                 _maybe_mirror_to_orbit(cfg)
             # NOTE: the warmer no longer polls EMPTY ports. Reading an empty
             # port's `disable` attr is slow (hangs for seconds on a powered-down

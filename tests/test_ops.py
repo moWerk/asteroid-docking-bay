@@ -1204,3 +1204,123 @@ def test_end_port_records_the_parked_intent(monkeypatch):
     cfg = types.SimpleNamespace(graceful_poweroff=False)
     ops._end_port("1-3", 1, "SER", cfg, "test")
     assert "parked_ts" in marks.get("SER", {}), marks
+
+
+# ── volatile-PPPS active reconcile ────────────────────────────────────────────
+
+def _reset_reconcile(ops):
+    ops._hub_devnum.clear()
+    ops._reshelve_pending.clear()
+
+
+def test_reconcile_baselines_then_queues_on_reenum(monkeypatch):
+    """First sighting of a hub only baselines its devnum (no queue, so a service
+    restart cannot mass-actuate); a devnum CHANGE queues its parked watches."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    cfg = {"hubs": [{"location": "1-3.3", "port_serials": {"1": "S1", "2": "S2"}}]}
+    monkeypatch.setattr(ops.last_seen, "get", lambda s: {"parked_ts": 1.0})
+    dn = {"v": 5}
+    monkeypatch.setattr(ops, "_hub_devnum_now", lambda loc: dn["v"])
+    ops._queue_reshelve_after_reenum(cfg)               # first: baseline only
+    assert ops._reshelve_pending == {} and ops._hub_devnum["1-3.3"] == 5
+    ops._queue_reshelve_after_reenum(cfg)               # unchanged: still none
+    assert ops._reshelve_pending == {}
+    dn["v"] = 6
+    ops._queue_reshelve_after_reenum(cfg)               # changed: queue parked
+    assert set(ops._reshelve_pending) == {"S1", "S2"}
+
+
+def test_reconcile_only_queues_parked_watches(monkeypatch):
+    """A re-enumeration queues ONLY ports a-d-b parked, never a watch that was
+    legitimately up (no parked_ts) — those are not a-d-b's to power off."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    cfg = {"hubs": [{"location": "1-3.3", "port_serials": {"1": "S1", "2": "S2"}}]}
+    monkeypatch.setattr(ops.last_seen, "get",
+                        lambda s: {"parked_ts": 1.0} if s == "S1" else {})
+    monkeypatch.setattr(ops, "_hub_devnum_now", lambda loc: 5)
+    ops._queue_reshelve_after_reenum(cfg)               # baseline
+    monkeypatch.setattr(ops, "_hub_devnum_now", lambda loc: 7)
+    ops._queue_reshelve_after_reenum(cfg)               # change
+    assert set(ops._reshelve_pending) == {"S1"}
+
+
+def _wire_reshelve(monkeypatch, ops, *, on_adb, parked=True, held=None, op=None):
+    monkeypatch.setattr(ops.last_seen, "get",
+                        lambda s: {"parked_ts": 1.0} if parked else {})
+    monkeypatch.setattr(ops, "loc_port_for_serial", lambda c, s: ("1-3.3", 1))
+    monkeypatch.setattr(ops, "adb_devices", lambda: on_adb)
+    monkeypatch.setattr(ops.oplock, "held", lambda c, s: held)
+    monkeypatch.setattr(ops, "active_op_on_slot", lambda slot: op)
+    monkeypatch.setattr(ops, "charge_config", lambda c: object())
+    ended = {}
+    monkeypatch.setattr(ops, "_end_port",
+                        lambda loc, port, serial, cc, reason: ended.update(
+                            serial=serial, reason=reason))
+    return ended
+
+
+def test_reconcile_reshelves_adb_reachable_gracefully(monkeypatch):
+    """A re-powered watch that booted to adb is re-shelved via _end_port (which
+    delivers the graceful poweroff) and dequeued; one per cycle."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"})
+    ops._reshelve_pending["S1"] = 1.0
+    ops._reshelve_one({})
+    assert ended.get("serial") == "S1"
+    assert "S1" not in ops._reshelve_pending
+
+
+def test_reconcile_waits_within_boot_window_then_cuts(monkeypatch):
+    """A re-powered watch not yet on adb is given RESHELVE_BOOT_WINDOW to come up
+    (so the shutdown can be graceful) and is NOT cut mid-boot; past the window —
+    an offmode-charge / 0afe watch that will not boot — it is cut."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={})      # never on adb
+    now = 10_000.0
+    monkeypatch.setattr(ops.time, "time", lambda: now)
+    ops._reshelve_pending.clear(); ops._reshelve_pending["S1"] = now - 10
+    ops._reshelve_one({})
+    assert not ended and "S1" in ops._reshelve_pending       # within window: wait
+    ops._reshelve_pending.clear()
+    ops._reshelve_pending["S1"] = now - ops.RESHELVE_BOOT_WINDOW - 1
+    ops._reshelve_one({})
+    assert ended.get("serial") == "S1" and "S1" not in ops._reshelve_pending
+
+
+def test_reconcile_leaves_op_held_watch_queued(monkeypatch):
+    """An op owning the watch (oplock or an active slot op) is never actuated
+    under — the watch stays queued for a later cycle."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"}, held="charge")
+    ops._reshelve_pending["S1"] = 1.0
+    ops._reshelve_one({})
+    assert not ended and "S1" in ops._reshelve_pending
+
+
+def test_reconcile_drops_a_watch_powered_on_since(monkeypatch):
+    """A queued watch moWerk has since powered on (parked_ts cleared) is dropped
+    unactioned — the reconcile must not fight a deliberate power-on."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"}, parked=False)
+    ops._reshelve_pending["S1"] = 1.0
+    ops._reshelve_one({})
+    assert not ended and "S1" not in ops._reshelve_pending
+
+
+def test_reconcile_disabled_by_config_flag(monkeypatch):
+    """auto_reshelve=false is moWerk's kill switch: neither detect nor act."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    called = {}
+    monkeypatch.setattr(ops, "_queue_reshelve_after_reenum", lambda c: called.update(q=1))
+    monkeypatch.setattr(ops, "_reshelve_one", lambda c: called.update(r=1))
+    ops._maybe_reshelve_repowered({"auto_reshelve": False})
+    assert not called
+    ops._maybe_reshelve_repowered({})                    # default on
+    assert called.get("q") and called.get("r")
