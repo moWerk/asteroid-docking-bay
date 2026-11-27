@@ -22,7 +22,7 @@ import threading
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from .adb import adb_devices, is_a_serial
+from .adb import adb_devices, is_a_codename, is_a_serial
 from .util import log, _run
 
 
@@ -750,9 +750,15 @@ def find_codename_for_serial(cfg: dict, serial: str) -> str | None:
 
 
 def find_codename_for_loc_port(cfg: dict, loc: str, port: int) -> str | None:
+    # Validate on the way out, not just on the way in. A codename that leaked
+    # noise into itself -- catfish's seat held a multi-line Android linker
+    # warning on 2026-11-27 -- is refused here so a value already in config
+    # cannot reach the UI or, worse, a shell command built from it. Same guard
+    # find_codename_for_serial applies to a poisoned serial.
     for hub in cfg.get("hubs", []):
         if hub["location"] == loc:
-            return hub.get("ports", {}).get(str(port))
+            stored = hub.get("ports", {}).get(str(port))
+            return stored if is_a_codename(stored) else None
     return None
 
 

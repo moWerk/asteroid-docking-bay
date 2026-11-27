@@ -549,3 +549,35 @@ def test_an_identity_file_holding_a_non_codename_is_refused(monkeypatch):
     shell = _codename_shell({"/etc/hw-release": "ID=(none)\n"},
                             getprop="pioneer")
     assert a.get_watch_codename("S", shell=shell) == "pioneer"
+
+
+def test_is_a_codename_rejects_leaked_noise():
+    """A codename is a single token; whitespace or shell-dangerous characters
+    mean noise leaked into the read. catfish's config entry became a multi-line
+    linker warning because the old gate only blocklisted a few literals
+    (2026-11-27)."""
+    from asteroid_docking_bay.adb import is_a_codename
+    assert is_a_codename("catfish")
+    assert is_a_codename("catfish_ext")
+    assert is_a_codename("belugaxl")
+    assert not is_a_codename("WARNING: linker ld.config\ncatfish")
+    assert not is_a_codename("foo bar")
+    assert not is_a_codename("sys=tempart")
+    assert not is_a_codename("")
+    assert not is_a_codename(None)
+    assert not is_a_codename("localhost")
+
+
+def test_getprop_codename_ignores_linker_warnings():
+    """On a hybris watch the shell can print linker warnings into stdout before
+    the value; the read must take the value, not the warnings."""
+    from asteroid_docking_bay.adb import get_watch_codename
+    noisy = ("WARNING: linker /system/etc/ld.config.txt:21: redefinition\n"
+             "WARNING: linker more\nsturgeon")
+
+    def shell(cmd):
+        if "getprop ro.product.device" in cmd:
+            return 0, noisy, ""
+        return 1, "", ""        # no asteroid-release / hw-release / os-release
+
+    assert get_watch_codename("S1", shell=shell) == "sturgeon"

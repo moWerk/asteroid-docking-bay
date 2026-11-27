@@ -169,8 +169,23 @@ NOT_A_CODENAME = frozenset({"", "(none)", "none", "localhost", "unknown"})
 
 
 def is_a_codename(value: "str | None") -> bool:
-    """Whether what a watch reported can be used as its identity."""
-    return bool(value) and value.strip().lower() not in NOT_A_CODENAME
+    """Whether what a watch reported can be used as its identity.
+
+    A codename is a single short token (catfish, sturgeon, belugaxl). It never
+    contains whitespace or shell-dangerous characters, so a value that does is
+    not a codename but noise that leaked into the read. On 2026-11-27 catfish's
+    config entry became a multi-line Android linker warning ending in
+    `catfish`, because the raw `getprop` output — warnings and all — passed
+    this gate, which only blocklisted a few literal strings. Rejecting the
+    impossible characters here covers every codename consumer at once, exactly
+    as is_a_serial does for serials.
+    """
+    if not value:
+        return False
+    value = value.strip()
+    if not value or value.lower() in NOT_A_CODENAME:
+        return False
+    return not any(c in value for c in _IMPOSSIBLE_IN_SERIAL)
 
 
 # Characters no device serial can contain, and which make a value dangerous to
@@ -246,7 +261,9 @@ def get_watch_codename(serial: str, shell=None) -> str | None:
     if rc == 0:
         for line in out.splitlines():
             if line.strip().startswith("VARIANT_ID="):
-                return line.split("=", 1)[1].strip("\"'")
+                value = line.split("=", 1)[1].strip("\"'")
+                if is_a_codename(value):
+                    return value
 
     # A Wear OS watch has neither file: it is Android. Its device codename is
     # the SAME name AsteroidOS uses (sturgeon, lenok, bass...), because the
@@ -254,8 +271,14 @@ def get_watch_codename(serial: str, shell=None) -> str | None:
     # directly. Tried before hostname because Android hostnames are usually
     # "localhost", which is refused below and would end the search early.
     rc, out, _ = run("getprop ro.product.device")
-    if rc == 0 and is_a_codename(out):
-        return out.strip()
+    if rc == 0:
+        # A hybris/Android shell can print linker warnings into stdout ahead of
+        # the value; take the last non-warning line so the warnings do not
+        # become the name (catfish, 2026-11-27).
+        val = next((ln.strip() for ln in reversed((out or "").splitlines())
+                    if ln.strip() and not ln.strip().startswith("WARNING")), "")
+        if is_a_codename(val):
+            return val
 
     # Last resort: hostname (often set to the codename on AsteroidOS).
     rc, out, _ = run("hostname")

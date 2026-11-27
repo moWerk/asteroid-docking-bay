@@ -1763,3 +1763,41 @@ def test_every_automatic_recovery_cycle_is_counted(monkeypatch):
     monkeypatch.setattr(ws, "uhubctl_cycle", lambda l, p: order.append("cycle"))
     ws._recovery_cycle("1-3", 1, "fake-power wedge")
     assert order == ["count", "cycle"], order
+
+
+def test_a_poisoned_stored_codename_does_not_render(monkeypatch):
+    """catfish's seat held a multi-line Android linker warning as its codename
+    on 2026-11-27 — read raw from the config into the row. A value that is not
+    a codename must not render and must never flow into a shell command built
+    from the row; the real name is recovered from the registry the watch is
+    known under (2026-11-27)."""
+    import asteroid_docking_bay.webstatus as w
+    from asteroid_docking_bay.registry import registry
+    registry.note("720EX91190639", source="test", codename="catfish")
+
+    poison = ("WARNING: linker /system/etc/ld.config.txt:21: redefinition\n"
+              "WARNING: linker x\ncatfish")
+    cfg = {"hubs": [{"location": "1-3.3", "ppps": True,
+                     "ports": {"2": poison},
+                     "port_serials": {"2": "720EX91190639"}}],
+           "serials": {}}
+    monkeypatch.setattr(w, "adb_devices", lambda: {})
+    monkeypatch.setattr(w, "adb_usb_paths", lambda d: {})
+    monkeypatch.setattr(w, "_fastboot_list", lambda: {})
+    monkeypatch.setattr(w, "_sysfs_hub_scan", lambda c: [
+        {"location": "1-3.3", "ports": [1, 2, 3, 4], "power": {}, "connect": {}}])
+    monkeypatch.setattr(w, "_soft_remap", lambda cfg, online: None)
+    monkeypatch.setattr(w, "port_device_info", lambda loc, port: None)
+    monkeypatch.setattr(w, "_sysfs_usb_mode", lambda path: None)
+    # No cached geometry: otherwise geometry.machine would mask the poison and
+    # the test would not exercise the codename guard at all (it masked a real
+    # gap on the dev host, whose last_seen happened to know catfish).
+    monkeypatch.setattr(w, "_geometry_view", lambda adb, serial: None)
+    monkeypatch.setattr(w, "battery_and_screen",
+                        lambda serial, shell=None: (None, False, None))
+
+    doc = w._web_status_data(cfg)
+    row = next(p for h in doc if h.get("location") == "1-3.3"
+               for p in h["ports"] if p.get("port") == 2)
+    assert "WARNING" not in str(row["codename"]), "the linker-warning poison rendered"
+    assert row["codename"] == "catfish", "the real name was not recovered"

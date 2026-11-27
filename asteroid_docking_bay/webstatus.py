@@ -998,6 +998,17 @@ def _web_status_data(cfg: dict) -> list[dict]:
             if not is_a_serial(serial):
                 serial = None
             bound_serial = serial          # survived validation, so it BINDS
+            # The parallel guard for the CODENAME. catfish's seat held a
+            # multi-line Android linker warning as its codename on 2026-11-27,
+            # read raw from mapped[port_str] -- it must not render, and must
+            # never flow into a shell command built from the row. Recover the
+            # name a-d-b already knows for the watch at this seat: its registry
+            # codename, else its serial. Self-heals to the real codename on the
+            # next clean read, and the write side (get_watch_codename,
+            # is_a_codename) stops a fresh one being stored at all.
+            if not is_a_codename(codename):
+                codename = ((registry.codename(bound_serial) or bound_serial)
+                            if bound_serial else None)
             if not serial:
                 serials_for_codename = [serial for serial, cname in cfg.get("serials", {}).items()
                                         if cname.lower() == codename.lower()]
