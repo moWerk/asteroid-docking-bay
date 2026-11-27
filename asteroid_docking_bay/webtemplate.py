@@ -469,6 +469,7 @@ _WEB_TEMPLATE = """\
     .cbadge.life.down{border-color:#3d4756;color:#8b98a5}
     .cbadge.life.worn{border-color:#d98ca0;color:#e0a5b5}
     .cbadge.life.booting{border-color:#c9d1d9;color:#f0f6fc;animation:bootpulse 1.2s ease-in-out infinite}
+    .cbadge.life.repowered{border-color:#d29922;color:#d29922}
     .cbadge.life.bootfail{border-color:#f85149;color:#f85149;animation:bootfail .5s ease-in-out infinite}
     @keyframes bootpulse{0%,100%{opacity:1}50%{opacity:.3}}
     @keyframes bootfail{0%,100%{background:transparent;color:#f85149}50%{background:rgba(248,81,73,.55);color:#fff}}
@@ -1184,6 +1185,14 @@ function mkadbrow(p){
   if(p.drain&&p.drain.active){
     const feat=drainCfg(p.drain.features);
     return `<span class="cbadge drain" title="standby drain test running${feat?' — consumers: '+feat:''}; port cut, watch on battery">drain test${feat?' '+esc(feat):''}</span>`;
+  }
+  // A port a-d-b parked OFF that is live again: a hub re-enumeration restored
+  // its VBUS (volatile PPPS) without a-d-b asking. Beats the state messages
+  // below — it is the reason any of them would be wrong — and shows alongside
+  // the real connection when the watch has booted back onto adb.
+  if(p.repowered){
+    const back=p.adb!==null?' '+mkadb(p.adb,null,p.os,p.serial,p.ssh_ip,p.codename,p.ncm)+ncmBadge(p):'';
+    return '<span class="cbadge life repowered" title="re-powered since shelved — this port was deliberately parked off but is live again, so a hub re-enumeration (volatile PPPS) restored its VBUS without a-d-b asking. Power it on properly or re-shelve it to clear.">re-powered</span>'+back;
   }
   // A boot we deliberately triggered: white pulse while it is expected up,
   // then a red-flashing "boot failed?" once the ~40s window lapses. Both beat

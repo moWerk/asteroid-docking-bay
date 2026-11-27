@@ -1186,3 +1186,21 @@ def test_flash_all_still_works_when_nothing_is_connected(monkeypatch):
     loc, port, serial = o._resolve_flash_target(_THREE_BELUGAS, "beluga")
     assert (loc, port) == ("1-3.3", 2), (loc, port)
     assert serial == "22979c8c", "the fallback lost the serial that pins the unit"
+
+
+def test_end_port_records_the_parked_intent(monkeypatch):
+    """_end_port cuts the port deliberately, so it must stamp parked_ts — the
+    durable shelve intent the re-power flag and the warmer reconcile key on.
+    Without it a hub re-enumeration that re-powers this port reads as the
+    watch's normal state, the bookkeeping gap that woke 8 shelved watches."""
+    import types
+    from asteroid_docking_bay import ops
+    marks = {}
+    monkeypatch.setattr(ops, "uhubctl_set_power", lambda *a, **k: True)
+    monkeypatch.setattr(ops.last_seen, "mark",
+                        lambda serial, **kw: marks.setdefault(serial, {}).update(kw))
+    # graceful_poweroff False: skip the adb bring-up/shutdown, exercise only the
+    # finally that cuts VBUS and parks.
+    cfg = types.SimpleNamespace(graceful_poweroff=False)
+    ops._end_port("1-3", 1, "SER", cfg, "test")
+    assert "parked_ts" in marks.get("SER", {}), marks

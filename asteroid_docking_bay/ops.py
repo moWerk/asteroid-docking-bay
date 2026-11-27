@@ -146,6 +146,12 @@ def _end_port(loc: str, port: int, serial: "str | None", charge_cfg: ChargeConfi
             uhubctl_set_power(loc, port, False)
         except Exception:
             pass
+        # The port is now deliberately off: record the intent durably so a later
+        # hub re-enumeration that re-powers it reads as an anomaly, not as this
+        # watch's normal state. After the cut, so the brief stamp->cut window can
+        # never leave parked set on a still-powered port.
+        if serial:
+            last_seen.mark(serial, parked_ts=time.time())
 
 
 def charge_to_target(codename: str, serial: "str | None", charge_cfg: ChargeConfig,

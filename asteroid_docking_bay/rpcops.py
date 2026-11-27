@@ -1450,12 +1450,17 @@ def _port_set(args):
             # Powering a docked watch's port on boots it; a watch already up just
             # re-asserts and the marker self-clears on its next live sighting.
             _mark_booting(serial)
+            # Deliberate power-on: clear the parked intent so the re-power flag
+            # and the warmer reconcile leave this port alone.
+            if serial:
+                last_seen.mark(serial, parked_ts=0)
         elif serial:
             # A raw power cut via the toggle is NOT a graceful shutdown, so it
             # must not read as "shelved": clear any (possibly stale) safe_off
             # marker so the watch reads ambiguous, not down. Only port.poweroff
-            # (which delivers a real shutdown) sets that marker.
-            last_seen.mark(serial, safe_off_ts=0)
+            # (which delivers a real shutdown) sets that marker. It IS a
+            # deliberate park, though, so record that intent.
+            last_seen.mark(serial, safe_off_ts=0, parked_ts=time.time())
     return {"ok": True, "confirmed": confirmed}
 
 
@@ -1582,6 +1587,8 @@ def _port_poweroff(args):
     # into the "down" pill.
     if serial and graceful:
         last_seen.mark(serial, safe_off_ts=time.time())
+    if serial and confirmed:
+        last_seen.mark(serial, parked_ts=time.time())
     return {"ok": True, "adb_shutdown": graceful, "confirmed": confirmed}
 
 
@@ -1655,7 +1662,8 @@ def _port_declare_shelved(args):
                                       "there is no identity to record it against"}
     # safe_off_ts only — bumping last_live_ts here would defeat the very
     # comparison that makes the marker mean anything (see lastseen.py).
-    last_seen.mark(serial, safe_off_ts=time.time(), safe_off_declared=True)
+    last_seen.mark(serial, safe_off_ts=time.time(), safe_off_declared=True,
+                   parked_ts=time.time())
     return {"ok": True, "serial": serial}
 
 
@@ -3190,6 +3198,8 @@ def _sweep_one_port(loc: str, port: int, prefer_adb: bool, emit) -> "tuple[str |
         uhubctl_set_power(loc, port, False)
     except RuntimeError as e:
         emit(f"[{slot}] power-cut warning: {e}")
+    if serial:
+        last_seen.mark(serial, parked_ts=time.time())
     # Stamp a graceful shutdown so the row reads "shelved" (deliberate, not
     # draining) rather than an ambiguous "---". Only on a delivered poweroff —
     # a bare VBUS cut must never claim to be a safe shelve.
@@ -3247,6 +3257,9 @@ def _onboard_sweep_restore(args):
         try:
             uhubctl_set_power(loc, port, True)
             n += 1
+            _sr = find_serial_for_loc_port(cfg, loc, port)
+            if _sr:
+                last_seen.mark(_sr, parked_ts=0)
         except Exception as e:
             log.debug("sweep_restore %s.%s: %s", loc, port, e)
     log.info("sweep restore: powered %d socket(s) back on", n)

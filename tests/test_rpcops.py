@@ -2272,3 +2272,27 @@ def test_switch_adb_over_adb_reports_a_refusal(monkeypatch):
     d = ro.DISPATCH._data["ssh.switch_adb"]({"serial": "S1"})
     assert d["ok"] is False and "refused" in d["error"], d
     assert not ssh_called
+
+
+def test_port_set_toggle_parks_off_and_unparks_on(monkeypatch):
+    """The manual port toggle records parked intent: a raw cut parks the port
+    (parked_ts set) so a later hub re-enumeration that re-powers it is flagged
+    re-powered; powering it on clears the intent so the flag and the warmer
+    reconcile leave it alone. parked_ts is the durable marker safe_off_ts cannot
+    be — that one self-clears on the next live sighting."""
+    monkeypatch.setattr(rpcops, "uhubctl_set_power", lambda l, p, o: True)
+    monkeypatch.setattr(rpcops, "find_serial_for_loc_port", lambda c, l, p: "S1")
+    monkeypatch.setattr(rpcops, "load_config", lambda: {})
+    monkeypatch.setattr(rpcops, "_refuse_if_bus_full", lambda cfg: None)
+    monkeypatch.setattr(rpcops, "_mark_booting", lambda s: None)
+    marked = {}
+    monkeypatch.setattr(rpcops.last_seen, "mark", lambda s, **k: marked.update(k))
+
+    marked.clear()
+    rpcops.DISPATCH._data["port.set"]({"loc": "1-1", "port": 1, "on": False})
+    assert marked.get("parked_ts"), marked                 # parked
+    assert marked.get("safe_off_ts") == 0                  # raw cut, not graceful
+
+    marked.clear()
+    rpcops.DISPATCH._data["port.set"]({"loc": "1-1", "port": 1, "on": True})
+    assert marked.get("parked_ts") == 0, marked            # un-parked

@@ -97,6 +97,29 @@ def _is_shelved(ls: dict) -> bool:
     return bool(so and so >= (ls.get("last_live_ts") or 0))
 
 
+def _repowered_since_parked(ls: dict, power: "bool | None", dev_present: bool,
+                            adb_present: bool, op_owns_slot: bool,
+                            now: float) -> bool:
+    """Whether a port a-d-b deliberately PARKED is live again without a-d-b
+    asking — the volatile-PPPS failure, where a hub re-enumeration restores
+    every port's VBUS and boots the shelved watches.
+
+    Keyed on parked_ts, NOT safe_off_ts/_is_shelved: that marker self-clears the
+    moment a re-powered watch is seen live on adb (last_live_ts advances past
+    it), which is exactly the incident case — so it would report zero. parked_ts
+    is cleared only by a deliberate power-on, so it survives the watch booting
+    back. "Live again" is any positive evidence the port carries power now:
+    the register reads on, a device enumerated on the bus (catches the Asus
+    0afe charging-fallback that never reaches adb, and a register desynced to
+    off), or the watch answered adb. Suppressed while an op owns the slot (it
+    powers the port on purpose) and for REPOWER_GRACE after the park, so a fresh
+    cut's lagging power cache does not flicker a false positive."""
+    parked = ls.get("parked_ts") or 0
+    if not parked or op_owns_slot or now - parked <= REPOWER_GRACE:
+        return False
+    return bool(power or dev_present or adb_present)
+
+
 def _declarable_off(serial, power, adb_state, op_owns_slot: bool,
                     shelved: bool, worn: bool) -> bool:
     """Whether a-d-b has NO way to know this watch's real power state, so the
@@ -635,6 +658,9 @@ def _soft_remap(cfg: dict, online_by_path: dict[str, str]) -> "dict | None":
 # which we stop claiming anything and let the plain connection state show.
 BOOT_WINDOW = 45.0
 BOOT_FAIL_CAP = 300.0
+# Grace after a deliberate shelve before a still-powered reading counts as
+# an unexpected re-power (uhubctl's power cache lags a fresh VBUS cut).
+REPOWER_GRACE = 60.0
 
 
 def _boot_state(ls: dict, power: "bool | None") -> "str | None":
@@ -1177,9 +1203,9 @@ def _web_status_data(cfg: dict) -> list[dict]:
             # Powered + hub sees a connection + nothing ever enumerates:
             # flat-battery bootloop or bad cable. Flag after a boot grace.
             connect = phys.get("connect", {}).get(port_num)
+            dev_present = _port_device_present(loc, port_num)
             not_enumerating = _enum_stuck(
-                slot, power, adb_state,
-                _port_device_present(loc, port_num), time.time())
+                slot, power, adb_state, dev_present, time.time())
             # A watch that vanished from an unpowered port while it was in the
             # bootloader is almost certainly still running on battery, because
             # LK does not shut down when USB goes away. Nothing else in the UI
@@ -1192,6 +1218,26 @@ def _web_status_data(cfg: dict) -> list[dict]:
             _ls = last_seen.get(serial) or {}
             _shelved = _is_shelved(_ls)
             _worn = bool(_ls.get("wear"))
+            # A port a-d-b deliberately parked (durable parked_ts) that is now
+            # live again — powered, a device on the bus, or back on adb — was
+            # re-powered without a-d-b asking: the volatile-PPPS failure where a
+            # hub re-enumeration restores every port's VBUS. Unlike _is_shelved,
+            # parked_ts does not self-clear when the watch boots back to adb, so
+            # this catches the exact case the old bookkeeping missed. Suppressed
+            # while an op owns the slot (it powers the port on purpose) and for a
+            # grace window after the shelve (cache lag).
+            _repowered = _repowered_since_parked(
+                _ls, power, dev_present,
+                adb_state in ("device", "ssh", "fastboot"),
+                op_owns_slot, time.time())
+            # A re-powered port must not keep claiming "down": that claim drives
+            # both the grey power dot and the "shelved" connection text, and the
+            # port is demonstrably live. Strip only that claim; booting/worn/etc.
+            # stay. The repowered field carries the warning instead.
+            _life = _lifecycle(
+                serial, adb_state in ("device", "ssh", "fastboot"), power)
+            if _repowered and _life == "down":
+                _life = None
             fb_draining = _fb_draining(
                 serial, power, adb_state, op_owns_slot,
                 _ls.get("last_conn_state"), _shelved, _worn)
@@ -1286,7 +1332,8 @@ def _web_status_data(cfg: dict) -> list[dict]:
                 "dev_serial": live_serial,
                 "dev_link": (live or {}).get("link"),
                 "serial_mismatch": serial_mismatch,
-                "lifecycle": _lifecycle(serial, adb_state in ("device","ssh","fastboot"), power),
+                "lifecycle": _life,
+                "repowered": _repowered,
                 "wear": bool((last_seen.get(serial) or {}).get("wear")) if serial else False,
                 "battery_cached": battery_cached, "last_live_ts": last_live_ts,
                 "geometry": geometry,

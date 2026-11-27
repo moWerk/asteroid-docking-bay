@@ -1801,3 +1801,41 @@ def test_a_poisoned_stored_codename_does_not_render(monkeypatch):
                for p in h["ports"] if p.get("port") == 2)
     assert "WARNING" not in str(row["codename"]), "the linker-warning poison rendered"
     assert row["codename"] == "catfish", "the real name was not recovered"
+
+
+def test_repowered_flags_a_parked_port_that_is_live_again():
+    """A port a-d-b parked (durable parked_ts) that reads live again — powered,
+    a device on the bus, or back on adb — is flagged re-powered: the volatile-
+    PPPS failure where a hub re-enumeration restores VBUS without a-d-b asking.
+    All three "live" signals count, because the Asus 0afe charging fallback
+    never reaches adb and a hub-reset register can desync to off."""
+    now = 5000.0
+    old = {"parked_ts": 100.0}                                     # parked long ago
+    assert ws._repowered_since_parked(old, True,  False, False, False, now)  # register on
+    assert ws._repowered_since_parked(old, False, True,  False, False, now)  # 0afe on bus
+    assert ws._repowered_since_parked(old, None,  False, True,  False, now)  # back on adb
+    # Parked and genuinely dark (no power, no device, no adb) -> no claim.
+    assert not ws._repowered_since_parked(old, False, False, False, False, now)
+
+
+def test_repowered_survives_the_watch_booting_back_to_adb():
+    """THE incident case: a shelved watch whose port a hub re-powered boots back
+    to adb, which advances last_live_ts past safe_off_ts and self-clears
+    _is_shelved — so a shelve-marker-based check would report zero. parked_ts
+    does NOT self-clear, so the re-power is still caught."""
+    now = 5000.0
+    ls = {"parked_ts": 100.0, "safe_off_ts": 200.0, "last_live_ts": 4000.0}
+    assert not ws._is_shelved(ls)                       # has self-cleared...
+    assert ws._repowered_since_parked(ls, True, False, True, False, now)   # ...still flagged
+
+
+def test_repowered_suppressed_within_grace_and_for_op_and_unparked():
+    now = 5000.0
+    # Fresh shelve: within REPOWER_GRACE the lagging power cache must not flicker.
+    fresh = {"parked_ts": now - ws.REPOWER_GRACE / 2}
+    assert not ws._repowered_since_parked(fresh, True, True, True, False, now)
+    # An op owns the slot: it powers the port on purpose.
+    old = {"parked_ts": 100.0}
+    assert not ws._repowered_since_parked(old, True, True, True, True, now)
+    # Never parked: a live port is just a normal live port.
+    assert not ws._repowered_since_parked({}, True, True, True, False, now)
