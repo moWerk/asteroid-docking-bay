@@ -27,6 +27,7 @@
   ],
   "max_powered_ports": null,
   "xhci_max_slots": null,
+  "auto_reshelve": true,
   "serials": {
     "XXXXXXXXXXXXXXXX": "nemo",
     "YYYYYYYYYYYYYYYY": "sparrow",

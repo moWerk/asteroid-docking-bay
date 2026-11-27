@@ -1246,7 +1246,8 @@ def test_reconcile_only_queues_parked_watches(monkeypatch):
     assert set(ops._reshelve_pending) == {"S1"}
 
 
-def _wire_reshelve(monkeypatch, ops, *, on_adb, parked=True, held=None, op=None):
+def _wire_reshelve(monkeypatch, ops, *, on_adb, parked=True, held=None, op=None,
+                   hold_ok=True):
     monkeypatch.setattr(ops.last_seen, "get",
                         lambda s: {"parked_ts": 1.0} if parked else {})
     monkeypatch.setattr(ops, "loc_port_for_serial", lambda c, s: ("1-3.3", 1))
@@ -1254,10 +1255,17 @@ def _wire_reshelve(monkeypatch, ops, *, on_adb, parked=True, held=None, op=None)
     monkeypatch.setattr(ops.oplock, "held", lambda c, s: held)
     monkeypatch.setattr(ops, "active_op_on_slot", lambda slot: op)
     monkeypatch.setattr(ops, "charge_config", lambda c: object())
+    lock = {"held": [], "released": []}
+    monkeypatch.setattr(ops.oplock, "hold",
+                        lambda s, kind, note="", **k: (lock["held"].append(s)
+                        or {"ok": hold_ok}))
+    monkeypatch.setattr(ops.oplock, "release",
+                        lambda s: lock["released"].append(s))
     ended = {}
     monkeypatch.setattr(ops, "_end_port",
                         lambda loc, port, serial, cc, reason: ended.update(
                             serial=serial, reason=reason))
+    ended["_lock"] = lock
     return ended
 
 
@@ -1284,7 +1292,7 @@ def test_reconcile_waits_within_boot_window_then_cuts(monkeypatch):
     monkeypatch.setattr(ops.time, "time", lambda: now)
     ops._reshelve_pending.clear(); ops._reshelve_pending["S1"] = now - 10
     ops._reshelve_one({})
-    assert not ended and "S1" in ops._reshelve_pending       # within window: wait
+    assert "serial" not in ended and "S1" in ops._reshelve_pending  # wait
     ops._reshelve_pending.clear()
     ops._reshelve_pending["S1"] = now - ops.RESHELVE_BOOT_WINDOW - 1
     ops._reshelve_one({})
@@ -1299,7 +1307,7 @@ def test_reconcile_leaves_op_held_watch_queued(monkeypatch):
     ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"}, held="charge")
     ops._reshelve_pending["S1"] = 1.0
     ops._reshelve_one({})
-    assert not ended and "S1" in ops._reshelve_pending
+    assert "serial" not in ended and "S1" in ops._reshelve_pending
 
 
 def test_reconcile_drops_a_watch_powered_on_since(monkeypatch):
@@ -1310,7 +1318,7 @@ def test_reconcile_drops_a_watch_powered_on_since(monkeypatch):
     ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"}, parked=False)
     ops._reshelve_pending["S1"] = 1.0
     ops._reshelve_one({})
-    assert not ended and "S1" not in ops._reshelve_pending
+    assert "serial" not in ended and "S1" not in ops._reshelve_pending
 
 
 def test_reconcile_disabled_by_config_flag(monkeypatch):
@@ -1324,3 +1332,40 @@ def test_reconcile_disabled_by_config_flag(monkeypatch):
     assert not called
     ops._maybe_reshelve_repowered({})                    # default on
     assert called.get("q") and called.get("r")
+
+
+def test_reconcile_acquires_and_releases_oplock_around_the_cut(monkeypatch):
+    """The actuation holds the oplock, closing the window where an op could
+    claim the watch during _end_port's ~20s; the lock is released afterward."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"})
+    ops._reshelve_pending["S1"] = 1.0
+    ops._reshelve_one({})
+    assert ended.get("serial") == "S1"
+    assert ended["_lock"]["held"] == ["S1"] and ended["_lock"]["released"] == ["S1"]
+
+
+def test_reconcile_leaves_queued_on_oplock_conflict(monkeypatch):
+    """If an op claims the watch between the held() read and the hold(), the
+    atomic hold() refuses and the watch is left queued, never actuated."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    ended = _wire_reshelve(monkeypatch, ops, on_adb={"S1": "device"}, hold_ok=False)
+    ops._reshelve_pending["S1"] = 1.0
+    ops._reshelve_one({})
+    assert "serial" not in ended                       # never cut
+    assert "S1" in ops._reshelve_pending               # still queued
+    assert ended["_lock"]["released"] == []            # nothing to release
+
+
+def test_reconcile_empty_pending_does_no_adb_query(monkeypatch):
+    """With nothing queued the reconcile returns before querying adb — it runs
+    every warmer cycle, so a per-cycle adb sweep for nothing is pure waste."""
+    from asteroid_docking_bay import ops
+    _reset_reconcile(ops)
+    called = {"adb": 0}
+    monkeypatch.setattr(ops, "adb_devices",
+                        lambda: called.__setitem__("adb", called["adb"] + 1) or {})
+    ops._reshelve_one({})
+    assert called["adb"] == 0

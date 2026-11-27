@@ -464,6 +464,8 @@ def _reshelve_one(cfg: dict) -> None:
     rule, and the powered count falls one port at a time. A watch not yet
     actionable (still booting, or held by an op) stays queued for a later cycle;
     one moWerk has since powered on (parked_ts cleared) is dropped unactioned."""
+    if not _reshelve_pending:
+        return                                        # nothing queued — no adb query
     on_adb = set(adb_devices() or {})
     now = time.time()
     for serial, since in list(_reshelve_pending.items()):
@@ -476,23 +478,36 @@ def _reshelve_one(cfg: dict) -> None:
         slot = f"{loc}:{port}"
         if oplock.held(cfg, serial) or active_op_on_slot(slot):
             continue                                  # an op owns it — leave it
-        cc = charge_config(cfg)
-        if serial in on_adb:
-            log.warning("re-shelving %s (%s): hub re-powered it and it booted "
-                        "to adb — graceful poweroff", serial, slot)
-            _end_port(loc, port, serial, cc, "re-shelve: hub re-enumerated")
-            _reshelve_pending.pop(serial, None)
-            return
-        if now - since > RESHELVE_BOOT_WINDOW:
-            # Never reached adb in the boot window: an offmode-charge watch or a
-            # 0afe charging fallback that will not boot. Cut VBUS — _end_port
-            # leaves the state honestly unmarked when it cannot reach the watch.
-            log.warning("re-shelving %s (%s): hub re-powered it, no adb after "
-                        "%ds — cutting VBUS", serial, slot, int(now - since))
-            _end_port(loc, port, serial, cc, "re-shelve: hub re-enumerated (no adb)")
-            _reshelve_pending.pop(serial, None)
-            return
-        # else: still inside the boot window — wait for adb to come up.
+        on_adb_now = serial in on_adb
+        past_window = now - since > RESHELVE_BOOT_WINDOW
+        if not (on_adb_now or past_window):
+            continue    # still inside the boot window — wait for adb, no lock yet
+        # About to actuate. Acquire the oplock FIRST, atomically: held() above is
+        # a read, and an op could claim this watch in the ~20s _end_port takes.
+        # hold() refuses to displace a live lock under _config_lock, closing that
+        # race; release in finally so a failure here never strands the watch.
+        if not oplock.hold(serial, "reshelve",
+                           "re-shelve after hub re-enumeration").get("ok"):
+            continue                                  # an op just claimed it
+        try:
+            if on_adb_now:
+                log.warning("re-shelving %s (%s): hub re-powered it and it "
+                            "booted to adb — graceful poweroff", serial, slot)
+                reason = "re-shelve: hub re-enumerated"
+            else:
+                # Never reached adb in the boot window: an offmode-charge watch
+                # or a 0afe charging fallback that will not boot. Cut VBUS —
+                # _end_port leaves the state honestly unmarked when it cannot
+                # reach the watch to halt it.
+                log.warning("re-shelving %s (%s): hub re-powered it, no adb "
+                            "after %ds — cutting VBUS", serial, slot,
+                            int(now - since))
+                reason = "re-shelve: hub re-enumerated (no adb)"
+            _end_port(loc, port, serial, charge_config(cfg), reason)
+        finally:
+            oplock.release(serial)
+        _reshelve_pending.pop(serial, None)
+        return
 
 
 def _maybe_reshelve_repowered(cfg: dict) -> None:
